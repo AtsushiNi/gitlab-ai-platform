@@ -52,7 +52,7 @@ flowchart TD
     GitLab <--> Adapter
 
     subgraph WindowsSide["Windows"]
-        ReviewTool["Review Tool\n(人間対話・確認)"]
+        ReviewTool["CLI → Review Tool\n(単発 / watchの後継・人間対話・確認)"]
     end
 
     subgraph LinuxSide["Linux / Docker"]
@@ -86,8 +86,8 @@ flowchart TD
 | Claude Code Runner | `runner/` | worktree上でClaude Codeをヘッドレス実行し、MRタイトル・説明・コメント・diffをコンテキストとして渡す。タイムアウト・異常終了のハンドリング、実行ログ保存を行う | レビュー観点の判断そのもの(何を重大とするか)はプロンプト側の責務であり、Runnerは実行制御のみ | M1-7 |
 | Review | `review/` | レビュープロンプトの設計(`docs/specs/prompts.md`)と、結果スキーマ(重要度/ファイル/行/根拠/提案)の定義。JSON(機械可読)とMarkdown(人間可読)の両方を出力する | GitLabへの自動投稿はしない。最終判断は人間 | M1-8, M1-9 |
 | CLI | `cli/` | 単発レビュー実行(デバッグ・プロンプト改善用)と、常駐(watch)モードの入り口。graceful shutdown・多重起動防止 | オーケストレーション(Job間の遷移)はしない。M4以降もCLIは「人間が操作する入口」の役割に留める | M1-10, M1-11 |
-| config | `config/` | GitLab PAT・対象プロジェクト一覧・ポーリング間隔・並列数などの設定/シークレット管理。値のバリデーション、PATをログに出さない | (横断的関心事) |
-| logging_ | `logging_/` | 構造化ログ、実行ID付与、ローテーション。可観測性の土台 | (横断的関心事) |
+| config | `config/` | GitLab PAT・対象プロジェクト一覧・ポーリング間隔・並列数などの設定/シークレット管理。値のバリデーション、PATをログに出さない | (横断的関心事) | M0-2 |
+| logging_ | `logging_/` | 構造化ログ、実行ID付与、ローテーション。可観測性の土台 | (横断的関心事) | M0-3 |
 
 ## Windows/Linuxの分担
 
@@ -146,8 +146,8 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 - **Job抽象・状態機械**(M3-1): `PENDING` `RUNNING` `WAITING_HUMAN` `DONE` `FAILED`。既存のレビュー
   処理をこの型に再構成し、Issue駆動開発(M4)の各フェーズ(要求分析/設計/実装)も同じ型で表現する
 - **Job Queue**(M3-2): まずDBベース。取得の排他・可視性タイムアウト・リトライ・デッドレター
-- **Orchestrator**(M3-7, M4-1〜M4-10): フェーズ間の状態遷移、`WAITING_HUMAN`による停止判断、
-  HTTP API/サーバ層による外部連携の口
+- **Orchestrator**(M3-7, M4-1〜M4-6, M4-9〜M4-10): フェーズ間の状態遷移、`WAITING_HUMAN`による停止判断、
+  HTTP API/サーバ層による外部連携の口(M4-7の実装フェーズはRunner、M4-8のpush/MR作成はGitLab Adapterの担当)
 
 ## 設計原則(今後ADR化する判断)
 
