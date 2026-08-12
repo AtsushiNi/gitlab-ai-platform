@@ -32,7 +32,7 @@
 ## ブランチ・コミット規約
 
 - Spike/調査用ブランチ: `spike/<issue番号>-<slug>` (例: `spike/25-claude-code-headless`)
-- 実装用ブランチ: 今後 M1 着手時に決める(未定)
+- 実装用ブランチ: `feature/<issue番号>-<slug>` (例: `feature/29-gitlab-adapter-interface`)
 - 調査・ドキュメントのみの変更は、レビュー負荷が低ければ `main` への直接コミットも許容する。
   実装コード(M1以降)は原則ブランチ→PR→レビューを経る
 - コミットメッセージは「何を」より「なぜ」を書く。対応するIssue番号があれば触れる
