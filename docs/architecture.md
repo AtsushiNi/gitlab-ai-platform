@@ -18,38 +18,26 @@
 
 ### MVP(M1): レビュー自動化
 
-```text
-┌─────────────────────────────────────────────────────────┐
-│                        Windows                            │
-│                                                             │
-│   ┌──────────┐   30〜60秒間隔   ┌───────────────────┐     │
-│   │ MR Poller │───────────────▶│  GitLab Adapter     │     │
-│   └────┬─────┘                 │ (Protocol + REST実装)│     │
-│        │ 未処理commitを検出      └──────────┬──────────┘     │
-│        ▼                                  │ REST API        │
-│   ┌──────────┐                            ▼                 │
-│   │State Store│                     ┌──────────┐             │
-│   │ (SQLite)  │                     │  GitLab   │             │
-│   └──────────┘                     └──────────┘             │
-│        ▲                                                     │
-│        │ status更新                                          │
-│   ┌────┴──────────┐   worktree作成   ┌──────────────────┐   │
-│   │ CLI (単発/watch)│───────────────▶│ Workspace Manager │   │
-│   └────┬──────────┘                 │(bare clone+worktree)│  │
-│        │                            └─────────┬──────────┘   │
-│        │                                      │ worktree     │
-│        ▼                                      ▼               │
-│                                   ┌────────────────────┐      │
-│                                   │ Claude Code Runner  │      │
-│                                   │ (headless実行)       │      │
-│                                   └──────────┬──────────┘      │
-│                                              │                 │
-└──────────────────────────────────────────────┼─────────────────┘
-                                               ▼
-                                        Claude Code
-                                               │
-                                               ▼
-                                       Amazon Bedrock
+```mermaid
+flowchart TD
+    subgraph Windows["Windows"]
+        CLI["CLI\n(単発 / watch)"]
+        Poller["MR Poller"]
+        Adapter["GitLab Adapter\n(Protocol + REST実装)"]
+        Store[("State Store\n(SQLite)")]
+        Workspace["Workspace Manager\n(bare clone + worktree)"]
+        Runner["Claude Code Runner\n(headless実行)"]
+
+        CLI --> Poller
+        Poller -- "30〜60秒間隔" --> Adapter
+        Poller -- "status照会/更新" --> Store
+        Poller -- "未処理commit検出" --> Workspace
+        Workspace -- worktree --> Runner
+    end
+
+    Adapter -- "REST API" --> GitLab[("GitLab")]
+    Runner --> ClaudeCode["Claude Code"]
+    ClaudeCode --> Bedrock["Amazon Bedrock"]
 ```
 
 レビュー結果は `reviews/<project>/<mr_iid>/<sha>/` にJSON+Markdownで保存され、人間がVS Code
@@ -57,38 +45,31 @@
 
 ### 将来像(M3以降): AI Platform
 
-```text
-                        ┌──────────┐
-                        │  GitLab  │
-                        └────┬─────┘
-                             │ REST API (将来: 一部MCPへ差替え可)
-                     ┌───────▼────────┐
-                     │ GitLab Adapter │◀────────────────┐
-                     └───────┬────────┘                 │
-              ┌──────────────┼──────────────┐            │
-              │ (Windows)    │  (Linux/Docker)           │
-      ┌───────▼──────┐  ┌────▼─────┐         │            │
-      │ Review Tool  │  │MR Poller │  Webhook(任意)──────┘
-      │ (人間対話・確認) │  │/Webhook  │
-      └───────┬──────┘  └────┬─────┘
-              │               ▼
-              │        ┌─────────────┐
-              │        │  Job Queue   │
-              │        └──────┬───────┘
-              │               ▼
-              │        ┌─────────────────┐
-              └───────▶│  Orchestrator   │
-                       │ (Job状態機械)     │
-                       └────────┬────────┘
-                                ▼
-                        ┌───────────────┐
-                        │ AI Runner群    │  review / issue-analysis /
-                        │(プロセス分離)   │  design / implement
-                        └───────┬───────┘
-                                ▼
-                          Claude Code
-                                ▼
-                         Amazon Bedrock
+```mermaid
+flowchart TD
+    GitLab[("GitLab")]
+    Adapter["GitLab Adapter\n(REST / 将来一部MCP)"]
+    GitLab <--> Adapter
+
+    subgraph WindowsSide["Windows"]
+        ReviewTool["Review Tool\n(人間対話・確認)"]
+    end
+
+    subgraph LinuxSide["Linux / Docker"]
+        PollerWebhook["MR Poller / Webhook"]
+        Queue[("Job Queue")]
+        Orchestrator["Orchestrator\n(Job状態機械)"]
+        Runners["AI Runner群\n(プロセス分離)\nreview / issue-analysis / design / implement"]
+    end
+
+    Adapter --> ReviewTool
+    Adapter --> PollerWebhook
+    PollerWebhook --> Queue
+    Queue --> Orchestrator
+    ReviewTool -- "追加調査等" --> Orchestrator
+    Orchestrator --> Runners
+    Runners --> ClaudeCode["Claude Code"]
+    ClaudeCode --> Bedrock["Amazon Bedrock"]
 ```
 
 ## コンポーネントの責務と境界
