@@ -95,7 +95,8 @@ flowchart TD
 出発点であり、「MVPだからWindows、将来はLinux」という時間軸の分担ではない。本質は
 **人間が介在する処理はWindows、無人で回すAI処理はLinux/Docker** という処理性質による分担。
 
-- **Windows**: MR Poller・Workspace Manager・Claude Code Runner・CLIをすべて人間の端末上で動かす。
+- **Windows**: GitLab Adapter・State Store・MR Poller・Workspace Manager・Claude Code Runner・CLIを
+  すべて人間の端末上で動かす。
   人間がVS CodeでMRを見ながら随時実行し、結果もその場で確認する運用のため、コンテナ分離や
   自動リトライの仕組みまでは不要
 - **Linux/Docker**(M3以降): Issue駆動開発(M4)のような、人間が張り付かない無人実行が前提になる
