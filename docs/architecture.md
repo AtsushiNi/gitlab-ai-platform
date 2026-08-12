@@ -150,20 +150,25 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 - **Orchestrator**(M3-7, M4-1〜M4-6, M4-9〜M4-10): フェーズ間の状態遷移、`WAITING_HUMAN`による停止判断、
   HTTP API/サーバ層による外部連携の口(M4-7の実装フェーズはRunner、M4-8のpush/MR作成はGitLab Adapterの担当)
 
-## 設計原則(今後ADR化する判断)
+## 設計原則(ADR化する判断)
 
-以下は `references/AIとやりとりした履歴.md` に由来する設計上の決定だが、まだADRとして
-記録されていない(担当Issue着手時に [ADR-0001](adr/0001-repository-structure.md) に続く形で
-書く想定。[docs/README.md](README.md) の更新ルールに従う)。
+以下は `references/AIとやりとりした履歴.md` に由来する設計上の決定。担当Issue着手時に
+[ADR-0001](adr/0001-repository-structure.md) に続く形でADR化していく
+([docs/README.md](README.md) の更新ルールに従う)。まだADR化されていないものは
+その旨を明記する。
 
 - **GitLab Adapterのインターフェースをprotocol抽象にし、将来のMCP差し替えに備える**:
   現在の社内GitLabは公式MCPが使えるバージョンではなく `glab` も導入できないためREST APIのみで
-  実装するが、実装をREST決め打ちにはしない(M1-1で正式化)
+  実装するが、実装をREST決め打ちにはしない
+  ([ADR-0002](adr/0002-gitlab-adapter-interface.md)、M1-1で正式化済み)
 - **Webhookではなくポーリングを選ぶ**: 社内GitLab側の設定変更を避けたいこと、MVPとしての
   シンプルさを優先。将来M3-6でWebhookとの併用へ拡張可能な形にしておく(M1-5で正式化)
 - **書き込み操作は許可リスト方式でAdapter層が機構として禁止する**: プロンプト上の約束事だけに
-  依存しない。merge・protected branchへの直push・branch削除・管理操作は実行不能にする
-  (M1-3, X-1で正式化)
+  依存しない。merge・protected branchへの直push・branch削除・管理操作用のメソッドは
+  インターフェース側に存在しない([ADR-0002](adr/0002-gitlab-adapter-interface.md))。
+  ただしこれは「呼び出し側がProtocol型だけを見て実装する限り」の静的な保証であり、
+  具象クラス(M1-2のREST実装)自体が余分なメソッドを持つことまでは防げない。実行時の
+  権限チェック・具象クラス側の余剰メソッド検出はM1-3, X-1で正式化
 
 ## 関連ドキュメント
 
