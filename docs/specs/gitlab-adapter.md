@@ -3,7 +3,7 @@
 - 実装場所: `src/gitlab_ai_platform/gitlab_adapter/`
 - 対応Issue: [#29](https://github.com/AtsushiNi/gitlab-ai-platform/issues/29) (M1-1、インターフェース定義)。
   REST実装は [M1-2](https://github.com/AtsushiNi/gitlab-ai-platform/issues/30)、
-  書き込み許可リスト機構の強化は M1-3
+  書き込み許可リスト機構の強化は [M1-3](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31)
 - 関連ADR: [ADR-0002](../adr/0002-gitlab-adapter-interface.md)
 - ステータス: 実装中(インターフェース定義のみ実装済み。REST実装[M1-2]は未着手)
 
