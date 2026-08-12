@@ -1,0 +1,14 @@
+# このファイルを config.toml にコピーして値を設定する(config.toml はコミットしない)
+#
+# シークレット(GitLab PAT)はここではなく .env に置く
+
+[gitlab]
+url = "https://gitlab.example.com"
+projects = ["group/project-a", "group/project-b"]
+
+[poller]
+interval_seconds = 60
+max_parallel = 5
+
+[review]
+label = "レビュー待ち"

@@ -1,0 +1,126 @@
+from pathlib import Path
+
+import pytest
+
+from gitlab_ai_platform.config import ConfigError, GITLAB_TOKEN_ENV_KEY, load_config
+from gitlab_ai_platform.config.loader import parse_env_file
+
+VALID_CONFIG_TOML = """
+[gitlab]
+url = "https://gitlab.example.com"
+projects = ["group/project-a", "group/project-b"]
+
+[poller]
+interval_seconds = 30
+max_parallel = 3
+
+[review]
+label = "レビュー待ち"
+"""
+
+
+def _write(path: Path, content: str) -> Path:
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def test_parse_env_file_reads_key_value_pairs(tmp_path):
+    env_path = _write(
+        tmp_path / ".env",
+        """
+        # comment line, should be ignored
+        FOO=bar
+        QUOTED="quoted value"
+        SINGLE_QUOTED='single'
+        EMPTY_IGNORED
+        """.strip()
+        + "\n",
+    )
+
+    values = parse_env_file(env_path)
+
+    assert values == {
+        "FOO": "bar",
+        "QUOTED": "quoted value",
+        "SINGLE_QUOTED": "single",
+    }
+
+
+def test_parse_env_file_returns_empty_dict_when_missing(tmp_path):
+    assert parse_env_file(tmp_path / "does-not-exist.env") == {}
+
+
+def test_load_config_merges_config_file_and_env_file(tmp_path):
+    config_path = _write(tmp_path / "config.toml", VALID_CONFIG_TOML)
+    env_path = _write(tmp_path / ".env", f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n")
+
+    config = load_config(config_path=config_path, env_path=env_path)
+
+    assert config.gitlab_url == "https://gitlab.example.com"
+    assert config.gitlab_token == "from-dotenv"
+    assert config.projects == ("group/project-a", "group/project-b")
+    assert config.poll_interval_seconds == 30
+    assert config.max_parallel == 3
+    assert config.review_label == "レビュー待ち"
+
+
+def test_load_config_prefers_real_env_var_over_dotenv_file(tmp_path, monkeypatch):
+    config_path = _write(tmp_path / "config.toml", VALID_CONFIG_TOML)
+    env_path = _write(tmp_path / ".env", f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n")
+    monkeypatch.setenv(GITLAB_TOKEN_ENV_KEY, "from-real-env")
+
+    config = load_config(config_path=config_path, env_path=env_path)
+
+    assert config.gitlab_token == "from-real-env"
+
+
+def test_load_config_applies_defaults_when_optional_sections_missing(tmp_path, monkeypatch):
+    config_path = _write(
+        tmp_path / "config.toml",
+        """
+        [gitlab]
+        url = "https://gitlab.example.com"
+        projects = ["group/project-a"]
+        """,
+    )
+    monkeypatch.setenv(GITLAB_TOKEN_ENV_KEY, "token")
+
+    config = load_config(config_path=config_path, env_path=tmp_path / "missing.env")
+
+    assert config.poll_interval_seconds == 60
+    assert config.max_parallel == 5
+    assert config.review_label == "レビュー待ち"
+
+
+def test_load_config_raises_without_leaking_token_when_other_fields_invalid(tmp_path, monkeypatch):
+    config_path = _write(
+        tmp_path / "config.toml",
+        """
+        [gitlab]
+        url = "https://gitlab.example.com"
+        projects = []
+        """,
+    )
+    monkeypatch.setenv(GITLAB_TOKEN_ENV_KEY, "super-secret-pat")
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(config_path=config_path, env_path=tmp_path / "missing.env")
+
+    assert "super-secret-pat" not in str(excinfo.value)
+
+
+def test_load_config_raises_when_token_missing(tmp_path, monkeypatch):
+    config_path = _write(tmp_path / "config.toml", VALID_CONFIG_TOML)
+    monkeypatch.delenv(GITLAB_TOKEN_ENV_KEY, raising=False)
+
+    with pytest.raises(ConfigError):
+        load_config(config_path=config_path, env_path=tmp_path / "missing.env")
+
+
+def test_load_config_raises_when_config_file_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv(GITLAB_TOKEN_ENV_KEY, "token")
+
+    with pytest.raises(ConfigError):
+        load_config(
+            config_path=tmp_path / "missing-config.toml", env_path=tmp_path / "missing.env"
+        )

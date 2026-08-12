@@ -8,3 +8,7 @@ venv/
 .ruff_cache/
 dist/
 build/
+
+# シークレット・実行時設定(*.example.* をコピーして作る。コミットしない)
+.env
+config.toml
