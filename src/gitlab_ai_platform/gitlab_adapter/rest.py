@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 import requests
 
-from .errors import GitLabApiError
+from .errors import GitLabApiError, ProtectedBranchError
 from .types import (
     Branch,
     CommitAction,
@@ -66,7 +66,7 @@ class GitLabRestAdapter:
 
     def get_version(self) -> str:
         data = self._request_json("GET", "/version")
-        return data["version"]
+        return _require(data, "version")
 
     def list_merge_requests(
         self,
@@ -121,6 +121,8 @@ class GitLabRestAdapter:
         commit_message: str,
         actions: Sequence[CommitAction],
     ) -> str:
+        self._reject_if_branch_protected(project, branch)
+
         body = {
             "branch": branch,
             "commit_message": commit_message,
@@ -131,7 +133,23 @@ class GitLabRestAdapter:
             f"/projects/{_encode_project(project)}/repository/commits",
             json_body=body,
         )
-        return data["id"]
+        return _require(data, "id")
+
+    def _reject_if_branch_protected(self, project: str, branch: str) -> None:
+        """protected branchへの直pushを、AdapterがGitLabへ書き込む前に拒否する。
+
+        M1-1のprotocol.pyが「実行時の追加チェックは実装側(M1-2)の責務」と定めている
+        `push_file_changes`の対象branch検証。許可リスト(メソッドとして存在しない)だけでは
+        「どのbranchに対してか」までは絞り込めないため、ここで別途ガードする。
+        """
+        data = self._request_json(
+            "GET",
+            f"/projects/{_encode_project(project)}/repository/branches/{quote(branch, safe='')}",
+        )
+        if data.get("protected", False):
+            raise ProtectedBranchError(
+                f"branch '{branch}' はprotectedのため push_file_changes を拒否しました"
+            )
 
     def create_merge_request(
         self,
@@ -167,9 +185,15 @@ class GitLabRestAdapter:
     def _paginated_get(self, path: str, *, params: dict[str, Any] | None = None) -> list[Any]:
         items: list[Any] = []
         page = 1
+        # ページ間でリトライ予算を共有する(ページ数が多いほどリトライ回数が
+        # 際限なく増えるのを防ぐため、1回のlist系呼び出し全体でmax_retries回までとする)
+        retry_budget = [self._max_retries]
         while True:
             response = self._request(
-                "GET", path, params={**(params or {}), "per_page": _PER_PAGE, "page": page}
+                "GET",
+                path,
+                params={**(params or {}), "per_page": _PER_PAGE, "page": page},
+                retry_budget=retry_budget,
             )
             items.extend(response.json())
 
@@ -195,8 +219,12 @@ class GitLabRestAdapter:
         *,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        retry_budget: list[int] | None = None,
     ) -> requests.Response:
         url = self._api_base + path
+        # retry_budgetが渡されない単発呼び出しは、その呼び出し専用の予算を持つ
+        # (_paginated_getはページ間で同じlistを渡し、予算を共有する)
+        budget = retry_budget if retry_budget is not None else [self._max_retries]
 
         attempt = 0
         while True:
@@ -212,8 +240,16 @@ class GitLabRestAdapter:
             if response.status_code < 400:
                 return response
 
-            if response.status_code in _RETRYABLE_STATUS_CODES and attempt < self._max_retries:
+            # GET以外(副作用のある書き込み操作)は、レート制限(429、GitLab側で
+            # 未処理のまま拒否される)以外はリトライしない。5xxはサーバー側で処理が
+            # 部分的に完了している可能性があり、再送すると重複実行になりかねない
+            retryable = response.status_code in _RETRYABLE_STATUS_CODES
+            if method != "GET" and response.status_code != 429:
+                retryable = False
+
+            if retryable and budget[0] > 0:
                 self._sleep(_retry_wait_seconds(response, attempt, self._backoff_seconds))
+                budget[0] -= 1
                 attempt += 1
                 continue
 
@@ -252,17 +288,33 @@ def _encode_project(project: str) -> str:
     return quote(project, safe="")
 
 
+def _require(data: dict[str, Any], key: str) -> Any:
+    """必須フィールドを取り出す。欠けていればGitLabApiErrorに変換する。
+
+    GitLab APIが返す2xxレスポンスでも、匿名化済みユーザーが絡むデータなど
+    想定外の形式になることがある。呼び出し側は`GitLabAdapterError`系だけを
+    catchすればよいという`errors.py`の方針を守るため、生の`KeyError`を
+    そのまま外へ漏らさない。
+    """
+    try:
+        return data[key]
+    except KeyError as exc:
+        raise GitLabApiError(
+            f"GitLab APIレスポンスの形式が不正です(不足フィールド: {exc})"
+        ) from exc
+
+
 def _map_merge_request(project: str, data: dict[str, Any]) -> MergeRequest:
     return MergeRequest(
         project=project,
-        iid=data["iid"],
-        title=data["title"],
+        iid=_require(data, "iid"),
+        title=_require(data, "title"),
         description=data.get("description") or "",
-        state=data["state"],
-        source_branch=data["source_branch"],
-        target_branch=data["target_branch"],
+        state=_require(data, "state"),
+        source_branch=_require(data, "source_branch"),
+        target_branch=_require(data, "target_branch"),
         sha=data.get("sha") or "",
-        author=data["author"]["username"],
+        author=_require(_require(data, "author"), "username"),
         labels=tuple(data.get("labels", ())),
         web_url=data.get("web_url", ""),
     )
@@ -270,8 +322,8 @@ def _map_merge_request(project: str, data: dict[str, Any]) -> MergeRequest:
 
 def _map_diff(data: dict[str, Any]) -> MergeRequestDiff:
     return MergeRequestDiff(
-        old_path=data["old_path"],
-        new_path=data["new_path"],
+        old_path=_require(data, "old_path"),
+        new_path=_require(data, "new_path"),
         diff=data.get("diff", ""),
         new_file=data.get("new_file", False),
         renamed_file=data.get("renamed_file", False),
@@ -281,25 +333,25 @@ def _map_diff(data: dict[str, Any]) -> MergeRequestDiff:
 
 def _map_note(data: dict[str, Any]) -> Note:
     return Note(
-        id=data["id"],
-        body=data["body"],
-        author=data["author"]["username"],
-        created_at=data["created_at"],
+        id=_require(data, "id"),
+        body=_require(data, "body"),
+        author=_require(_require(data, "author"), "username"),
+        created_at=_require(data, "created_at"),
         system=data.get("system", False),
     )
 
 
 def _map_discussion(data: dict[str, Any]) -> Discussion:
     return Discussion(
-        id=str(data["id"]),
+        id=str(_require(data, "id")),
         notes=tuple(_map_note(note) for note in data.get("notes", ())),
     )
 
 
 def _map_branch(data: dict[str, Any]) -> Branch:
     return Branch(
-        name=data["name"],
-        commit_sha=data["commit"]["id"],
+        name=_require(data, "name"),
+        commit_sha=_require(_require(data, "commit"), "id"),
         protected=data.get("protected", False),
     )
 

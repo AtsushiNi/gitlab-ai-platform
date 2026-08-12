@@ -9,6 +9,7 @@ from gitlab_ai_platform.gitlab_adapter import (
     GitLabAdapter,
     GitLabApiError,
     GitLabRestAdapter,
+    ProtectedBranchError,
 )
 
 _BASE_URL = "https://gitlab.example.com"
@@ -66,27 +67,26 @@ def test_rest_adapter_satisfies_gitlab_adapter_protocol():
     assert isinstance(adapter, GitLabAdapter)
 
 
-# 許可リスト(ADR-0002)にない書き込み操作が具象クラスに増えていないことを、
-# 具象クラス自体に対しても保証する(Protocolレベルのチェックだけでは具象クラスの余剰
-# メソッドまでは検出できないため)。
-_FORBIDDEN_WRITE_OPERATIONS = {
-    "merge",
-    "merge_merge_request",
-    "accept_merge_request",
-    "delete_branch",
-    "push",
-    "push_to_protected_branch",
-    "create_project",
-    "delete_project",
-    "add_project_member",
-    "update_project_member",
+# 許可リスト(ADR-0002)にある操作だけが具象クラスの公開メソッドであることを保証する。
+# test_protocol.pyのProtocolレベルの完全一致テストと同じ強さの保証を、具象クラスにも
+# 適用する(ブロックリスト方式だと、リストにない新しい禁止操作名の追加漏れを検知できない)。
+_ALLOWED_PUBLIC_OPERATIONS = {
+    "get_version",
+    "list_merge_requests",
+    "get_merge_request",
+    "get_merge_request_diffs",
+    "list_merge_request_discussions",
+    "create_branch",
+    "push_file_changes",
+    "create_merge_request",
+    "create_merge_request_comment",
 }
 
 
-def test_rest_adapter_does_not_expose_forbidden_write_operations():
+def test_rest_adapter_exposes_only_allow_listed_operations():
     public_methods = {name for name in dir(GitLabRestAdapter) if not name.startswith("_")}
 
-    assert public_methods.isdisjoint(_FORBIDDEN_WRITE_OPERATIONS)
+    assert public_methods == _ALLOWED_PUBLIC_OPERATIONS
 
 
 def test_get_version():
@@ -267,8 +267,14 @@ def test_create_branch():
     assert session.calls[0]["params"] == {"branch": "feature/ai-fix", "ref": "main"}
 
 
+def _unprotected_branch_response(name: str = "feature/x") -> _FakeResponse:
+    return _FakeResponse(json_data={"name": name, "protected": False})
+
+
 def test_push_file_changes_returns_new_sha():
-    adapter, session = _adapter([_FakeResponse(json_data={"id": "new-sha"})])
+    adapter, session = _adapter(
+        [_unprotected_branch_response(), _FakeResponse(json_data={"id": "new-sha"})]
+    )
 
     actions = [
         CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="print(1)")
@@ -276,20 +282,37 @@ def test_push_file_changes_returns_new_sha():
     new_sha = adapter.push_file_changes("group/project", "feature/x", "fix bug", actions)
 
     assert new_sha == "new-sha"
-    body = session.calls[0]["json"]
+    assert session.calls[0]["method"] == "GET"
+    body = session.calls[1]["json"]
     assert body["branch"] == "feature/x"
     assert body["commit_message"] == "fix bug"
     assert body["actions"] == [{"action": "update", "file_path": "a.py", "content": "print(1)"}]
 
 
 def test_push_file_changes_omits_content_for_delete_action():
-    adapter, session = _adapter([_FakeResponse(json_data={"id": "new-sha"})])
+    adapter, session = _adapter(
+        [_unprotected_branch_response(), _FakeResponse(json_data={"id": "new-sha"})]
+    )
 
     actions = [CommitAction(action=CommitActionType.DELETE, file_path="old.py")]
     adapter.push_file_changes("group/project", "feature/x", "remove file", actions)
 
-    body = session.calls[0]["json"]
+    body = session.calls[1]["json"]
     assert body["actions"] == [{"action": "delete", "file_path": "old.py"}]
+
+
+def test_push_file_changes_rejects_protected_branch_without_calling_commits_api():
+    adapter, session = _adapter(
+        [_FakeResponse(json_data={"name": "main", "protected": True})]
+    )
+
+    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    with pytest.raises(ProtectedBranchError):
+        adapter.push_file_changes("group/project", "main", "oops", actions)
+
+    # protectedと判明した時点で拒否し、Commits APIへは到達しない
+    assert len(session.calls) == 1
+    assert session.calls[0]["method"] == "GET"
 
 
 def test_create_merge_request():
@@ -389,3 +412,31 @@ def test_non_retryable_error_raises_immediately_with_message_from_body():
     assert excinfo.value.status_code == 404
     assert "Project Not Found" in str(excinfo.value)
     assert len(session.calls) == 1
+
+
+def test_5xx_on_non_get_request_is_not_retried_to_avoid_duplicate_writes():
+    """POST等の非冪等操作は、サーバー側で処理が完了している可能性があるため
+    5xxで再送しない(429のみリトライ対象)。get_versionと違いリトライされないので
+    callsは1回のまま。"""
+    adapter, session = _adapter(
+        [
+            _unprotected_branch_response(),
+            _FakeResponse(status_code=503, text="unavailable"),
+        ],
+    )
+
+    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    with pytest.raises(GitLabApiError) as excinfo:
+        adapter.push_file_changes("group/project", "feature/x", "msg", actions)
+
+    assert excinfo.value.status_code == 503
+    assert len(session.calls) == 2  # GET(branch確認) + POST(未リトライ)
+
+
+def test_malformed_response_missing_required_field_raises_gitlab_api_error():
+    adapter, _ = _adapter(
+        [_FakeResponse(json_data={"iid": 1, "title": "no author field"})]
+    )
+
+    with pytest.raises(GitLabApiError):
+        adapter.get_merge_request("group/project", 1)
