@@ -17,6 +17,7 @@
   このツール自体の開発はGitHub)
 - 作業は基本的に何らかのIssue番号に対応させる。コミットメッセージやPRには対応Issue番号を含める
 - 次に着手すべきIssueは GitHub Projects「GitLab AI Platform」の **着手順** フィールドで確認する
+- Issueの粒度・マイルストーン構成(M0〜M4、S、D、X)は `references/タスク整理.md` が一次資料
 
 ## 並行セッション・worktreeの運用(重要)
 
@@ -37,18 +38,42 @@
   実装コード(M1以降)は原則ブランチ→PR→レビューを経る
 - コミットメッセージは「何を」より「なぜ」を書く。対応するIssue番号があれば触れる
 
+## テスト方針
+
+- 実装コード(M1以降)は `pytest` を使う。`tests/` 配下に `src/` と対応する構成でミラーする
+  (詳細は [docs/adr/0001-repository-structure.md](docs/adr/0001-repository-structure.md))
+- 外部依存(GitLab API等)に触れるテストはモック/フィクスチャを使い、実サービスへは繋がない
+- 挙動を変える変更にはテストを追加・更新する。テストなしでコード変更をコミットしない
+
+## ドキュメント更新義務
+
+このリポジトリ自体のドキュメント体系は [docs/README.md](docs/README.md) に読み手別
+(作る人/使う人/動かす人/AI自身)の一覧がある。作業前にまずそこを見て、関連文書の有無を確認する。
+更新ルールの要点(詳細は `docs/README.md` の「更新ルール」節):
+
+1. **コードの挙動を変える変更は、対応する `docs/specs/` または `docs/operations/` の記述も
+   同じPR/コミットで更新する。** 別Issueに先送りしない
+2. **設計判断は ADR([docs/adr/](docs/adr/))に残す。** 迷ったら書く
+3. **`references/` は一次資料であり正式ドキュメントではない。** 設計判断や仕様として確定した
+   内容は `docs/` 側に昇格させる(`references/` 側は改変せず記録として残す)
+4. `docs/README.md` の一覧にない文書は「存在しないもの」として扱う。新規文書を追加したら
+   まずそこに追記する
+
 ## 禁止事項
 
 - force push、`main` の履歴書き換え
 - `--no-verify` などのフック・チェックのスキップ
 - ユーザーの明示的な許可なしに実施する破壊的操作(ブランチ削除、`git reset --hard` 等)
 
-## ドキュメントの置き場所
+## ドキュメントの置き場所・参照ポインタ
 
 - `references/` — 一次資料(要件の会話ログ、Spikeの調査結果など)。整形せず、素朴な記録として残す
-- `docs/` — まだ存在しない。D-1([#5](https://github.com/AtsushiNi/gitlab-ai-platform/issues/5))着手後に
-  読み手別(作る人/使う人/動かす人/AI自身)の体系だったドキュメントをここに作る。
-  それまでは `references/` に置く
+- `docs/` — 読み手別(作る人/使う人/動かす人/AI自身)の正式ドキュメント。全体像は
+  [docs/README.md](docs/README.md) を参照。特によく参照するもの:
+  - [docs/requirements.md](docs/requirements.md) — 要件定義
+  - [docs/architecture.md](docs/architecture.md) — アーキテクチャ概要
+  - [docs/roadmap.md](docs/roadmap.md) — マイルストーンとIssue対応表
+  - [docs/adr/](docs/adr/) — 設計判断の記録
 
-このファイル自体も暫定版。D-5([#9](https://github.com/AtsushiNi/gitlab-ai-platform/issues/9))で
-正式に育てる想定。
+このファイルは D-5([#9](https://github.com/AtsushiNi/gitlab-ai-platform/issues/9))で
+正式版とした。以降もリポジトリの実態(ディレクトリ構成・規約)からずれたら随時更新する。
