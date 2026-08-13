@@ -177,7 +177,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 - [prompts.md](prompts.md) — レビュープロンプト(M1-8)。「出力」セクションはこのモジュールの
   スキーマと1対1の契約
 - [claude-code-runner.md](claude-code-runner.md) — `RunResult.result_text`/`log_path`の由来
-- `docs/guide/reading-results.md`(D-15、未着手) — 重要度の判断基準・指摘の読み方(このスキーマと
-  対で維持する)
+- [docs/guide/reading-results.md](../guide/reading-results.md)(D-15) — 重要度の判断基準・
+  指摘の読み方(このスキーマと対で維持する)
 - ソースコード: `src/gitlab_ai_platform/review/`
   (`types.py` / `errors.py` / `parser.py` / `markdown.py` / `storage.py` / `index.py` / `__init__.py`)
