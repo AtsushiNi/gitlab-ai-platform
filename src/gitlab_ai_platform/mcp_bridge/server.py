@@ -22,7 +22,7 @@ from .tools import TOOL_DESCRIPTIONS, TOOL_FACTORIES
 
 DEFAULT_SERVER_NAME = "gitlab-adapter"
 
-# 現時点でこのブリッジが公開するツール名の集合(`GitLabReader`5 + `GitLabWriter`4)。
+# 現時点でこのブリッジが公開するツール名の集合(`GitLabReader`7 + `GitLabWriter`7)。
 # `TOOL_FACTORIES`のキー集合と一致することをテストで担保する。
 ALLOWED_TOOL_NAMES = frozenset(TOOL_FACTORIES)
 

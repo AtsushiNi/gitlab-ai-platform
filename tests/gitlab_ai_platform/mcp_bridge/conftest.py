@@ -15,6 +15,7 @@ from gitlab_ai_platform.gitlab_adapter.types import (
     Branch,
     CommitAction,
     Discussion,
+    Issue,
     MergeRequest,
     MergeRequestDiff,
     Note,
@@ -92,6 +93,34 @@ class FakeGitLabAdapter:
             )
         ]
 
+    def list_issues(
+        self, project: str, *, labels: Sequence[str] = (), state: str = "opened"
+    ) -> list[Issue]:
+        self._record("list_issues", project=project, labels=tuple(labels), state=state)
+        return [
+            Issue(
+                project=project,
+                iid=1,
+                title="t",
+                description="d",
+                state=state,
+                author="alice",
+                labels=tuple(labels),
+                web_url="https://gitlab.example.com/g/p/-/issues/1",
+            )
+        ]
+
+    def get_issue(self, project: str, issue_iid: int) -> Issue:
+        self._record("get_issue", project=project, issue_iid=issue_iid)
+        return Issue(
+            project=project,
+            iid=issue_iid,
+            title="t",
+            description="d",
+            state="opened",
+            author="alice",
+        )
+
     # -- GitLabWriter ---------------------------------------------------------
 
     def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:
@@ -145,6 +174,58 @@ class FakeGitLabAdapter:
     def create_merge_request_comment(self, project: str, mr_iid: int, body: str) -> Note:
         self._record("create_merge_request_comment", project=project, mr_iid=mr_iid, body=body)
         return Note(id=99, body=body, author="ai-bot", created_at="2026-01-01T00:00:00Z")
+
+    def update_merge_request(
+        self,
+        project: str,
+        mr_iid: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> MergeRequest:
+        self._record(
+            "update_merge_request", project=project, mr_iid=mr_iid, title=title,
+            description=description,
+        )
+        return MergeRequest(
+            project=project,
+            iid=mr_iid,
+            title=title or "t",
+            description=description or "d",
+            state="opened",
+            source_branch="feature",
+            target_branch="main",
+            sha="sha1",
+            author="alice",
+        )
+
+    def create_issue(self, project: str, title: str, description: str = "") -> Issue:
+        self._record("create_issue", project=project, title=title, description=description)
+        return Issue(
+            project=project, iid=2, title=title, description=description, state="opened",
+            author="ai-bot",
+        )
+
+    def update_issue(
+        self,
+        project: str,
+        issue_iid: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> Issue:
+        self._record(
+            "update_issue", project=project, issue_iid=issue_iid, title=title,
+            description=description,
+        )
+        return Issue(
+            project=project,
+            iid=issue_iid,
+            title=title or "t",
+            description=description or "d",
+            state="opened",
+            author="alice",
+        )
 
 
 @pytest.fixture

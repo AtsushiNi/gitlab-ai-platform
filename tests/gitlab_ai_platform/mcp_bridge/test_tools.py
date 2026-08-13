@@ -197,15 +197,90 @@ def test_create_merge_request_comment_delegates(fake_adapter: FakeGitLabAdapter)
     }
 
 
-def test_tool_factories_cover_exactly_the_nine_allowed_methods() -> None:
+def test_list_issues_delegates_and_converts_result(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["list_issues"](fake_adapter)
+
+    result = tool(project="group/project", labels=["bug"], state="opened")
+
+    assert fake_adapter.calls == [
+        ("list_issues", {"project": "group/project", "labels": ("bug",), "state": "opened"})
+    ]
+    assert result[0]["project"] == "group/project"
+    assert result[0]["labels"] == ["bug"]
+
+
+def test_get_issue_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["get_issue"](fake_adapter)
+
+    result = tool(project="group/project", issue_iid=5)
+
+    assert fake_adapter.calls == [("get_issue", {"project": "group/project", "issue_iid": 5})]
+    assert result["iid"] == 5
+
+
+def test_update_merge_request_delegates_and_does_not_expose_state_event(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["update_merge_request"](fake_adapter)
+
+    result = tool(project="group/project", mr_iid=9, description="new desc")
+
+    assert fake_adapter.calls == [
+        (
+            "update_merge_request",
+            {"project": "group/project", "mr_iid": 9, "title": None, "description": "new desc"},
+        )
+    ]
+    assert result["description"] == "new desc"
+    # state_event相当の引数はツール関数のシグネチャ自体に存在しない(ADR-0002 M2-10追記)
+    assert "state_event" not in fake_adapter.calls[0][1]
+
+
+def test_create_issue_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["create_issue"](fake_adapter)
+
+    result = tool(project="group/project", title="new issue", description="body")
+
+    assert fake_adapter.calls == [
+        (
+            "create_issue",
+            {"project": "group/project", "title": "new issue", "description": "body"},
+        )
+    ]
+    assert result["title"] == "new issue"
+
+
+def test_update_issue_delegates_and_does_not_expose_state_event(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["update_issue"](fake_adapter)
+
+    result = tool(project="group/project", issue_iid=3, title="updated title")
+
+    assert fake_adapter.calls == [
+        (
+            "update_issue",
+            {"project": "group/project", "issue_iid": 3, "title": "updated title", "description": None},
+        )
+    ]
+    assert result["title"] == "updated title"
+    assert "state_event" not in fake_adapter.calls[0][1]
+
+
+def test_tool_factories_cover_exactly_the_fourteen_allowed_methods() -> None:
     assert set(TOOL_FACTORIES) == {
         "get_version",
         "list_merge_requests",
         "get_merge_request",
         "get_merge_request_diffs",
         "list_merge_request_discussions",
+        "list_issues",
+        "get_issue",
         "create_branch",
         "push_file_changes",
         "create_merge_request",
         "create_merge_request_comment",
+        "update_merge_request",
+        "create_issue",
+        "update_issue",
     }
