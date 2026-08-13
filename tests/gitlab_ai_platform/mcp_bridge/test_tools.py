@@ -1,0 +1,211 @@
+"""各MCPツール関数が、対応する`GitLabAdapter`メソッドへ正しく委譲することを検証する。
+
+MCPプロトコル(stdio・`MCPServer`)は経由せず、`TOOL_FACTORIES`が返すPython呼び出し可能
+オブジェクトを直接呼び出す。実MCPプロトコル通信・実GitLabのどちらへも繋がない
+(CLAUDE.mdのテスト方針)。
+"""
+
+from __future__ import annotations
+
+from gitlab_ai_platform.gitlab_adapter.types import CommitActionType
+from gitlab_ai_platform.mcp_bridge.tools import TOOL_FACTORIES
+
+from .conftest import FakeGitLabAdapter
+
+
+def test_get_version_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["get_version"](fake_adapter)
+
+    result = tool()
+
+    assert result == "17.0.0-ee"
+    assert fake_adapter.calls == [("get_version", {})]
+
+
+def test_list_merge_requests_delegates_and_converts_result(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["list_merge_requests"](fake_adapter)
+
+    result = tool(project="group/project", labels=["bug"], state="opened")
+
+    assert fake_adapter.calls == [
+        (
+            "list_merge_requests",
+            {"project": "group/project", "labels": ("bug",), "state": "opened"},
+        )
+    ]
+    assert isinstance(result, list)
+    assert result[0]["project"] == "group/project"
+    assert result[0]["labels"] == ["bug"]  # tupleがJSON安全なlistに変換されている
+
+
+def test_list_merge_requests_defaults_labels_to_empty(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["list_merge_requests"](fake_adapter)
+
+    tool(project="group/project")
+
+    assert fake_adapter.calls == [
+        ("list_merge_requests", {"project": "group/project", "labels": (), "state": "opened"})
+    ]
+
+
+def test_get_merge_request_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["get_merge_request"](fake_adapter)
+
+    result = tool(project="group/project", mr_iid=5)
+
+    assert fake_adapter.calls == [
+        ("get_merge_request", {"project": "group/project", "mr_iid": 5})
+    ]
+    assert result["iid"] == 5
+    assert isinstance(result, dict)
+
+
+def test_get_merge_request_diffs_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["get_merge_request_diffs"](fake_adapter)
+
+    result = tool(project="group/project", mr_iid=5)
+
+    assert fake_adapter.calls == [
+        ("get_merge_request_diffs", {"project": "group/project", "mr_iid": 5})
+    ]
+    assert result == [
+        {
+            "old_path": "a.py",
+            "new_path": "a.py",
+            "diff": "@@ -1 +1 @@\n-x\n+y\n",
+            "new_file": False,
+            "renamed_file": False,
+            "deleted_file": False,
+        }
+    ]
+
+
+def test_list_merge_request_discussions_delegates_and_converts_nested_notes(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["list_merge_request_discussions"](fake_adapter)
+
+    result = tool(project="group/project", mr_iid=5)
+
+    assert fake_adapter.calls == [
+        ("list_merge_request_discussions", {"project": "group/project", "mr_iid": 5})
+    ]
+    assert result == [
+        {
+            "id": "d1",
+            "notes": [
+                {
+                    "id": 1,
+                    "body": "hi",
+                    "author": "bob",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "system": False,
+                }
+            ],
+        }
+    ]
+
+
+def test_create_branch_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["create_branch"](fake_adapter)
+
+    result = tool(project="group/project", branch_name="feature/x", ref="main")
+
+    assert fake_adapter.calls == [
+        (
+            "create_branch",
+            {"project": "group/project", "branch_name": "feature/x", "ref": "main"},
+        )
+    ]
+    assert result == {"name": "feature/x", "commit_sha": "sha2", "protected": False}
+
+
+def test_push_file_changes_parses_actions_and_delegates(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["push_file_changes"](fake_adapter)
+
+    result = tool(
+        project="group/project",
+        branch="feature/x",
+        commit_message="fix: x",
+        actions=[
+            {"action": "create", "file_path": "a.txt", "content": "hello"},
+            {"action": "delete", "file_path": "b.txt"},
+        ],
+    )
+
+    assert result == "sha3"
+    assert len(fake_adapter.calls) == 1
+    name, kwargs = fake_adapter.calls[0]
+    assert name == "push_file_changes"
+    assert kwargs["project"] == "group/project"
+    assert kwargs["branch"] == "feature/x"
+    assert kwargs["commit_message"] == "fix: x"
+
+    actions = kwargs["actions"]
+    assert actions[0].action == CommitActionType.CREATE
+    assert actions[0].file_path == "a.txt"
+    assert actions[0].content == "hello"
+    assert actions[1].action == CommitActionType.DELETE
+    assert actions[1].content is None
+
+
+def test_create_merge_request_delegates_with_default_description(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["create_merge_request"](fake_adapter)
+
+    result = tool(
+        project="group/project", source_branch="feature/x", target_branch="main", title="t"
+    )
+
+    assert fake_adapter.calls == [
+        (
+            "create_merge_request",
+            {
+                "project": "group/project",
+                "source_branch": "feature/x",
+                "target_branch": "main",
+                "title": "t",
+                "description": "",
+            },
+        )
+    ]
+    assert result["title"] == "t"
+
+
+def test_create_merge_request_comment_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["create_merge_request_comment"](fake_adapter)
+
+    result = tool(project="group/project", mr_iid=5, body="LGTM")
+
+    assert fake_adapter.calls == [
+        (
+            "create_merge_request_comment",
+            {"project": "group/project", "mr_iid": 5, "body": "LGTM"},
+        )
+    ]
+    assert result == {
+        "id": 99,
+        "body": "LGTM",
+        "author": "ai-bot",
+        "created_at": "2026-01-01T00:00:00Z",
+        "system": False,
+    }
+
+
+def test_tool_factories_cover_exactly_the_nine_allowed_methods() -> None:
+    assert set(TOOL_FACTORIES) == {
+        "get_version",
+        "list_merge_requests",
+        "get_merge_request",
+        "get_merge_request_diffs",
+        "list_merge_request_discussions",
+        "create_branch",
+        "push_file_changes",
+        "create_merge_request",
+        "create_merge_request_comment",
+    }
