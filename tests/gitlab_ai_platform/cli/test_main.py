@@ -279,6 +279,39 @@ def test_watch_command_returns_already_running_exit_code(tmp_path, monkeypatch, 
     assert "多重起動エラー" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("exception", "expected_exit_code"),
+    [
+        (GitLabApiError("boom"), exit_codes.EXIT_GITLAB_ADAPTER_ERROR),
+        (
+            GitCommandError("boom", command=["git"], returncode=1, stderr=""),
+            exit_codes.EXIT_WORKSPACE_ERROR,
+        ),
+        (
+            ClaudeCodeTimeoutError("boom", timeout_seconds=1, log_path=Path("/tmp/x"), stderr=""),
+            exit_codes.EXIT_RUNNER_ERROR,
+        ),
+        (ReviewOutputParseError("boom", raw_text=""), exit_codes.EXIT_REVIEW_ERROR),
+        (StateStoreError("boom"), exit_codes.EXIT_STATE_STORE_ERROR),
+    ],
+)
+def test_watch_command_maps_pipeline_errors_to_exit_codes(
+    tmp_path, monkeypatch, capsys, exception, expected_exit_code
+):
+    # run_watch_loop内(1MR分の失敗)はwatch.build_on_detectedが既に握りつぶすため、
+    # ここに届くのは具象実装の組み立て(構成)段階の失敗のみ。reviewコマンドと同じ
+    # 変換になっていることを確認する
+    def _raise(*args, **kwargs):
+        raise exception
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_watch", _raise)
+
+    exit_code = main(_watch_argv(tmp_path))
+
+    assert exit_code == expected_exit_code
+    assert capsys.readouterr().err.strip() != ""
+
+
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
 def test_watch_command_sets_stop_event_on_signal_and_restores_handler(tmp_path, monkeypatch, sig):
     # run_watchを、自プロセスにシグナルを送ってからstop_eventの状態を確認するフェイクに差し替え、

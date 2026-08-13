@@ -118,6 +118,7 @@ def execute_review(
     project: str,
     mr_iid: int,
     *,
+    sha: str | None = None,
     timeout_seconds: int | None = None,
     allowed_tools: Sequence[str] = (),
     disallowed_tools: Sequence[str] = (),
@@ -131,6 +132,14 @@ def execute_review(
     `FAILED`に更新してから例外を再送出する。全段階が成功した場合のみ`DONE`に更新する。
     `config`は`runner_log_dir`等ではなく`runner_timeout_seconds`/`reviews_root`の
     デフォルト値・保存先としてのみ使う(具象実装の構築は`run_single_review`の責務)。
+
+    `sha`は呼び出し側が既にState Storeへ起票済みのcommitがある場合(常駐(watch)モード、
+    `cli/watch.py`)に指定する。省略時(単発実行)はMR取得時点の最新`merge_request.sha`を
+    使う。`sha`を指定した場合、取得時点でMRがさらに進んでいても指定commitに対して
+    起票・レビューを行う(先に進んだ最新commitは次回のPoller走査が別途検出・起票する)。
+    これを省略して常に最新shaを使うと、Pollerが起票した`(project, mr_iid, 起票時のsha)`
+    レコードがRUNNING/DONE/FAILEDへ一度も遷移しないまま孤立してしまう
+    (`execute_review`が別の新しいshaで起票し直すため)。
     """
     # 3つとも独立したGitLab REST呼び出しなので、CLIの主用途(デバッグ時に繰り返し実行する)
     # で毎回の待ち時間を減らすため並列に取得する(逐次だと3回分のネットワーク往復が積み上がる)
@@ -143,7 +152,7 @@ def execute_review(
         merge_request = merge_request_future.result()
         diffs = tuple(diffs_future.result())
         discussions = tuple(discussions_future.result())
-    sha = merge_request.sha
+    sha = sha if sha is not None else merge_request.sha
 
     _ticket_running(store, project, mr_iid, sha)
 

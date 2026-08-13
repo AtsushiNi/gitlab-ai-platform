@@ -93,12 +93,17 @@ def execute_review(
     project: str,
     mr_iid: int,
     *,
+    sha: str | None = None,
     timeout_seconds: int | None = None,
     allowed_tools: "Sequence[str]" = (),
     disallowed_tools: "Sequence[str]" = (),
     permission_mode: str | None = None,
 ) -> "SingleRunResult":
-    """パイプライン本体。4つの依存先はすべてProtocol型で受け取る(具象実装に依存しない)。"""
+    """パイプライン本体。4つの依存先はすべてProtocol型で受け取る(具象実装に依存しない)。
+    `sha`省略時(`review`サブコマンド)はMR取得時点の最新`merge_request.sha`を使う。
+    `sha`指定時(`watch`サブコマンド、M1-11)は、それが呼び出し時点の最新commitより
+    古くても指定commitに対してレビューを行う(呼び出し側が既にState Storeへ起票済みの
+    commitを上書きしないため)。"""
 
 
 def run_single_review(
@@ -190,10 +195,12 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
 1. `adapter.get_merge_request` / `get_merge_request_diffs` / `list_merge_request_discussions`で
    対象MRの詳細・diff・コメントを取得する。ここで失敗した場合、State Storeにはまだ触れず
    例外をそのまま伝播させる
-2. `(project, mr_iid, mr.sha)`を`StateStatus.RUNNING`として起票する。既存レコードがあれば
-   (MR Pollerと異なり無視せず)`RUNNING`へ上書きする(単発実行は同一commitへの繰り返し
-   実行が主要なユースケースであるため、[ADR-0008](../adr/0008-cli-single-run-design.md)参照)
-3. `workspace.prepare(project, mr_iid, mr.sha)`でworktreeを用意する
+2. 起票・worktree準備・保存に使う`sha`を決める: 呼び出し側が`sha`を指定していればそれを、
+   省略していれば`merge_request.sha`(取得時点の最新commit)を使う。`(project, mr_iid, sha)`を
+   `StateStatus.RUNNING`として起票する。既存レコードがあれば(MR Pollerと異なり無視せず)
+   `RUNNING`へ上書きする(単発実行は同一commitへの繰り返し実行が主要なユースケースであるため、
+   [ADR-0008](../adr/0008-cli-single-run-design.md)参照)
+3. `workspace.prepare(project, mr_iid, sha)`でworktreeを用意する
 4. `review.build_review_instructions()`でinstructionsを組み立て、
    `runner.run(worktree.path, instructions, context, ...)`でClaude Codeをヘッドレス実行する
 5. `review.parse_review_output(run_result)`で結果をパースする
@@ -212,7 +219,11 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
    開始する(ループ制御自体はMR Poller、`docs/specs/poller.md`の責務)
 3. 各サイクルで新たに起票された`DetectedReview`ごとに、`execution_id_scope()`で新しい
    実行IDを振ってから`execute_review(adapter, workspace, runner, store, config,
-   review.project, review.mr_iid)`を呼ぶ(`review`サブコマンドと同じパイプライン本体を再利用)
+   review.project, review.mr_iid, sha=review.commit_sha)`を呼ぶ(`review`サブコマンドと
+   同じパイプライン本体を再利用。`sha`にMR Pollerが検出・起票した時点のcommitを明示的に
+   渡すことで、`execute_review`が実行時点の最新commitを取得し直して別のcommitとして
+   起票し直してしまい、Pollerが起票した元のレコードが`RUNNING`/`FAILED`/`DONE`に
+   一度も遷移せず孤立する事態を防ぐ)
 4. 既知のパイプライン例外(`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/
    `ReviewError`/`StateStoreError`)はログ(`watch.review_failed`)に記録して次のMRの
    処理を続ける。State Storeは`execute_review`が既に`FAILED`へ更新済みのため、
@@ -233,19 +244,25 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
 | 例外 | 終了コード | サブコマンド | 備考 |
 |---|---|---|---|
 | `config.ConfigError` | 10 | 両方 | `load_config`失敗時。PATの値は含めない(`ConfigError`自体の契約) |
-| `gitlab_adapter.errors.GitLabAdapterError` | 11 | review | |
-| `workspace.errors.WorkspaceError` | 12 | review | |
-| `runner.errors.RunnerError` | 13 | review | `log_path`属性があれば標準エラー出力にあわせて表示する |
-| `review.errors.ReviewError` | 14 | review | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
-| `store.errors.StateStoreError` | 15 | review | |
+| `gitlab_adapter.errors.GitLabAdapterError` | 11 | 両方 | |
+| `workspace.errors.WorkspaceError` | 12 | 両方 | |
+| `runner.errors.RunnerError` | 13 | 両方 | `log_path`属性があれば標準エラー出力にあわせて表示する |
+| `review.errors.ReviewError` | 14 | 両方 | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
+| `store.errors.StateStoreError` | 15 | 両方 | |
 | `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`) |
 | `KeyboardInterrupt` | 130 | 両方 | `watch`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
 | 上記以外の例外 | 1 | 両方 | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
 
-`watch`は上記5種類のパイプライン例外(11〜15)を1件のレビュー失敗としてログに記録し
-プロセスを継続するため(前節参照)、通常はこれらの終了コードでは終了しない。プロセスが
-終了するのはCtrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、
-または想定外の例外(1)の場合のみ。
+`watch`では、上記5種類のパイプライン例外(11〜15)のうち`run_watch_loop`のループ内
+(`build_on_detected`が1件のレビュー実行を包む箇所)で発生したものは、前節の通り
+1件のレビュー失敗としてログに記録されプロセスは継続するため、これらの終了コードでは
+終了しない。一方、`run_watch`が具象実装(`GitLabRestAdapter`/`GitWorkspaceManager`/
+`SqliteStateStore`等)を組み立てる構成段階(ループが始まる前)で同じ5種類の例外が
+発生した場合は、`build_on_detected`にまだ捕捉されないため`cli.main`まで伝播し、
+`review`と同じ終了コード・エラーメッセージに変換される(例: 不正な`state_db_path`で
+`SqliteStateStore`の初期化自体が失敗する場合)。プロセスが継続せず終了するのは
+Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、構成段階での
+上記5種類の例外(11〜15)、または想定外の例外(1)の場合。
 
 `argparse`の引数エラーは自動的に終了コード`2`・使い方メッセージになる(このCLIでは独自定義しない)。
 
@@ -275,10 +292,14 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
   と同じくフェイク+実DBの`SqliteStateStore(":memory:")`で、実サービスには繋がない)。
   - `build_on_detected`: 正常系で`execute_review`相当の結果(State Storeが`DONE`)になること、
     既知のパイプライン例外はログに記録して例外を送出しないこと(呼び出し元を止めない)、
-    それ以外の例外はそのまま伝播すること
+    それ以外の例外はそのまま伝播すること、検出後にMRが別commitへ進んでいても
+    `execute_review`には検出時の`sha`(`DetectedReview.commit_sha`)がそのまま渡り、
+    その`sha`に対してレビュー・保存が行われること(Pollerが起票したレコードが
+    孤立しないこと)
   - `run_watch_loop`: `MrPoller`が検出した複数の`DetectedReview`を順に処理すること
   - `run_watch`: `ProcessLock`を取得・解放すること、ロック取得済みの状態で呼ぶと
-    `AlreadyRunningError`を送出すること
+    `AlreadyRunningError`を送出すること、`state_db_path`が`":memory:"`でもロックファイル名が
+    不正にならず起動できること(`_lock_path_for`の`":memory:"`特別扱い)
 - `test_lock.py`: `ProcessLock`の取得・解放・多重取得時の`AlreadyRunningError`を検証する。
   Windows分岐(`msvcrt`)は開発機がmacOSのため実機検証はできず、`sys.platform`/
   `sys.modules["msvcrt"]`をテスト用のフェイクに差し替えてロジックのみ検証する
@@ -286,7 +307,9 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
 - `test_main.py`: `run_single_review`/`run_watch`を`monkeypatch`で差し替え、CLI引数が正しく
   渡ること、各例外型が対応する終了コード・標準エラー出力になること、正常系で標準出力に
   サマリ(結果パス・指摘件数)が表示されることを検証する。`watch`はSIGINT/SIGTERM受信で
-  `stop_event`がセットされること、`main`終了後にシグナルハンドラが元へ戻ることも検証する
+  `stop_event`がセットされること、`main`終了後にシグナルハンドラが元へ戻ることも検証する。
+  `watch`も`review`と同じ5種類のパイプライン例外(構成段階を想定し`run_watch`自体から
+  送出させる)が同じ終了コードへ変換されることをパラメタライズテストで検証する
 - `test_exit_codes.py`: 終了コードの値が重複しないこと、`argparse`が使う`2`と衝突しないことを
   検証する
 

@@ -120,6 +120,29 @@ def _run_watch_command(config: Config) -> int:
         _logger.error("cli.watch_failed", extra={"stage": "lock", "error": str(exc)})
         print(f"多重起動エラー: {exc}", file=sys.stderr)
         return exit_codes.EXIT_ALREADY_RUNNING
+    except GitLabAdapterError as exc:
+        # ループ内で発生した分は`watch.build_on_detected`が既に握りつぶしているため、
+        # ここに届くのは具象実装の組み立て(構成)段階の失敗のみ(`_run_review_command`と
+        # 同じ変換で、`review`/`watch`間の挙動を揃える)
+        _logger.error("cli.watch_failed", extra={"stage": "gitlab_adapter", "error": str(exc)})
+        print(f"GitLab Adapterエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_GITLAB_ADAPTER_ERROR
+    except WorkspaceError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "workspace", "error": str(exc)})
+        print(f"Workspace Managerエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_WORKSPACE_ERROR
+    except RunnerError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "runner", "error": str(exc)})
+        print(f"Claude Code Runnerエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_RUNNER_ERROR
+    except ReviewError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "review", "error": str(exc)})
+        print(f"レビュー結果の解析エラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_REVIEW_ERROR
+    except StateStoreError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "state_store", "error": str(exc)})
+        print(f"State Storeエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_STATE_STORE_ERROR
     finally:
         restore_handlers()
 

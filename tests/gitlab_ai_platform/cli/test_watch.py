@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 from pathlib import Path
@@ -8,7 +9,12 @@ import pytest
 
 from gitlab_ai_platform.cli import watch as watch_module
 from gitlab_ai_platform.cli.lock import AlreadyRunningError, ProcessLock
-from gitlab_ai_platform.cli.watch import build_on_detected, run_watch, run_watch_loop
+from gitlab_ai_platform.cli.watch import (
+    _lock_path_for,
+    build_on_detected,
+    run_watch,
+    run_watch_loop,
+)
 from gitlab_ai_platform.config import Config
 from gitlab_ai_platform.gitlab_adapter.types import (
     Discussion,
@@ -85,6 +91,19 @@ class _FakeGitLabReader:
 
     def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
         return []
+
+
+class _FakeGitLabReaderDriftingSha(_FakeGitLabReader):
+    """検出(`list_merge_requests`)後、実行時点(`get_merge_request`)には別のcommitに
+    進んでしまっているケースを再現するフェイク(常駐モードでの検出〜実行の間のレース用)。"""
+
+    def __init__(self, mr: MergeRequest, drifted_sha: str) -> None:
+        super().__init__([mr])
+        self._drifted_sha = drifted_sha
+
+    def get_merge_request(self, project: str, mr_iid: int) -> MergeRequest:
+        mr = super().get_merge_request(project, mr_iid)
+        return dataclasses.replace(mr, sha=self._drifted_sha)
 
 
 class _FakeWorkspaceManager:
@@ -192,6 +211,31 @@ def test_build_on_detected_logs_and_continues_on_known_pipeline_error(tmp_path):
         store.close()
 
 
+def test_build_on_detected_uses_detected_sha_even_if_mr_has_moved_on(tmp_path):
+    # 検出(起票)後、実行までの間に別のcommitがpushされていても、起票済みのshaに対して
+    # レビューを行う(実行時点の最新shaを使うと、起票済み(project, mr_iid, 検出時sha)の
+    # State Storeレコードが二度と遷移しない孤立レコードになってしまうため)
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReaderDriftingSha(_mr(1, "sha-1"), drifted_sha="sha-2")
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path)
+    store = SqliteStateStore(":memory:")
+
+    try:
+        on_detected = build_on_detected(adapter, workspace, runner, store, config)
+        on_detected(DetectedReview(project=_PROJECT, mr_iid=1, commit_sha="sha-1"))
+
+        assert store.find(_PROJECT, 1, "sha-1").status == ReviewStatus.DONE
+        assert workspace.prepare_calls == [(_PROJECT, 1, "sha-1")]
+        # 新しいsha側は今回の検出サイクルでは起票されていないので、レコードは作られない
+        # (Pollerが次回の走査で新規に検出・起票する)
+        assert store.find(_PROJECT, 1, "sha-2") is None
+    finally:
+        store.close()
+
+
 def test_build_on_detected_propagates_unexpected_exception(tmp_path):
     config = _config(tmp_path)
     adapter = _FakeGitLabReader([_mr(1, "sha-1")])
@@ -277,3 +321,23 @@ def test_run_watch_raises_already_running_when_lock_is_held(tmp_path):
             run_watch(config, stop_event=stop_event)
     finally:
         holder.release()
+
+
+def test_lock_path_for_memory_db_avoids_invalid_filename():
+    # ":memory:"をそのまま`with_suffix`すると`:`を含む不正なファイル名になる
+    # (Windowsでは`:`はドライブレター区切り用の予約文字)
+    lock_path = _lock_path_for(":memory:")
+
+    assert ":" not in lock_path.name
+    assert lock_path.suffix == ".lock"
+
+
+def test_run_watch_with_memory_state_db_does_not_crash_on_lock_acquisition(tmp_path, monkeypatch):
+    # ":memory:"はconfig.tomlの`[store] db_path`として設定可能な値であり、watchモードの
+    # 起動処理(ロック取得含む)がそれで壊れないことを確認する
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path, state_db_path=":memory:")
+    stop_event = threading.Event()
+    stop_event.set()
+
+    run_watch(config, stop_event=stop_event)

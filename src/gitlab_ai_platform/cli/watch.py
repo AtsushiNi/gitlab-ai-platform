@@ -127,7 +127,14 @@ def build_on_detected(
         with execution_id_scope():
             try:
                 execute_review(
-                    adapter, workspace, runner, store, config, review.project, review.mr_iid
+                    adapter,
+                    workspace,
+                    runner,
+                    store,
+                    config,
+                    review.project,
+                    review.mr_iid,
+                    sha=review.commit_sha,
                 )
             except _PIPELINE_ERROR_TYPES as exc:
                 _logger.error(
@@ -145,7 +152,12 @@ def build_on_detected(
 
 def _lock_path_for(state_db_path: str) -> Path:
     # ロック専用の設定項目は増やさず、対象のstate.dbと同じ場所に`<db名>.lock`として置く
-    # (同じstate.dbを指す設定=同一の稼働対象、という前提で自然に一意になる)
+    # (同じstate.dbを指す設定=同一の稼働対象、という前提で自然に一意になる)。
+    # ただし`:memory:`(SqliteStateStoreがインメモリDBとして特別扱いする値、主にテスト用)は
+    # そのまま`with_suffix`するとファイル名に`:`を含んでしまいWindowsで不正なパスになるため、
+    # 固定のロックファイル名にフォールバックする
+    if state_db_path == ":memory:":
+        return Path(".gitlab-ai-platform-watch-memory.lock")
     return Path(state_db_path).with_suffix(".lock")
 
 

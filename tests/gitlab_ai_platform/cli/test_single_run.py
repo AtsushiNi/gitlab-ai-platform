@@ -427,7 +427,7 @@ def test_execute_review_marks_failed_when_done_update_itself_fails(tmp_path):
         inner_store.close()
 
 
-def testbuild_workspace_manager_clears_existing_credential_helper_before_setting_own(tmp_path):
+def test_build_workspace_manager_clears_existing_credential_helper_before_setting_own(tmp_path):
     # gitはcredential.helperを複数個「追加」していく仕組みのため、既存の設定
     # (実行環境の~/.gitconfig等)を空値でクリアしてから独自のものを設定する必要がある
     config = _config(tmp_path)
