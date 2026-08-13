@@ -95,16 +95,17 @@ TOOL_FACTORIES: dict[str, ToolFactory] = {
 `server.py`の`create_server`はこの対応表を走査して`MCPServer.add_tool`を呼ぶだけで、
 権限の実体(何を許可するか)は`tools.py`の対応表そのものが担う。
 
-**M2-10([#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47))マージ後のTODO**:
+**M2-10([#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47))マージ後のTODO**
+(M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み):
 `GitLabReader`/`GitLabWriter`に`list_issues`/`get_issue`/`create_issue`/`update_issue`/
-`update_merge_request`が追加された時点で、以下を行う必要がある。
+`update_merge_request`が追加された時点で、以下を行う必要があった。
 
 1. `tools.py`に各メソッド用の`_make_xxx`ファクトリ関数を追加し、`TOOL_FACTORIES`/
    `TOOL_DESCRIPTIONS`に登録する
 2. `tests/gitlab_ai_platform/mcp_bridge/test_server.py`の
-   `_EXPECTED_ALLOWED_TOOL_NAMES`(現在9個決め打ち)を新しいメソッド集合に更新する
+   `_EXPECTED_ALLOWED_TOOL_NAMES`(当時9個決め打ち)を新しいメソッド集合に更新する
    (更新しない限り`test_allowed_tool_names_matches_gitlab_adapter_protocol_exactly`が
-   意図的に失敗し続け、追従漏れに気づける設計にしてある)
+   意図的に失敗し続け、追従漏れに気づける設計にしてあった)
 3. 本specの「対象ツール」節・入出力スキーマを追記する
 
 この対応表方式にしたのは、Protocol由来の完全自動列挙も検討したが「却下した選択肢」の通り
@@ -161,7 +162,7 @@ TOOL_FACTORIES: dict[str, ToolFactory] = {
 | 担保したい性質 | 実装 | テスト |
 |---|---|---|
 | merge・branch削除・管理操作がこのブリッジ経由で呼び出せない | `tools.py`の`TOOL_FACTORIES`に該当メソッドを追加しない(Adapter自体にメソッドが存在しないため追加しようがない) | `tests/.../test_server.py::test_allowed_tool_names_does_not_include_forbidden_operations`、`test_call_tool_rejects_forbidden_operations_as_unknown`(未知のツールとして拒否されることを確認) |
-| 公開ツール集合がAdapterの許可リストを超えない | `ALLOWED_TOOL_NAMES = frozenset(TOOL_FACTORIES)`を、現時点の9メソッドという決め打ち集合、および`GitLabReader`/`GitLabWriter`のProtocol由来の集合の両方と突き合わせる | `test_allowed_tool_names_matches_current_nine_method_allow_list`、`test_allowed_tool_names_matches_gitlab_adapter_protocol_exactly` |
+| 公開ツール集合がAdapterの許可リストを超えない | `ALLOWED_TOOL_NAMES = frozenset(TOOL_FACTORIES)`を、現時点の14メソッドという決め打ち集合、および`GitLabReader`/`GitLabWriter`のProtocol由来の集合の両方と突き合わせる | `test_allowed_tool_names_matches_current_fourteen_method_allow_list`、`test_allowed_tool_names_matches_gitlab_adapter_protocol_exactly` |
 | 認証情報がツールの引数・戻り値・エラーメッセージに含まれない | ツール関数はAdapterのメソッド呼び出しに徹し、トークンを一切扱わない。`main.py`はconfig層のみからトークンを取得しAdapter構築にのみ使う | `tests/.../test_secrets.py`(ダミートークンを使い、成功時レスポンス・エラーメッセージ・ツール説明文のいずれにも含まれないことを検証) |
 
 ## 影響
@@ -172,5 +173,6 @@ TOOL_FACTORIES: dict[str, ToolFactory] = {
 - M2-4(追加調査モード)・M2-11(要件→Issue分解ワークフロー)は、本ブリッジの起動コマンドを
   対話型Claude Codeの`--mcp-config`に登録することを前提に設計できるようになる。
 - M2-10([#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47))マージ後、
-  「決定」節のTODOに従って`tools.py`・テスト・specを追従させる必要がある(このADR自体も
-  対象メソッド数の記述を更新すること)。
+  「決定」節のTODOに従って`tools.py`・テスト・specを追従させる必要があった
+  (M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み。
+  対象メソッド数は9→14に更新した)。

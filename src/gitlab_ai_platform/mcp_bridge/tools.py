@@ -7,10 +7,13 @@
   既に存在するメソッドだけをツールとして透過的に公開する層であり、`GitLabWriter`の許可リストを
   回避・拡張する経路になってはならない。merge・branch削除・管理操作はAdapter自体にメソッドが
   存在しないため、このモジュールにも対応するツールを追加しない(追加できない)。
-- 1メソッド=1ファクトリ関数の対応表(`TOOL_FACTORIES`)として持つ。将来M2-10([#47](
-  https://github.com/AtsushiNi/gitlab-ai-platform/issues/47))で`GitLabReader`/`GitLabWriter`に
-  メソッドが追加された場合、このファイルに対応するファクトリ関数を1つ追加し
-  `TOOL_FACTORIES`に登録するだけで拡張できる形にしている(詳細はADR-0010のTODO参照)。
+- 1メソッド=1ファクトリ関数の対応表(`TOOL_FACTORIES`)として持つ。`GitLabReader`/
+  `GitLabWriter`にメソッドが追加された場合、このファイルに対応するファクトリ関数を1つ追加し
+  `TOOL_FACTORIES`に登録するだけで拡張できる。M2-10([#47](
+  https://github.com/AtsushiNi/gitlab-ai-platform/issues/47))で追加された
+  `list_issues`/`get_issue`/`create_issue`/`update_issue`/`update_merge_request`は
+  M2-12フォローアップ([#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65))で
+  対応済み。
 - 各ツール関数の引数・戻り値はプリミティブ型/`dict`/`list`のみとし、GitLab Adapterのdataclass
   (`gitlab_adapter/types.py`)はMCPクライアントに直接公開しない
   (`serialization.to_jsonable`で変換する)。
@@ -99,7 +102,28 @@ def _make_list_merge_request_discussions(adapter: GitLabAdapter) -> Callable[...
     return list_merge_request_discussions
 
 
-# -- GitLabWriter (書き込み4メソッド。ADR-0002の許可リストのみ) -------------------
+def _make_list_issues(adapter: GitLabAdapter) -> Callable[..., Any]:
+    def list_issues(
+        project: str,
+        labels: list[str] | None = None,
+        state: str = "opened",
+    ) -> list[dict[str, Any]]:
+        """指定プロジェクトのIssue一覧を取得する。"""
+        result = adapter.list_issues(project, labels=tuple(labels or ()), state=state)
+        return [to_jsonable(issue) for issue in result]
+
+    return list_issues
+
+
+def _make_get_issue(adapter: GitLabAdapter) -> Callable[..., Any]:
+    def get_issue(project: str, issue_iid: int) -> dict[str, Any]:
+        """Issueの詳細を取得する。"""
+        return to_jsonable(adapter.get_issue(project, issue_iid))
+
+    return get_issue
+
+
+# -- GitLabWriter (書き込み7メソッド。ADR-0002の許可リストのみ) -------------------
 
 
 def _make_create_branch(adapter: GitLabAdapter) -> Callable[..., Any]:
@@ -157,11 +181,49 @@ def _make_create_merge_request_comment(adapter: GitLabAdapter) -> Callable[..., 
     return create_merge_request_comment
 
 
+def _make_update_merge_request(adapter: GitLabAdapter) -> Callable[..., Any]:
+    def update_merge_request(
+        project: str,
+        mr_iid: int,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """MRのタイトル・説明を更新する。close/reopen/merge等の状態遷移は行えない
+        (`state_event`相当の引数がAdapter側のメソッドシグネチャに存在しないため)。"""
+        return to_jsonable(
+            adapter.update_merge_request(project, mr_iid, title=title, description=description)
+        )
+
+    return update_merge_request
+
+
+def _make_create_issue(adapter: GitLabAdapter) -> Callable[..., Any]:
+    def create_issue(project: str, title: str, description: str = "") -> dict[str, Any]:
+        """Issueを作成する。"""
+        return to_jsonable(adapter.create_issue(project, title, description=description))
+
+    return create_issue
+
+
+def _make_update_issue(adapter: GitLabAdapter) -> Callable[..., Any]:
+    def update_issue(
+        project: str,
+        issue_iid: int,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Issueのタイトル・説明を更新する。close/reopen等の状態遷移は行えない
+        (`update_merge_request`と同じ理由)。"""
+        return to_jsonable(
+            adapter.update_issue(project, issue_iid, title=title, description=description)
+        )
+
+    return update_issue
+
+
 # `GitLabAdapter`(Protocol)のメソッド名 → ツールファクトリ、の対応表。
-# キーの集合は、現時点の`GitLabReader`(5) + `GitLabWriter`(4) = 9メソッドの許可リストと
+# キーの集合は、`GitLabReader`(7) + `GitLabWriter`(7) = 14メソッドの許可リストと
 # 完全一致する(`tests/gitlab_ai_platform/mcp_bridge/test_server.py`で検証)。
-# M2-10(#47)でAdapterにメソッドが追加された場合は、対応するファクトリ関数をこのファイルに
-# 追加した上でこの辞書に1行追加する(ADR-0010のTODO参照)。
 TOOL_FACTORIES: dict[str, ToolFactory] = {
     # -- 読み取り --
     "get_version": _make_get_version,
@@ -169,11 +231,16 @@ TOOL_FACTORIES: dict[str, ToolFactory] = {
     "get_merge_request": _make_get_merge_request,
     "get_merge_request_diffs": _make_get_merge_request_diffs,
     "list_merge_request_discussions": _make_list_merge_request_discussions,
+    "list_issues": _make_list_issues,
+    "get_issue": _make_get_issue,
     # -- 書き込み(ADR-0002の許可リストのみ) --
     "create_branch": _make_create_branch,
     "push_file_changes": _make_push_file_changes,
     "create_merge_request": _make_create_merge_request,
     "create_merge_request_comment": _make_create_merge_request_comment,
+    "update_merge_request": _make_update_merge_request,
+    "create_issue": _make_create_issue,
+    "update_issue": _make_update_issue,
 }
 
 # 各ツールのMCP上の説明文(GitLab Adapterのspec/protocol.pyのdocstringを踏襲)。
@@ -183,6 +250,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_merge_request": "MRの詳細を取得する。",
     "get_merge_request_diffs": "MRの差分をファイル単位で取得する。",
     "list_merge_request_discussions": "MRのコメントを、返信関係を保ったスレッド単位で取得する。",
+    "list_issues": "指定プロジェクトのIssue一覧を取得する。",
+    "get_issue": "Issueの詳細を取得する。",
     "create_branch": "refを起点に新しいbranchを作成する。",
     "push_file_changes": (
         "branchにファイル変更のコミットをpushし、新しいcommit shaを返す。"
@@ -190,6 +259,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "create_merge_request": "MRを作成する。",
     "create_merge_request_comment": "MRにコメントを投稿する。",
+    "update_merge_request": "MRのタイトル・説明を更新する(close/reopen/merge等の状態遷移は不可)。",
+    "create_issue": "Issueを作成する。",
+    "update_issue": "Issueのタイトル・説明を更新する(close/reopen等の状態遷移は不可)。",
 }
 
 
