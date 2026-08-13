@@ -5,16 +5,21 @@
 - 関連ADR: なし。プロンプトの合成方式(`instructions`にRunnerがMRの実データを後から追記する形)
   自体は[ADR-0005](../adr/0005-claude-code-runner-design.md)(M1-7)で確定済みで、本Issueは
   その`instructions`引数の中身(レビュー観点の言語化)を決めるものであり、複数の技術的選択肢を
-  比較するような設計判断は発生していない
-- ステータス: 実装済み(プロンプト設計のみ。結果スキーマはM1-9)
+  比較するような設計判断は発生していない。「出力」セクションのJSON出力形式に関する設計判断は
+  [ADR-0006](../adr/0006-review-output-schema.md)(M1-9)に記録した
+- ステータス: 実装済み(プロンプト設計 + 結果スキーマに対応した出力形式の指示。
+  結果スキーマ自体の定義・保存は[review-output.md](review-output.md)、M1-9)
 
 ## 責務
 
 MRレビュー用のプロンプト(`instructions`文字列)を設計し、`build_review_instructions()`として
 提供する。`docs/architecture.md`のReviewの責務のうち、レビュープロンプトの設計を担当する。
 指摘ごとの重要度/ファイル/行/根拠/提案をJSON(機械可読)・Markdown(人間可読)として構造化する
-結果スキーマの定義は[M1-9](https://github.com/AtsushiNi/gitlab-ai-platform/issues/37)の責務であり、
-本ファイル・本モジュールでは扱わない。
+結果スキーマの定義・保存は[review-output.md](review-output.md)
+([M1-9](https://github.com/AtsushiNi/gitlab-ai-platform/issues/37))の責務であり、本ファイル・
+本モジュールでは扱わない。ただし「出力」セクション(下記)は、そのスキーマ
+(`review.types.Finding`)とClaude Codeの応答形式を1対1に対応させる契約を持つため、
+両ファイルは対で変更すること。
 
 ## 前提と非対象
 
@@ -34,7 +39,8 @@ MRレビュー用のプロンプト(`instructions`文字列)を設計し、`buil
     付与する責務であり(ADR-0005)、この探索指示を実際に活かせるかは呼び出し側の設定次第
     (現時点ではまだ`review/`を呼び出すオーケストレーター(M1-12)が存在しないため未検証)
 - 非対象:
-  - 指摘の構造化(JSON/Markdownへの変換、`reviews/<project>/<mr_iid>/<sha>/`への保存)はM1-9
+  - 指摘の構造化(Claude Codeの応答からのJSON抽出・検証、Markdownへの変換、
+    `reviews/<project>/<mr_iid>/<sha>/`への保存)は[review-output.md](review-output.md)(M1-9)
   - GitLabへの自動投稿の可否判断(`docs/architecture.md`のReviewの境界。最終判断は人間)
   - レビュー対象を絞り込むかどうかの判断(MR Poller、`poller/`の責務)
 
@@ -73,13 +79,20 @@ import build_review_instructions`)。
 
    これらはRunnerが渡すMR情報(タイトル・説明・コメント・diff)だけでは判断できず、
    worktree上のリポジトリを実際に探索しないと確認できない項目を意図的に選んでいる
-4. **出力**: 指摘ごとに重要度・対象ファイル・行・根拠・改善案を書くよう求める。ただし
-   JSON等の厳密なスキーマは指定しない(M1-9で結果スキーマが定義されるまでの暫定)。
+4. **出力**: まず自然文で確認事項(確信が持てない点)を書かせたうえで、応答の末尾に
+   ```json フェンスで囲んだJSONオブジェクトを1つだけ出力させる。JSONは`summary`(文字列)と
+   `findings`(配列、要素は`severity`/`file`/`line`/`rationale`/`suggestion`)を持ち、
+   `review.types.Finding`(M1-9、[review-output.md](review-output.md))と1対1になる
+   フィールド構成にしている。指摘が無い場合は`findings`を空配列にする(無理に指摘を作らせない
+   という2.の意図をJSON化後も維持する)。この形式の設計判断は
+   [ADR-0006](../adr/0006-review-output-schema.md)に記録した。
+
    Runnerは`claude -p ... --output-format json`で実行するため、Claude Codeの最終応答は
    常に`RunResult.result_text`としてJSON文字列の1フィールドに収まる
    ([`claude-code-runner.md`](claude-code-runner.md)の「入出力スキーマ」)。これはCLI呼び出しの
    ラッピングであり、`result_text`の中身(本プロンプトが求めるレビュー内容の書式)とは別の話である。
-   本Issue(M1-8)ではこの中身の書式を厳密化せず、M1-9で結果スキーマとあわせて再検討する
+   `review.parser.parse_review_output`が`result_text`の中身から上記の```json ブロックを
+   抽出・検証する(詳細は[review-output.md](review-output.md))
 
 ## エラー時の振る舞い
 
@@ -92,6 +105,10 @@ import build_review_instructions`)。
 - 戻り値が空でない文字列であること、呼び出すたびに同じ内容を返す(決定的)ことを検証する
 - 「重視する観点」「抑制する観点」「探索を促す指示」「出力ガイダンス」の各要素が
   キーワードとして本文に含まれることを検証する
+- 「出力」セクションが```json フェンスと`Finding`のフィールド名(`summary`/`findings`/
+  `severity`/`critical`/`major`/`minor`/`file`/`line`/`rationale`/`suggestion`)を
+  含むことを検証する(`review.parser.parse_review_output`が前提とするスキーマとの
+  整合の回帰テスト)
 - MR固有のデータ(`## Merge Request`等、Runner側が追記する見出し)を含まないことを検証する
 - Runner(`runner/subprocess_runner.py`)の`_build_prompt`と実際に組み合わせ、
   MR情報が指示文の後に重複なく1回だけ現れることを検証する
@@ -102,5 +119,8 @@ import build_review_instructions`)。
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のReview行
 - [claude-code-runner.md](claude-code-runner.md) — `instructions`引数とMR情報の合成方式
   (`_build_prompt`)
+- [review-output.md](review-output.md) — 結果スキーマ・保存レイアウト(M1-9)。「出力」
+  セクションと1対1の契約
+- [ADR-0006](../adr/0006-review-output-schema.md) — 「出力」セクションのJSON形式の設計判断
 - `references/タスク整理.md` M1-8/M1-9 — レビュー観点・結果スキーマの元ネタ
 - ソースコード: `src/gitlab_ai_platform/review/`(`prompts.py` / `__init__.py`)

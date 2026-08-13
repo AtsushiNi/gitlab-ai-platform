@@ -40,14 +40,26 @@ def test_instructs_to_explore_repository_beyond_diff():
     assert "既存の実装" in instructions
 
 
-def test_includes_output_guidance_without_committing_to_json_schema():
+def test_includes_output_guidance_with_field_names():
     instructions = build_review_instructions()
 
-    # M1-9で結果スキーマ(JSON化)を定義するまでは、出力形式の指示は
-    # 重要度/ファイル/行/根拠/改善案という項目名の言及に留める(厳密なJSON構造は書かない)
     for keyword in ["重要度", "ファイル", "根拠", "改善案"]:
         assert keyword in instructions
-    assert "```json" not in instructions
+
+
+def test_includes_structured_json_schema_matching_finding():
+    """`review.types.Finding`のフィールドと1対1になるJSONスキーマを指示していること。"""
+    instructions = build_review_instructions()
+
+    assert "```json" in instructions
+    for keyword in ["summary", "findings", "severity", "critical", "major", "minor", "file", "line", "rationale", "suggestion"]:
+        assert keyword in instructions
+
+
+def test_instructs_exactly_one_trailing_json_block():
+    instructions = build_review_instructions()
+
+    assert "必ず1つだけ" in instructions
 
 
 def test_does_not_contain_mr_specific_data():
