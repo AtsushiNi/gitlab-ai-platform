@@ -36,22 +36,29 @@ _logger = get_logger(__name__)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-
-    setup_logging(level=args.log_level, log_dir=args.log_dir)
-
+    # Ctrl+C(SIGINT)は、設定読み込み・ロガー初期化を含むmain全体のどの時点で
+    # 発生してもEXIT_INTERRUPTED(130)に揃える。以前はレビュー実行中のみを
+    # 対象にしており、load_config中の中断が未加工のtracebackになっていた
     try:
-        config = load_config(config_path=args.config, env_path=args.env)
-    except ConfigError as exc:
-        print(f"設定エラー: {exc}", file=sys.stderr)
-        return exit_codes.EXIT_CONFIG_ERROR
+        parser = _build_parser()
+        args = parser.parse_args(argv)
 
-    if args.command == "review":
-        return _run_review_command(config, args)
+        setup_logging(level=args.log_level, log_dir=args.log_dir)
 
-    parser.error(f"不明なコマンドです: {args.command!r}")
-    return exit_codes.EXIT_UNEXPECTED_ERROR  # pragma: no cover - parser.errorがexitする
+        try:
+            config = load_config(config_path=args.config, env_path=args.env)
+        except ConfigError as exc:
+            print(f"設定エラー: {exc}", file=sys.stderr)
+            return exit_codes.EXIT_CONFIG_ERROR
+
+        if args.command == "review":
+            return _run_review_command(config, args)
+
+        parser.error(f"不明なコマンドです: {args.command!r}")
+        return exit_codes.EXIT_UNEXPECTED_ERROR  # pragma: no cover - parser.errorがexitする
+    except KeyboardInterrupt:
+        print("中断されました", file=sys.stderr)
+        return exit_codes.EXIT_INTERRUPTED
 
 
 def _run_review_command(config: Config, args: argparse.Namespace) -> int:
@@ -89,9 +96,6 @@ def _run_review_command(config: Config, args: argparse.Namespace) -> int:
             _logger.error("cli.review_failed", extra={"stage": "state_store", "error": str(exc)})
             print(f"State Storeエラー: {exc}", file=sys.stderr)
             return exit_codes.EXIT_STATE_STORE_ERROR
-        except KeyboardInterrupt:
-            print("中断されました", file=sys.stderr)
-            return exit_codes.EXIT_INTERRUPTED
 
     _print_summary(result)
     return exit_codes.EXIT_OK
@@ -111,6 +115,15 @@ def _print_summary(result: SingleRunResult) -> None:
     print(f"  結果(JSON): {result.review_paths.result_json}")
     print(f"  実行ログ: {result.run_result.log_path}")
     print(f"  worktree: {result.worktree_path}")
+
+
+def _positive_int(value: str) -> int:
+    # config.tomlのrunner.timeout_seconds(_require_positive_int)と同じ制約を
+    # コマンドライン引数側にも課す。0や負値がそのままRunnerへ渡ると即タイムアウトする
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"正の整数を指定してください: {value!r}")
+    return parsed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -140,7 +153,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument("mr_iid", type=int, help="MRのIID")
     review_parser.add_argument(
         "--timeout",
-        type=int,
+        type=_positive_int,
         default=None,
         help="Claude Codeのタイムアウト秒数(省略時はconfig.tomlのrunner.timeout_seconds)",
     )

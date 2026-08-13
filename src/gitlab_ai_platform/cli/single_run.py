@@ -23,6 +23,7 @@ import functools
 import os
 import subprocess
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from pathlib import Path
 from ..config import GITLAB_TOKEN_ENV_KEY, Config
 from ..gitlab_adapter import GitLabRestAdapter
 from ..gitlab_adapter.protocol import GitLabReader
+from ..logging_ import get_logger
 from ..review import (
     ReviewPaths,
     ReviewResult,
@@ -40,9 +42,12 @@ from ..review import (
 from ..runner import ReviewContext, RunResult, SubprocessClaudeCodeRunner, build_prompt
 from ..runner.protocol import ClaudeCodeRunner
 from ..store import DuplicateReviewError, ReviewStatus, SqliteStateStore
+from ..store.errors import StateStoreError
 from ..store.protocol import StateStore
 from ..workspace import GitWorkspaceManager
 from ..workspace.protocol import WorkspaceManager
+
+_logger = get_logger(__name__)
 
 # GitLabのHTTPS認証は、PATを`.git/config`やコマンド引数に残さないよう、gitのcredential
 # helperプロトコル(`get`要求に対して`username=`/`password=`を標準出力へ返す)経由で都度供給する
@@ -125,9 +130,17 @@ def execute_review(
     `config`は`runner_log_dir`等ではなく`runner_timeout_seconds`/`reviews_root`の
     デフォルト値・保存先としてのみ使う(具象実装の構築は`run_single_review`の責務)。
     """
-    merge_request = adapter.get_merge_request(project, mr_iid)
-    diffs = tuple(adapter.get_merge_request_diffs(project, mr_iid))
-    discussions = tuple(adapter.list_merge_request_discussions(project, mr_iid))
+    # 3つとも独立したGitLab REST呼び出しなので、CLIの主用途(デバッグ時に繰り返し実行する)
+    # で毎回の待ち時間を減らすため並列に取得する(逐次だと3回分のネットワーク往復が積み上がる)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        merge_request_future = executor.submit(adapter.get_merge_request, project, mr_iid)
+        diffs_future = executor.submit(adapter.get_merge_request_diffs, project, mr_iid)
+        discussions_future = executor.submit(
+            adapter.list_merge_request_discussions, project, mr_iid
+        )
+        merge_request = merge_request_future.result()
+        diffs = tuple(diffs_future.result())
+        discussions = tuple(discussions_future.result())
     sha = merge_request.sha
 
     _ticket_running(store, project, mr_iid, sha)
@@ -164,20 +177,36 @@ def execute_review(
             input_prompt=input_prompt,
             run_log_path=run_result.log_path,
         )
+
+        # DONEへの更新も同じtry内に含める。ここが失敗した場合もFAILEDへの更新を
+        # 試みる(成功していれば再実行不要だとわかるように、失敗していれば
+        # 再実行が必要だとわかるように、RUNNINGのまま放置しない)
+        store.update_status(
+            project,
+            mr_iid,
+            sha,
+            ReviewStatus.DONE,
+            reviewed_at=datetime.now(UTC),
+            result_path=str(review_paths.dir),
+        )
     except Exception:
         # 起票(RUNNING)後に失敗した場合は、再実行時に状態が追えるようFAILEDへ更新してから
-        # 元の例外をそのまま再送出する(CLIが終了コードへ変換する)
-        store.update_status(project, mr_iid, sha, ReviewStatus.FAILED)
+        # 元の例外をそのまま再送出する(CLIが終了コードへ変換する)。FAILEDへの更新自体が
+        # 失敗しても(例: DB接続不良)、元の例外(RunnerError等)をStateStoreErrorで
+        # 上書きせず、ログに残した上で元の例外を優先する
+        try:
+            store.update_status(project, mr_iid, sha, ReviewStatus.FAILED)
+        except StateStoreError as update_exc:
+            _logger.error(
+                "single_run.failed_status_update_failed",
+                extra={
+                    "project": project,
+                    "mr_iid": mr_iid,
+                    "sha": sha,
+                    "error": str(update_exc),
+                },
+            )
         raise
-
-    store.update_status(
-        project,
-        mr_iid,
-        sha,
-        ReviewStatus.DONE,
-        reviewed_at=datetime.now(UTC),
-        result_path=str(review_paths.dir),
-    )
 
     return SingleRunResult(
         project=project,
@@ -221,7 +250,11 @@ def _build_workspace_manager(config: Config) -> GitWorkspaceManager:
         config.workspace_root,
         _clone_url_for(config.gitlab_url),
         max_disk_bytes=config.workspace_max_disk_mb * 1024 * 1024,
-        git_config={"credential.helper": _credential_helper()},
+        # 空値で既存のcredential.helper(実行環境の~/.gitconfig等に設定済みのものが
+        # あれば)を一旦クリアしてから、PAT供給用のものだけを設定する。gitは
+        # credential.helperを複数個「追加」していく仕組みのため、クリアしないと
+        # 既存の設定が先に応答してPATが使われない可能性がある
+        git_config=(("credential.helper", ""), ("credential.helper", _credential_helper())),
         run=run_with_token,
     )
 

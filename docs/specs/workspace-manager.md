@@ -64,7 +64,7 @@ GitWorkspaceManager(
     clone_url_for: Callable[[str], str],
     *,
     max_disk_bytes: int,
-    git_config: Mapping[str, str] | None = None,
+    git_config: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 )
 ```
@@ -73,7 +73,9 @@ GitWorkspaceManager(
 - `clone_url_for`: project名(`group/project`形式)からbare clone用URLを組み立てる関数
 - `max_disk_bytes`: `<root>/worktrees/`配下の合計サイズの上限(バイト)。必須(デフォルト無し)
 - `git_config`: 全gitコマンド呼び出しに`-c key=value`として注入する追加設定
-  (`credential.helper` / `core.sshCommand`等の認証設定を想定)
+  (`credential.helper` / `core.sshCommand`等の認証設定を想定)。`Mapping`(キー毎に1個)の他、
+  同じキーを複数回渡したい場合(例: 既存の`credential.helper`を空値でクリアしてから
+  新しい値を設定する、M1-10)のために`(key, value)`のタプル列も受け付ける
 
 ## 入出力スキーマ
 

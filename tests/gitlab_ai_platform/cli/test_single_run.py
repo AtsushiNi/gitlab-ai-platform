@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from gitlab_ai_platform.cli.single_run import (
+    _build_workspace_manager,
     _clone_url_for,
     _credential_helper,
     execute_review,
@@ -17,6 +18,7 @@ from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.runner.errors import ClaudeCodeTimeoutError
 from gitlab_ai_platform.review.errors import ReviewOutputParseError
 from gitlab_ai_platform.store import ReviewStatus, SqliteStateStore
+from gitlab_ai_platform.store.errors import StateStoreError
 from gitlab_ai_platform.workspace import WorktreeHandle
 from gitlab_ai_platform.workspace.errors import GitCommandError
 
@@ -350,3 +352,93 @@ def test_credential_helper_references_token_env_var_without_leaking_value():
     assert GITLAB_TOKEN_ENV_KEY in helper
     assert helper.startswith("!")
     assert "secret-token" not in helper
+
+
+class _FlakyStore:
+    """SqliteStateStoreをラップし、update_statusの呼び出しを指定回数だけ失敗させるフェイク。"""
+
+    def __init__(self, inner: SqliteStateStore, *, fail_update_status_times: int = 0) -> None:
+        self._inner = inner
+        self._fail_update_status_times = fail_update_status_times
+        self.update_status_calls: list[ReviewStatus] = []
+
+    def find(self, *args, **kwargs):
+        return self._inner.find(*args, **kwargs)
+
+    def create(self, *args, **kwargs):
+        return self._inner.create(*args, **kwargs)
+
+    def update_status(self, project, mr_iid, sha, status, **kwargs):
+        self.update_status_calls.append(status)
+        if self._fail_update_status_times > 0:
+            self._fail_update_status_times -= 1
+            raise StateStoreError("boom")
+        return self._inner.update_status(project, mr_iid, sha, status, **kwargs)
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+def test_execute_review_preserves_original_exception_when_failed_status_update_also_fails(tmp_path):
+    # FAILEDへの更新自体が失敗しても、元の例外(ここではClaudeCodeTimeoutError)が
+    # StateStoreErrorにすり替わらず、そのまま伝播することの回帰テスト
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(_merge_request())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(
+        fail=ClaudeCodeTimeoutError(
+            "timed out", timeout_seconds=1, log_path=tmp_path / "log.json", stderr=""
+        )
+    )
+    inner_store = SqliteStateStore(":memory:")
+    store = _FlakyStore(inner_store, fail_update_status_times=1)
+
+    try:
+        with pytest.raises(ClaudeCodeTimeoutError):
+            execute_review(adapter, workspace, runner, store, config, _PROJECT, _MR_IID)
+
+        assert store.update_status_calls == [ReviewStatus.FAILED]
+    finally:
+        inner_store.close()
+
+
+def test_execute_review_marks_failed_when_done_update_itself_fails(tmp_path):
+    # 全段階が成功してもDONEへの更新自体が失敗した場合、RUNNINGのまま放置せず
+    # FAILEDへの更新を試みることの回帰テスト
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(_merge_request())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(_run_result(tmp_path))
+    inner_store = SqliteStateStore(":memory:")
+    store = _FlakyStore(inner_store, fail_update_status_times=1)
+
+    try:
+        with pytest.raises(StateStoreError):
+            execute_review(adapter, workspace, runner, store, config, _PROJECT, _MR_IID)
+
+        assert store.update_status_calls == [ReviewStatus.DONE, ReviewStatus.FAILED]
+        record = inner_store.find(_PROJECT, _MR_IID, _SHA)
+        assert record.status == ReviewStatus.FAILED
+    finally:
+        inner_store.close()
+
+
+def test_build_workspace_manager_clears_existing_credential_helper_before_setting_own(tmp_path):
+    # gitはcredential.helperを複数個「追加」していく仕組みのため、既存の設定
+    # (実行環境の~/.gitconfig等)を空値でクリアしてから独自のものを設定する必要がある
+    config = _config(tmp_path)
+
+    manager = _build_workspace_manager(config)
+
+    config_args = manager._config_args()  # noqa: SLF001
+    helper_values = [
+        config_args[i + 1].removeprefix("credential.helper=")
+        for i in range(len(config_args) - 1)
+        if config_args[i] == "-c" and config_args[i + 1].startswith("credential.helper=")
+    ]
+    assert helper_values[0] == ""
+    assert helper_values[1] != ""

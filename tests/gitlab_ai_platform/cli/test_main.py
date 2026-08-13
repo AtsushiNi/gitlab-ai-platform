@@ -212,3 +212,25 @@ def test_main_requires_a_subcommand(tmp_path):
         main(["--config", str(config_path), "--env", str(env_path)])
 
     assert excinfo.value.code == 2
+
+
+def test_main_handles_keyboard_interrupt_during_config_loading(tmp_path, monkeypatch, capsys):
+    # 以前はrun_single_review呼び出し中のみKeyboardInterruptをEXIT_INTERRUPTEDへ変換しており、
+    # load_config中の中断は未加工のtracebackになっていた回帰テスト
+    def _raise(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.load_config", _raise)
+
+    exit_code = main(_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_INTERRUPTED
+    assert "中断されました" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_review_command_rejects_non_positive_timeout(tmp_path, value):
+    with pytest.raises(SystemExit) as excinfo:
+        main(_argv(tmp_path, "--timeout", value))
+
+    assert excinfo.value.code == 2
