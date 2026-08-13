@@ -11,8 +11,10 @@
   (プロジェクト作成/メンバー管理等)は意図的にメソッドとして定義しない
   ( `references/spike-S2-gitlab-rest-api.md` の通り、PATスコープだけでは
   「MR作成は許可するがmergeは禁止」という粒度の制御ができないため、機構をコード側に持たせる)。
-  実行時の追加チェック(例: `push_file_changes`の対象branchがprotectedでないことの検証)は
-  実装側(REST実装, M1-2)と許可リスト機構の強化(M1-3)の責務。
+  実行時の追加チェック(`push_file_changes`の対象branchがprotectedでないことの検証)は
+  実装側(REST実装, [M1-2](https://github.com/AtsushiNi/gitlab-ai-platform/issues/30))が行う
+  (`ProtectedBranchError`)。書き込み操作の実行記録(監査ログ)は
+  [M1-3](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31)でREST実装側に追加した。
 """
 
 from __future__ import annotations
@@ -75,8 +77,8 @@ class GitLabWriter(Protocol):
     ) -> str:
         """`branch`にファイル変更のコミットをpushし、新しいcommit shaを返す。
 
-        Commits API経由のコミット作成であり、git経由の直接pushではない。実装は対象branchが
-        protectedの場合に拒否すること(M1-3で許可リスト機構として強化)。
+        Commits API経由のコミット作成であり、git経由の直接pushではない。実装(REST, M1-2)は
+        対象branchがprotectedの場合、GitLab APIへ到達する前に`ProtectedBranchError`を送出して拒否する。
         """
         ...
 
