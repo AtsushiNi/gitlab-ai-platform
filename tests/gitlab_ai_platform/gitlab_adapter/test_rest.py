@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
+import requests
 
 from gitlab_ai_platform.gitlab_adapter import (
     CommitAction,
@@ -39,13 +40,16 @@ class _FakeResponse:
 class _FakeSession:
     """`requests.Session`の代わりに使うテスト用フェイク。実サービスには繋がない。"""
 
-    def __init__(self, responses: Sequence[_FakeResponse]) -> None:
+    def __init__(self, responses: Sequence[_FakeResponse | Exception]) -> None:
         self._responses = list(responses)
         self.calls: list[dict[str, Any]] = []
 
     def request(self, method: str, url: str, **kwargs: Any) -> _FakeResponse:
         self.calls.append({"method": method, "url": url, **kwargs})
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def _adapter(
@@ -647,3 +651,42 @@ def test_create_merge_request_comment_records_error_audit_log_on_malformed_respo
     records = _write_log_records(caplog)
     assert len(records) == 1
     assert records[0].status == "error"
+
+
+def test_connection_error_is_wrapped_as_gitlab_api_error_after_retries_exhausted():
+    # requestsの生の例外がそのまま伝播すると、呼び出し側(Poller等)がGitLabAdapterError
+    # だけをcatchする契約をすり抜けてしまう回帰テスト。GETはリトライ対象なので、
+    # 予算(max_retries=3、_adapterのデフォルト)を使い切るだけの回数を用意する
+    adapter, session = _adapter([requests.exceptions.ConnectionError("connection refused")] * 4)
+
+    with pytest.raises(GitLabApiError):
+        adapter.get_version()
+
+    assert len(session.calls) == 4
+
+
+def test_connection_error_on_get_is_retried_then_succeeds():
+    sleeps: list[float] = []
+    adapter, session = _adapter(
+        [
+            requests.exceptions.ConnectionError("connection refused"),
+            _FakeResponse(json_data={"version": "17.0.0"}),
+        ],
+        sleep=sleeps.append,
+    )
+
+    assert adapter.get_version() == "17.0.0"
+    assert len(sleeps) == 1
+    assert len(session.calls) == 2
+
+
+def test_connection_error_on_post_is_not_retried():
+    # 非冪等な書き込み操作は、送信済みかどうか判別できない接続エラーで再送しない
+    adapter, session = _adapter(
+        [requests.exceptions.ConnectionError("connection refused")]
+    )
+
+    with pytest.raises(GitLabApiError):
+        adapter.create_branch("group/project", "feature/x", "main")
+
+    assert len(session.calls) == 1
