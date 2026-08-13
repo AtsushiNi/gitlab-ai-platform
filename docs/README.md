@@ -44,6 +44,7 @@
   M4でAIが実装の根拠として読むことを想定した粒度で書く
 - [specs/gitlab-adapter.md](specs/gitlab-adapter.md) — GitLab Adapter(M1-1)の仕様。
   最初の実例
+- [specs/state-store.md](specs/state-store.md) — State Store(M1-4)の仕様
 
 ## 更新ルール
 
