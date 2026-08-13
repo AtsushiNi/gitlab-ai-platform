@@ -1,3 +1,5 @@
+import sqlite3
+import threading
 from datetime import datetime
 
 import pytest
@@ -87,3 +89,54 @@ def test_records_are_isolated_per_project_mr_commit(store):
     assert store.find("group/project-b", 1, "abc123") is None
     assert store.find("group/project-a", 2, "abc123") is None
     assert store.find("group/project-a", 1, "def456") is None
+
+
+def test_update_status_without_reviewed_at_or_result_path_preserves_existing_values(store):
+    # reviewed_at/result_pathを省略した更新(例: DONE→FAILEDへの状態遷移のみ)が、
+    # 既に記録済みの値を意図せずNULLへ巻き戻さないこと
+    store.create("group/project", 1, "abc123")
+    reviewed_at = datetime(2026, 8, 13, 12, 0, 0)
+    store.update_status(
+        "group/project",
+        1,
+        "abc123",
+        ReviewStatus.DONE,
+        reviewed_at=reviewed_at,
+        result_path="reviews/group/project/1/abc123",
+    )
+
+    updated = store.update_status("group/project", 1, "abc123", ReviewStatus.FAILED)
+
+    assert updated.status == ReviewStatus.FAILED
+    assert updated.reviewed_at == reviewed_at
+    assert updated.result_path == "reviews/group/project/1/abc123"
+
+
+def test_create_does_not_mask_not_null_violation_as_duplicate_review(store):
+    # NOT NULL制約違反(呼び出し側のバグ)は、二重レビュー(PRIMARY KEY違反)と
+    # 区別してそのまま送出されること
+    with pytest.raises(sqlite3.IntegrityError) as excinfo:
+        store._conn.execute(
+            "INSERT INTO review_records "
+            "(project, mr_iid, commit_sha, status, reviewed_at, result_path) "
+            "VALUES (NULL, 1, 'abc123', 'PENDING', NULL, NULL)"
+        )
+    assert not isinstance(excinfo.value, DuplicateReviewError)
+
+
+def test_store_is_usable_from_a_different_thread_than_the_constructor(store):
+    # ADR-0003は複数プロセス・複数スレッドからの同時実行下での安全性を前提にしている
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            store.create("group/project", 99, "thread-sha")
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert errors == []
+    assert store.find("group/project", 99, "thread-sha") is not None

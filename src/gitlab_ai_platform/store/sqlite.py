@@ -37,7 +37,10 @@ class SqliteStateStore:
     """SQLite(標準ライブラリ`sqlite3`)経由で`StateStore`を実装する。"""
 
     def __init__(self, db_path: Path | str = ":memory:") -> None:
-        self._conn = sqlite3.connect(str(db_path))
+        # ADR-0003は「複数プロセス・複数スレッドからの同時実行下でも二重起票が起きない」ことを
+        # 前提にしている。check_same_thread=Falseにしないと、接続を作ったスレッド以外からの
+        # 呼び出しがProgrammingErrorで落ちてしまい、この前提を満たせない
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute(_CREATE_TABLE_SQL)
         self._conn.commit()
 
@@ -66,6 +69,10 @@ class SqliteStateStore:
                     (project, mr_iid, commit_sha, status.value),
                 )
         except sqlite3.IntegrityError as exc:
+            # PRIMARY KEY(=一意制約)違反だけをDuplicateReviewErrorに変換する。NOT NULL違反等
+            # (呼び出し側が不正な引数を渡したバグ)まで二重レビューとして握りつぶさないため
+            if "UNIQUE constraint failed" not in str(exc):
+                raise
             raise DuplicateReviewError(
                 f"({project!r}, {mr_iid!r}, {commit_sha!r}) は既にレビュー記録が存在します"
             ) from exc
@@ -85,8 +92,12 @@ class SqliteStateStore:
         result_path: str | None = None,
     ) -> ReviewRecord:
         with self._conn:
+            # reviewed_at/result_pathを指定しなかった呼び出し(None)は「変更しない」を意味する。
+            # COALESCEで既存値を維持し、指定した場合だけ新しい値で上書きする
             cursor = self._conn.execute(
-                "UPDATE review_records SET status = ?, reviewed_at = ?, result_path = ? "
+                "UPDATE review_records SET status = ?, "
+                "reviewed_at = COALESCE(?, reviewed_at), "
+                "result_path = COALESCE(?, result_path) "
                 "WHERE project = ? AND mr_iid = ? AND commit_sha = ?",
                 (
                     status.value,
@@ -102,14 +113,7 @@ class SqliteStateStore:
                     f"({project!r}, {mr_iid!r}, {commit_sha!r}) のレビュー記録が見つかりません"
                 )
 
-        return ReviewRecord(
-            project=project,
-            mr_iid=mr_iid,
-            commit_sha=commit_sha,
-            status=status,
-            reviewed_at=reviewed_at,
-            result_path=result_path,
-        )
+        return self.find(project, mr_iid, commit_sha)  # type: ignore[return-value]
 
     def close(self) -> None:
         self._conn.close()
