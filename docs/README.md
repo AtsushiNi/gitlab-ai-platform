@@ -39,8 +39,11 @@
 ### AI自身向け
 
 - `/CLAUDE.md`(リポジトリ直下) — このリポジトリ自体の開発規約
-- `docs/specs/` — コンポーネント仕様。まだ存在しない(D-6で着手)。M4でAIが実装の根拠として読む
-  ことを想定した粒度で書く
+- [specs/template.md](specs/template.md) — コンポーネント仕様のフォーマット定義(D-6)。
+  新しいコンポーネントの仕様を書くときはこれを複製する。1コンポーネント1ファイル、
+  M4でAIが実装の根拠として読むことを想定した粒度で書く
+- [specs/gitlab-adapter.md](specs/gitlab-adapter.md) — GitLab Adapter(M1-1)の仕様。
+  最初の実例
 
 ## 更新ルール
 

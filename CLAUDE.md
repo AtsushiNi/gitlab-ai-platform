@@ -58,7 +58,8 @@
 
 1. **コードの挙動を変える変更は、対応する `docs/specs/` または `docs/operations/` の記述も
    同じPR/コミットで更新する。** 別Issueに先送りしない
-   (`docs/specs/` はD-6[#10]でまだ新設されていない場合は対象外。存在すれば必ず更新する)
+   (`docs/specs/` はフォーマット定義済み[D-6/#10]。該当コンポーネントの仕様ファイルが
+   まだ無ければ [docs/specs/template.md](docs/specs/template.md) を複製して新規作成する)
 2. **設計判断は ADR([docs/adr/](docs/adr/))に残す。** 迷ったら書く
 3. **`references/` は一次資料であり正式ドキュメントではない。** 設計判断や仕様として確定した
    内容は `docs/` 側に昇格させる(`references/` 側は改変せず記録として残す)
