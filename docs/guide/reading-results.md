@@ -1,7 +1,7 @@
 # レビュー結果の読み方
 
-- 対応Issue: [#19](https://github.com/AtsushiNi/gitlab-ai-platform/issues/19) (D-15)
 - ステータス: 執筆済み
+- 対応Issue: [#19](https://github.com/AtsushiNi/gitlab-ai-platform/issues/19) (D-15)
 
 AIレビュー(Review, M1-9)が出力した結果を、実装者・レビュアーがどう読むかのガイド。
 出力ファイルのスキーマ・保存レイアウトの正式な定義は
