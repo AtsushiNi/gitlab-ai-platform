@@ -570,3 +570,80 @@ def test_create_merge_request_comment_records_success_audit_log_without_body(
     assert records[0].note_id == 42
     # コメント本文そのものは監査ログに含めない(機微・任意長になりうるため)
     assert not hasattr(records[0], "body")
+
+
+# 2xxだが必須フィールドが欠けている(=マッピングに失敗する)応答は、監査ログ上も
+# 「成功」や「記録なし」ではなく必ず"error"として残ることを確認する回帰テスト群。
+
+
+def test_create_branch_records_error_audit_log_on_malformed_response(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_FakeResponse(json_data={"name": "feature/x"})])  # commit欠落
+
+    with pytest.raises(GitLabApiError):
+        adapter.create_branch("group/project", "feature/x", "main")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].status == "error"
+
+
+def test_push_file_changes_records_error_audit_log_on_malformed_response(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_unprotected_branch_response(), _FakeResponse(json_data={})])
+    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+
+    with pytest.raises(GitLabApiError):
+        adapter.push_file_changes("group/project", "feature/x", "fix", actions)
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].status == "error"
+
+
+def test_push_file_changes_records_error_audit_log_when_protected_check_fails(
+    caplog: pytest.LogCaptureFixture,
+):
+    """protected branch確認用のGET自体がエラーになった場合も監査ログに残ること。"""
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_FakeResponse(status_code=404, json_data={"message": "not found"})])
+    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+
+    with pytest.raises(GitLabApiError):
+        adapter.push_file_changes("group/project", "no-such-branch", "fix", actions)
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].status == "error"
+
+
+def test_create_merge_request_records_error_audit_log_on_malformed_response(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_FakeResponse(json_data={"title": "no iid"})])
+
+    with pytest.raises(GitLabApiError):
+        adapter.create_merge_request("group/project", "feature/x", "main", "AI fix")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].status == "error"
+
+
+def test_create_merge_request_comment_records_error_audit_log_on_malformed_response(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_FakeResponse(json_data={"body": "no id"})])
+
+    with pytest.raises(GitLabApiError):
+        adapter.create_merge_request_comment("group/project", 9, "LGTM")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].status == "error"

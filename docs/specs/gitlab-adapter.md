@@ -172,7 +172,7 @@ class GitLabAdapter(GitLabReader, GitLabWriter, Protocol):
   - `operation`: メソッド名(例: `push_file_changes`)
   - `status`: `success` / `rejected_protected_branch`(`push_file_changes`がprotected branchを
     拒否した場合) / `error`(GitLab APIがエラーを返した場合)
-  - 操作対象を特定する識別子(`project` / `branch` / `mr_iid` / `mr.iid` / `note.id`等。
+  - 操作対象を特定する識別子(`project` / `branch` / `mr_iid` / `note_id`等。
     操作によって異なる)
 - **commit本文・MRの説明文・コメント本文など、任意長・機微になりうる内容は記録しない**。
   監査ログは「誰が/いつ/どのbranch・MRに対して/何の操作を/成功したか拒否・失敗したか」を

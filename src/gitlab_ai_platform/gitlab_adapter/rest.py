@@ -114,12 +114,15 @@ class GitLabRestAdapter:
     # 意図的にメソッドとして追加しない。
 
     def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:
+        # マッピング(_map_branch)まで含めてtry内で行う。GitLab APIが2xxを返しても
+        # 必須フィールドが欠けていれば失敗とみなし、監査ログをsuccessのまま残さない
         try:
             data = self._request_json(
                 "POST",
                 f"/projects/{_encode_project(project)}/repository/branches",
                 params={"branch": branch_name, "ref": ref},
             )
+            branch = _map_branch(data)
         except GitLabApiError:
             self._record_write(
                 "create_branch", status="error", project=project, branch_name=branch_name, ref=ref
@@ -129,7 +132,7 @@ class GitLabRestAdapter:
         self._record_write(
             "create_branch", status="success", project=project, branch_name=branch_name, ref=ref
         )
-        return _map_branch(data)
+        return branch
 
     def push_file_changes(
         self,
@@ -145,6 +148,13 @@ class GitLabRestAdapter:
                 "push_file_changes", status="rejected_protected_branch", project=project, branch=branch
             )
             raise
+        except GitLabApiError:
+            # protected判定用のGET自体が失敗した場合(404/リトライ枯渇等)も、
+            # 拒否と同様に「Commits APIへは到達していない」ことを監査ログに残す
+            self._record_write(
+                "push_file_changes", status="error", project=project, branch=branch
+            )
+            raise
 
         body = {
             "branch": branch,
@@ -157,6 +167,7 @@ class GitLabRestAdapter:
                 f"/projects/{_encode_project(project)}/repository/commits",
                 json_body=body,
             )
+            new_sha = _require(data, "id")
         except GitLabApiError:
             self._record_write(
                 "push_file_changes",
@@ -174,7 +185,7 @@ class GitLabRestAdapter:
             branch=branch,
             action_count=len(actions),
         )
-        return _require(data, "id")
+        return new_sha
 
     def _reject_if_branch_protected(self, project: str, branch: str) -> None:
         """protected branchへの直pushを、AdapterがGitLabへ書き込む前に拒否する。
@@ -212,6 +223,7 @@ class GitLabRestAdapter:
                 f"/projects/{_encode_project(project)}/merge_requests",
                 json_body=body,
             )
+            mr = _map_merge_request(project, data)
         except GitLabApiError:
             self._record_write(
                 "create_merge_request",
@@ -222,7 +234,6 @@ class GitLabRestAdapter:
             )
             raise
 
-        mr = _map_merge_request(project, data)
         self._record_write(
             "create_merge_request",
             status="success",
@@ -240,13 +251,13 @@ class GitLabRestAdapter:
                 f"/projects/{_encode_project(project)}/merge_requests/{mr_iid}/notes",
                 json_body={"body": body},
             )
+            note = _map_note(data)
         except GitLabApiError:
             self._record_write(
                 "create_merge_request_comment", status="error", project=project, mr_iid=mr_iid
             )
             raise
 
-        note = _map_note(data)
         self._record_write(
             "create_merge_request_comment",
             status="success",
