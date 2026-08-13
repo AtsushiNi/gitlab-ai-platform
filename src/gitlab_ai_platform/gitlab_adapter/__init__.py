@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from .errors import GitLabAdapterError, GitLabApiError
+from .errors import GitLabAdapterError, GitLabApiError, ProtectedBranchError
 from .protocol import GitLabAdapter, GitLabReader, GitLabWriter
+from .rest import GitLabRestAdapter
 from .types import (
     Branch,
     CommitAction,
@@ -18,8 +19,10 @@ __all__ = [
     "GitLabAdapter",
     "GitLabReader",
     "GitLabWriter",
+    "GitLabRestAdapter",
     "GitLabAdapterError",
     "GitLabApiError",
+    "ProtectedBranchError",
     "Branch",
     "CommitAction",
     "CommitActionType",

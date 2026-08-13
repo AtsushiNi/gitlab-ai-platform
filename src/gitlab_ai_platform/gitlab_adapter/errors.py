@@ -19,4 +19,8 @@ class GitLabApiError(GitLabAdapterError):
         self.status_code = status_code
 
 
-__all__ = ["GitLabAdapterError", "GitLabApiError"]
+class ProtectedBranchError(GitLabAdapterError):
+    """protected branchへの書き込みをAdapter層で拒否したことを表す(APIには到達しない)。"""
+
+
+__all__ = ["GitLabAdapterError", "GitLabApiError", "ProtectedBranchError"]
