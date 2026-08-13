@@ -152,6 +152,25 @@ def test_run_raises_claude_code_not_found_error_when_binary_missing(
         runner.run(tmp_path / "worktree", "instructions", review_context, timeout_seconds=60)
 
 
+def test_claude_code_not_found_error_holds_log_path_and_saves_log(
+    tmp_path: Path, review_context: ReviewContext
+):
+    # 他の例外(Timeout/OutputError)と同様、log_pathを保持しかつ実行ログが保存されること
+    # (docs/specs/claude-code-runner.mdの「いずれの例外もlog_pathを保持する」契約)
+    def factory(command, **kwargs):
+        raise FileNotFoundError()
+
+    runner = SubprocessClaudeCodeRunner(tmp_path / "logs", popen=factory)
+
+    with pytest.raises(ClaudeCodeNotFoundError) as excinfo:
+        runner.run(tmp_path / "worktree", "instructions", review_context, timeout_seconds=60)
+
+    assert excinfo.value.log_path.exists()
+    saved = json.loads(excinfo.value.log_path.read_text())
+    assert saved["returncode"] is None
+    assert saved["timed_out"] is False
+
+
 def test_run_terminates_gracefully_on_timeout_and_returns_result(
     tmp_path: Path, review_context: ReviewContext
 ):
@@ -243,3 +262,35 @@ def test_write_log_saves_command_and_output_without_leaking_env(
     assert saved["stdout"] == _SUCCESS_JSON
     assert saved["timed_out"] is False
     assert "super-secret" not in result.log_path.read_text(encoding="utf-8")
+
+
+def test_run_truncates_prompt_when_diff_exceeds_max_arg_size(
+    tmp_path: Path, merge_request, review_context: ReviewContext
+):
+    # 大きなdiffでも単一のCLI引数の上限(MAX_ARG_STRLEN)を超えないよう切り詰められ、
+    # Popenへの引数構築自体は例外を送出せず完了することの回帰テスト
+    from gitlab_ai_platform.gitlab_adapter.types import Discussion, MergeRequestDiff
+
+    huge_diff = MergeRequestDiff(
+        old_path="huge.py",
+        new_path="huge.py",
+        diff="+line\n" * 50_000,  # 数百KB相当、MAX_ARG_STRLEN(128KiB)を優に超える
+        new_file=False,
+        renamed_file=False,
+        deleted_file=False,
+    )
+    huge_context = ReviewContext(
+        merge_request=review_context.merge_request,
+        diffs=(huge_diff,),
+        discussions=(),
+    )
+    calls: list = []
+    runner = SubprocessClaudeCodeRunner(
+        tmp_path / "logs", popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls)
+    )
+
+    runner.run(tmp_path / "worktree", "instructions", huge_context, timeout_seconds=60)
+
+    prompt = calls[0][0][2]
+    assert len(prompt.encode("utf-8")) <= 100_000 + 200  # 切り詰め通知文の余裕分
+    assert "切り詰められました" in prompt

@@ -30,14 +30,19 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
+from .._paths import slugify_project
 from ..gitlab_adapter.types import MergeRequest
 from ..logging_ import get_logger
 from .errors import ClaudeCodeNotFoundError, ClaudeCodeOutputError, ClaudeCodeTimeoutError
 from .types import ReviewContext, RunResult
 
 _logger = get_logger(__name__)
+
+# LinuxはPopenに渡す個々の引数(argv要素)にMAX_ARG_STRLEN(通常128KiB)の上限がある。
+# promptはMRのdiff全体を含みうるため、これを超えるとPopenがOSError(E2BIG)を送出し
+# 未処理のまま例外として伝播してしまう。安全マージンを持たせた値で事前に切り詰める
+_MAX_PROMPT_BYTES = 100_000
 
 _DEFAULT_TERMINATE_GRACE_SECONDS = 10.0
 
@@ -98,9 +103,23 @@ class SubprocessClaudeCodeRunner:
                 env=env,
             )
         except FileNotFoundError as exc:
+            # 他の例外(Timeout/OutputError)と同様、例外送出前に必ずログを保存する
+            # (docs/specs/claude-code-runner.mdの「いずれの例外もlog_pathを保持する」契約)
+            log_path = self._write_log(
+                context.merge_request,
+                command=command,
+                worktree_path=worktree_path,
+                started_at=started_at,
+                duration_seconds=time.monotonic() - start,
+                timed_out=False,
+                returncode=None,
+                stdout="",
+                stderr=str(exc),
+            )
             raise ClaudeCodeNotFoundError(
                 f"'{self._claude_command}' コマンドが見つかりません。"
-                "Claude Code CLIがインストールされ、PATHが通っていることを確認してください。"
+                "Claude Code CLIがインストールされ、PATHが通っていることを確認してください。",
+                log_path=log_path,
             ) from exc
 
         stdout, stderr, timed_out, returncode = self._communicate_with_timeout(
@@ -170,7 +189,7 @@ class SubprocessClaudeCodeRunner:
         stdout: str,
         stderr: str,
     ) -> Path:
-        log_dir = self._log_dir / _slugify_project(merge_request.project) / f"mr-{merge_request.iid}"
+        log_dir = self._log_dir / slugify_project(merge_request.project) / f"mr-{merge_request.iid}"
         log_dir.mkdir(parents=True, exist_ok=True)
         sha_prefix = (merge_request.sha or "unknown")[:12]
         timestamp = started_at.strftime("%Y%m%dT%H%M%S%fZ")
@@ -241,7 +260,22 @@ def _build_prompt(instructions: str, context: ReviewContext) -> str:
         for diff in context.diffs:
             lines += [f"--- {diff.old_path} -> {diff.new_path} ---", diff.diff]
 
-    return "\n".join(lines)
+    return _truncate_prompt("\n".join(lines))
+
+
+def _truncate_prompt(prompt: str, *, max_bytes: int = _MAX_PROMPT_BYTES) -> str:
+    encoded = prompt.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return prompt
+
+    _logger.warning(
+        "runner.prompt_truncated",
+        extra={"original_bytes": len(encoded), "max_bytes": max_bytes},
+    )
+    # UTF-8のマルチバイト文字の途中で切らないよう、decode時にerrors="ignore"で
+    # 不完全な末尾バイト列を捨てる
+    truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    return truncated + "\n\n...(diffが大きいため以降は切り詰められました)"
 
 
 def _parse_result_json(
@@ -319,12 +353,6 @@ def _build_run_result(
         log_path=log_path,
         raw=data,
     )
-
-
-def _slugify_project(project: str) -> str:
-    # workspace/git_workspace.pyの_slugify_projectと同じ方式(パーセントエンコーディング)。
-    # ログ保存先のディレクトリ名を1階層に保ちつつ、project名の"/"を単射に変換する
-    return quote(project, safe="")
 
 
 __all__ = ["SubprocessClaudeCodeRunner"]

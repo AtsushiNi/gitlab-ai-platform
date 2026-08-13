@@ -14,6 +14,12 @@ def test_claude_code_not_found_error_is_a_runner_error():
     assert issubclass(ClaudeCodeNotFoundError, RunnerError)
 
 
+def test_claude_code_not_found_error_holds_log_path():
+    error = ClaudeCodeNotFoundError("not found", log_path=Path("/tmp/log.json"))
+
+    assert error.log_path == Path("/tmp/log.json")
+
+
 def test_claude_code_timeout_error_is_a_runner_error():
     assert issubclass(ClaudeCodeTimeoutError, RunnerError)
 

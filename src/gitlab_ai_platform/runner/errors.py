@@ -17,6 +17,10 @@ class RunnerError(Exception):
 class ClaudeCodeNotFoundError(RunnerError):
     """`claude`コマンドが見つからないことを表す(未インストール・PATH未設定等)。"""
 
+    def __init__(self, message: str, *, log_path: Path) -> None:
+        super().__init__(message)
+        self.log_path = log_path
+
 
 class ClaudeCodeTimeoutError(RunnerError):
     """タイムアウトし、かつ有効な最終結果(JSON)を得られないまま終了したことを表す。
