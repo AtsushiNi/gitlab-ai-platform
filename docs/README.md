@@ -50,6 +50,7 @@
 - [specs/prompts.md](specs/prompts.md) — レビュープロンプト(M1-8)の仕様
 - [specs/review-output.md](specs/review-output.md) — レビュー結果スキーマと保存レイアウト
   (M1-9)の仕様
+- [specs/poller.md](specs/poller.md) — MR Poller(M1-5)の仕様
 
 ## 更新ルール
 
