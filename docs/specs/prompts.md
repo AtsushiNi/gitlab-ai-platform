@@ -23,12 +23,16 @@ MRレビュー用のプロンプト(`instructions`文字列)を設計し、`buil
     ([`claude-code-runner.md`](claude-code-runner.md))の`ClaudeCodeRunner.run`の`instructions`引数に
     そのまま渡すことを想定する
   - Runner側の`_build_prompt`(`runner/subprocess_runner.py`)が、この`instructions`文字列の直後に
-    `## Merge Request` / `## Comments` / `## Diff`としてMRタイトル・説明・コメント・diffを
-    自動的に追記する。そのため`build_review_instructions()`はMR固有のデータを一切含めず、
+    `## Merge Request`(常に追記)、`## Comments`(コメントがある場合のみ)、
+    `## Diff`(diffがある場合のみ)としてMRタイトル・説明・コメント・diffを自動的に追記する。
+    そのため`build_review_instructions()`はMR固有のデータを一切含めず、
     「何を・どう見るか」という観点だけを返す
   - Claude Codeはworktree上(Workspace Managerが用意したclone)で実行されるため、
     プロンプト内で「リポジトリを探索せよ」と指示すれば、実際にファイル読み取り・grep等の
-    ツールでリポジトリ全体を参照できる(`docs/architecture.md`のデータフロー5.)
+    ツールでリポジトリ全体を参照できる(`docs/architecture.md`のデータフロー5.)。
+    ただし読み取りツールの権限(`allowed_tools`/`permission_mode`)はRunner呼び出し側が
+    付与する責務であり(ADR-0005)、この探索指示を実際に活かせるかは呼び出し側の設定次第
+    (現時点ではまだ`review/`を呼び出すオーケストレーター(M1-12)が存在しないため未検証)
 - 非対象:
   - 指摘の構造化(JSON/Markdownへの変換、`reviews/<project>/<mr_iid>/<sha>/`への保存)はM1-9
   - GitLabへの自動投稿の可否判断(`docs/architecture.md`のReviewの境界。最終判断は人間)
