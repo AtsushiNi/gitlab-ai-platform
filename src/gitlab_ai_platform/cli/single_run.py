@@ -1,0 +1,229 @@
+"""単発レビュー実行(デバッグ・プロンプト改善用)のパイプライン。
+
+方針(M1-10 [#38](https://github.com/AtsushiNi/gitlab-ai-platform/issues/38)、
+`docs/architecture.md`「データフロー(MVP)」2〜9、`docs/adr/0008-cli-single-run-design.md`):
+
+- MR Poller(定期走査・複数MR横断)を経由せず、指定された1つのproject/MRに対して
+  GitLab Adapter → Workspace Manager → Review(プロンプト) → Claude Code Runner →
+  Review(パース・保存) → State Store を直接結線する。このリポジトリで最初の
+  エンドツーエンド結線コード。
+- `execute_review`はGitLab Adapter(`GitLabReader`)・Workspace Manager・Claude Code
+  Runner・State Storeの4つをProtocol型の引数として受け取る「パイプライン本体」で、
+  `MrPoller`(`poller/poller.py`)と同じくテスト時は手書きフェイクを注入できる。
+  `run_single_review`はそれらの具象実装(REST/git/subprocess/SQLite)を`config`から
+  組み立てる「合成ルート」で、CLI(`cli.main`)から呼ばれる想定。
+- 各段階の例外(`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
+  `StateStoreError`)は変換せずそのまま呼び出し側(`cli.main`)へ伝播させる。呼び出し側が
+  終了コード・エラーメッセージへ変換する(このモジュール自身はCLI表示に関与しない)。
+"""
+
+from __future__ import annotations
+
+import functools
+import os
+import subprocess
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+from ..config import GITLAB_TOKEN_ENV_KEY, Config
+from ..gitlab_adapter import GitLabRestAdapter
+from ..gitlab_adapter.protocol import GitLabReader
+from ..review import (
+    ReviewPaths,
+    ReviewResult,
+    build_review_instructions,
+    parse_review_output,
+    save_review,
+)
+from ..runner import ReviewContext, RunResult, SubprocessClaudeCodeRunner, build_prompt
+from ..runner.protocol import ClaudeCodeRunner
+from ..store import DuplicateReviewError, ReviewStatus, SqliteStateStore
+from ..store.protocol import StateStore
+from ..workspace import GitWorkspaceManager
+from ..workspace.protocol import WorkspaceManager
+
+# GitLabのHTTPS認証は、PATを`.git/config`やコマンド引数に残さないよう、gitのcredential
+# helperプロトコル(`get`要求に対して`username=`/`password=`を標準出力へ返す)経由で都度供給する
+# (`references/spike-S3-git-worktree-windows.md` §8.1)。トークンの値そのものはこの文字列には
+# 含めず、環境変数名だけを埋め込む(実際の値は`_build_workspace_manager`がsubprocessの
+# 環境変数として注入する)。`!`で始まる値はgitがシェル経由で実行する
+_CREDENTIAL_HELPER_TEMPLATE = '!f() {{ echo username=oauth2; echo "password=${var}"; }}; f'
+
+
+@dataclass(frozen=True)
+class SingleRunResult:
+    """1回の単発レビュー実行の結果。CLIが標準出力に表示するサマリの元データ。"""
+
+    project: str
+    mr_iid: int
+    sha: str
+    worktree_path: Path
+    review_result: ReviewResult
+    review_paths: ReviewPaths
+    run_result: RunResult
+
+
+def run_single_review(
+    config: Config,
+    project: str,
+    mr_iid: int,
+    *,
+    timeout_seconds: int | None = None,
+    allowed_tools: Sequence[str] = (),
+    disallowed_tools: Sequence[str] = (),
+    permission_mode: str | None = None,
+) -> SingleRunResult:
+    """指定した`project`/`mr_iid`を1本レビューする(合成ルート)。
+
+    `config`からGitLab Adapter・Workspace Manager・Claude Code Runner・State Storeの
+    具象実装(REST/git/subprocess/SQLite)を組み立て、`execute_review`に委譲する。
+    """
+    adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
+    workspace = _build_workspace_manager(config)
+    runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
+    store = SqliteStateStore(config.state_db_path)
+    try:
+        return execute_review(
+            adapter,
+            workspace,
+            runner,
+            store,
+            config,
+            project,
+            mr_iid,
+            timeout_seconds=timeout_seconds,
+            allowed_tools=allowed_tools,
+            disallowed_tools=disallowed_tools,
+            permission_mode=permission_mode,
+        )
+    finally:
+        store.close()
+
+
+def execute_review(
+    adapter: GitLabReader,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    store: StateStore,
+    config: Config,
+    project: str,
+    mr_iid: int,
+    *,
+    timeout_seconds: int | None = None,
+    allowed_tools: Sequence[str] = (),
+    disallowed_tools: Sequence[str] = (),
+    permission_mode: str | None = None,
+) -> SingleRunResult:
+    """指定した`project`/`mr_iid`を1本レビューする(パイプライン本体)。
+
+    `adapter`/`workspace`/`runner`/`store`はいずれもProtocol型の引数として受け取り、
+    具象実装(REST/git/subprocess/SQLite)には依存しない。State Storeには実行開始時点で
+    `RUNNING`として記録し、Workspace Manager以降のいずれかの段階で例外が発生した場合は
+    `FAILED`に更新してから例外を再送出する。全段階が成功した場合のみ`DONE`に更新する。
+    `config`は`runner_log_dir`等ではなく`runner_timeout_seconds`/`reviews_root`の
+    デフォルト値・保存先としてのみ使う(具象実装の構築は`run_single_review`の責務)。
+    """
+    merge_request = adapter.get_merge_request(project, mr_iid)
+    diffs = tuple(adapter.get_merge_request_diffs(project, mr_iid))
+    discussions = tuple(adapter.list_merge_request_discussions(project, mr_iid))
+    sha = merge_request.sha
+
+    _ticket_running(store, project, mr_iid, sha)
+
+    try:
+        worktree = workspace.prepare(project, mr_iid, sha)
+
+        context = ReviewContext(
+            merge_request=merge_request, diffs=diffs, discussions=discussions
+        )
+        instructions = build_review_instructions()
+        resolved_timeout = (
+            timeout_seconds if timeout_seconds is not None else config.runner_timeout_seconds
+        )
+
+        run_result = runner.run(
+            worktree.path,
+            instructions,
+            context,
+            timeout_seconds=resolved_timeout,
+            allowed_tools=allowed_tools,
+            disallowed_tools=disallowed_tools,
+            permission_mode=permission_mode,
+        )
+        review_result = parse_review_output(run_result)
+
+        input_prompt = build_prompt(instructions, context)
+        review_paths = save_review(
+            config.reviews_root,
+            project,
+            mr_iid,
+            sha,
+            review_result,
+            input_prompt=input_prompt,
+            run_log_path=run_result.log_path,
+        )
+    except Exception:
+        # 起票(RUNNING)後に失敗した場合は、再実行時に状態が追えるようFAILEDへ更新してから
+        # 元の例外をそのまま再送出する(CLIが終了コードへ変換する)
+        store.update_status(project, mr_iid, sha, ReviewStatus.FAILED)
+        raise
+
+    store.update_status(
+        project,
+        mr_iid,
+        sha,
+        ReviewStatus.DONE,
+        reviewed_at=datetime.now(UTC),
+        result_path=str(review_paths.dir),
+    )
+
+    return SingleRunResult(
+        project=project,
+        mr_iid=mr_iid,
+        sha=sha,
+        worktree_path=worktree.path,
+        review_result=review_result,
+        review_paths=review_paths,
+        run_result=run_result,
+    )
+
+
+def _ticket_running(store: StateStore, project: str, mr_iid: int, sha: str) -> None:
+    """`(project, mr_iid, sha)`を`RUNNING`として起票する。
+
+    単発実行は同一commitへの再実行(プロンプト調整のたびに繰り返す運用)を想定しているため、
+    既存レコードがあれば(MR Pollerのように無視するのではなく)`RUNNING`へ更新して実行を続ける。
+    """
+    try:
+        store.create(project, mr_iid, sha, status=ReviewStatus.RUNNING)
+    except DuplicateReviewError:
+        store.update_status(project, mr_iid, sha, ReviewStatus.RUNNING)
+
+
+def _clone_url_for(gitlab_url: str) -> Callable[[str], str]:
+    def build(project: str) -> str:
+        return f"{gitlab_url}/{project}.git"
+
+    return build
+
+
+def _credential_helper() -> str:
+    return _CREDENTIAL_HELPER_TEMPLATE.format(var=GITLAB_TOKEN_ENV_KEY)
+
+
+def _build_workspace_manager(config: Config) -> GitWorkspaceManager:
+    token_env = {GITLAB_TOKEN_ENV_KEY: config.gitlab_token}
+    run_with_token = functools.partial(subprocess.run, env={**os.environ, **token_env})
+
+    return GitWorkspaceManager(
+        config.workspace_root,
+        _clone_url_for(config.gitlab_url),
+        max_disk_bytes=config.workspace_max_disk_mb * 1024 * 1024,
+        git_config={"credential.helper": _credential_helper()},
+        run=run_with_token,
+    )
+
+
+__all__ = ["SingleRunResult", "run_single_review", "execute_review"]

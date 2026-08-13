@@ -12,3 +12,9 @@ build/
 # シークレット・実行時設定(*.example.* をコピーして作る。コミットしない)
 .env
 config.toml
+
+# CLI実行時に生成される作業ディレクトリ・DB(config.tomlの既定値、リポジトリ直下想定)
+/workspace/
+/logs/
+/reviews/
+/state.db

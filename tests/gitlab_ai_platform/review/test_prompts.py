@@ -3,7 +3,7 @@ from __future__ import annotations
 from gitlab_ai_platform.gitlab_adapter.types import MergeRequest
 from gitlab_ai_platform.review import build_review_instructions
 from gitlab_ai_platform.runner import ReviewContext
-from gitlab_ai_platform.runner.subprocess_runner import _build_prompt
+from gitlab_ai_platform.runner.subprocess_runner import build_prompt
 
 
 def test_build_review_instructions_returns_str():
@@ -63,7 +63,7 @@ def test_instructs_exactly_one_trailing_json_block():
 
 
 def test_does_not_contain_mr_specific_data():
-    """MR固有のデータはRunner側(`_build_prompt`)が追記するため、ここには含めない。"""
+    """MR固有のデータはRunner側(`build_prompt`)が追記するため、ここには含めない。"""
     instructions = build_review_instructions()
 
     assert "## Merge Request" not in instructions
@@ -71,7 +71,7 @@ def test_does_not_contain_mr_specific_data():
 
 
 def test_combines_with_runner_prompt_without_duplicating_sections():
-    """Runnerの`_build_prompt`と組み合わせても、MR情報が指示の後に1回だけ現れること。"""
+    """Runnerの`build_prompt`と組み合わせても、MR情報が指示の後に1回だけ現れること。"""
     merge_request = MergeRequest(
         project="group/project",
         iid=1,
@@ -85,7 +85,7 @@ def test_combines_with_runner_prompt_without_duplicating_sections():
     )
     context = ReviewContext(merge_request=merge_request, diffs=(), discussions=())
 
-    prompt = _build_prompt(build_review_instructions(), context)
+    prompt = build_prompt(build_review_instructions(), context)
 
     assert prompt.count("## Merge Request") == 1
     assert prompt.index(build_review_instructions()) < prompt.index("## Merge Request")

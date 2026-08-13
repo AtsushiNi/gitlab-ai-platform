@@ -79,6 +79,12 @@ SubprocessClaudeCodeRunner(
   固定用。`ANTHROPIC_DEFAULT_SONNET_MODEL`等)
 - `terminate_grace_seconds`: タイムアウト時にSIGTERMを送ってからSIGKILLするまでの猶予秒数
 
+`build_prompt(instructions: str, context: ReviewContext) -> str`は`run`が内部で使う
+プロンプト結合ロジックを公開したもの。呼び出し側(CLI, M1-10)が`review.save_review`の
+`input_prompt`(Runnerに実際に渡した完成後のプロンプト全文)を再現する際に使う
+(`docs/specs/review-output.md`)。`runner`パッケージから`from gitlab_ai_platform.runner
+import build_prompt`で参照できる。
+
 ## 入出力スキーマ
 
 実装場所: `src/gitlab_ai_platform/runner/types.py`。
@@ -88,7 +94,7 @@ SubprocessClaudeCodeRunner(
 | `ReviewContext` (frozen dataclass) | `merge_request: MergeRequest`, `diffs: tuple[MergeRequestDiff, ...]`, `discussions: tuple[Discussion, ...]` | 型はすべてGitLab Adapter(`gitlab_adapter/types.py`)のものを再利用する |
 | `RunResult` (frozen dataclass) | `is_error: bool`, `result_text: str`, `session_id: str`, `terminal_reason: str`, `permission_denials: tuple[Mapping[str, Any], ...]`, `num_turns: int`, `total_cost_usd: float`, `timed_out: bool`, `duration_seconds: float`, `log_path: Path`, `raw: Mapping[str, Any]` | `raw`はClaude CLIが返したJSON全体。上記フィールドで表現しきれない値が必要な場合はここから参照する |
 
-`instructions`(レビュー観点のプロンプト本文)と`context`は`_build_prompt`で結合され、
+`instructions`(レビュー観点のプロンプト本文)と`context`は`build_prompt`で結合され、
 以下の形式のテキストとして`claude -p`の引数に渡される:
 
 ```

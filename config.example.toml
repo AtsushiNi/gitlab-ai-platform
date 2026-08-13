@@ -12,3 +12,17 @@ max_parallel = 5
 
 [review]
 label = "レビュー待ち"
+
+[workspace]
+root = "workspace"
+max_disk_mb = 5000
+
+[runner]
+log_dir = "logs/runner"
+timeout_seconds = 1800
+
+[reviews]
+root = "reviews"
+
+[store]
+db_path = "state.db"

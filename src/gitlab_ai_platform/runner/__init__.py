@@ -9,12 +9,13 @@ from .errors import (
     RunnerError,
 )
 from .protocol import ClaudeCodeRunner
-from .subprocess_runner import SubprocessClaudeCodeRunner
+from .subprocess_runner import SubprocessClaudeCodeRunner, build_prompt
 from .types import ReviewContext, RunResult
 
 __all__ = [
     "ClaudeCodeRunner",
     "SubprocessClaudeCodeRunner",
+    "build_prompt",
     "ReviewContext",
     "RunResult",
     "RunnerError",

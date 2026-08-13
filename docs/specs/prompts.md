@@ -27,7 +27,7 @@ MRレビュー用のプロンプト(`instructions`文字列)を設計し、`buil
   - `build_review_instructions()`の戻り値は、Claude Code Runner
     ([`claude-code-runner.md`](claude-code-runner.md))の`ClaudeCodeRunner.run`の`instructions`引数に
     そのまま渡すことを想定する
-  - Runner側の`_build_prompt`(`runner/subprocess_runner.py`)が、この`instructions`文字列の直後に
+  - Runner側の`build_prompt`(`runner/subprocess_runner.py`)が、この`instructions`文字列の直後に
     `## Merge Request`(常に追記)、`## Comments`(コメントがある場合のみ)、
     `## Diff`(diffがある場合のみ)としてMRタイトル・説明・コメント・diffを自動的に追記する。
     そのため`build_review_instructions()`はMR固有のデータを一切含めず、
@@ -110,7 +110,7 @@ import build_review_instructions`)。
   含むことを検証する(`review.parser.parse_review_output`が前提とするスキーマとの
   整合の回帰テスト)
 - MR固有のデータ(`## Merge Request`等、Runner側が追記する見出し)を含まないことを検証する
-- Runner(`runner/subprocess_runner.py`)の`_build_prompt`と実際に組み合わせ、
+- Runner(`runner/subprocess_runner.py`)の`build_prompt`と実際に組み合わせ、
   MR情報が指示文の後に重複なく1回だけ現れることを検証する
   (`build_review_instructions()`とRunnerの合成方式の契約を回帰テストとして固定する)
 
@@ -118,7 +118,7 @@ import build_review_instructions`)。
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のReview行
 - [claude-code-runner.md](claude-code-runner.md) — `instructions`引数とMR情報の合成方式
-  (`_build_prompt`)
+  (`build_prompt`)
 - [review-output.md](review-output.md) — 結果スキーマ・保存レイアウト(M1-9)。「出力」
   セクションと1対1の契約
 - [ADR-0006](../adr/0006-review-output-schema.md) — 「出力」セクションのJSON形式の設計判断

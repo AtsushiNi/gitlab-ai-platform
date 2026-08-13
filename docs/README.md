@@ -51,6 +51,7 @@
 - [specs/review-output.md](specs/review-output.md) — レビュー結果スキーマと保存レイアウト
   (M1-9)の仕様
 - [specs/poller.md](specs/poller.md) — MR Poller(M1-5)の仕様
+- [specs/cli.md](specs/cli.md) — CLI(M1-10)の仕様。単発レビュー実行(`review`サブコマンド)
 
 ## 更新ルール
 

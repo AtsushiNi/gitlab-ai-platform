@@ -81,7 +81,7 @@ class SubprocessClaudeCodeRunner:
         disallowed_tools: Sequence[str] = (),
         permission_mode: str | None = None,
     ) -> RunResult:
-        prompt = _build_prompt(instructions, context)
+        prompt = build_prompt(instructions, context)
         command = _build_command(
             self._claude_command,
             prompt,
@@ -242,7 +242,13 @@ def _build_command(
     return command
 
 
-def _build_prompt(instructions: str, context: ReviewContext) -> str:
+def build_prompt(instructions: str, context: ReviewContext) -> str:
+    """`instructions`と`context`を結合し、`claude -p`に渡す完成後のプロンプト文字列を返す。
+
+    `run`内部で使うだけでなく、呼び出し側(CLI, M1-10)が`review.save_review`の
+    `input_prompt`として「実際にRunnerへ渡したプロンプト全文」を再現する用途にも公開する
+    (`docs/specs/review-output.md`の`input.md`の契約)。
+    """
     mr = context.merge_request
     lines = [instructions.rstrip(), "", "## Merge Request", f"Title: {mr.title}"]
     if mr.description:
@@ -355,4 +361,4 @@ def _build_run_result(
     )
 
 
-__all__ = ["SubprocessClaudeCodeRunner"]
+__all__ = ["SubprocessClaudeCodeRunner", "build_prompt"]

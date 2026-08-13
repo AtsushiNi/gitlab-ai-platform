@@ -33,7 +33,7 @@ MRタイトル・説明・コメント・diffは`ReviewContext`(dataclass。GitL
 `MergeRequest`/`MergeRequestDiff`/`Discussion`をそのまま再利用し、Runner独自の型を
 作り直さない)としてRunnerに渡す。一方、「何を重視してレビューするか」という観点は
 `instructions`という不透明な文字列としてRunnerに渡す。Runnerはこの2つを結合してプロンプトを
-組み立てる(`_build_prompt`)だけで、`instructions`の中身を解釈・分岐しない。これにより
+組み立てる(`build_prompt`)だけで、`instructions`の中身を解釈・分岐しない。これにより
 「レビュー観点の判断はプロンプト側(Review, M1-8/9)の責務、Runnerは実行制御のみ」という
 `docs/architecture.md`の境界を型で表現する。M1-9(Review)がまだ実装されていない時点でも、
 Runner単体でこの境界を先に固定できる。
