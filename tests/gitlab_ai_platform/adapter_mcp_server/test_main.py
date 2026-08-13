@@ -1,4 +1,4 @@
-"""エントリポイント(`python -m gitlab_ai_platform.mcp_bridge`)の設定エラーハンドリングを検証する。
+"""エントリポイント(`python -m gitlab_ai_platform.adapter_mcp_server`)の設定エラーハンドリングを検証する。
 
 正常系(`server.run(transport="stdio")`)は標準入力を読み続けるため、テストでは呼ばない
 (`CLAUDE.md`のテスト方針: 実サービス・実プロトコル通信へは繋がない)。ここでは`config`
@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY
-from gitlab_ai_platform.mcp_bridge.main import EXIT_CONFIG_ERROR, main
+from gitlab_ai_platform.adapter_mcp_server.main import EXIT_CONFIG_ERROR, main
 
 
 def test_main_returns_config_error_exit_code_without_starting_server(tmp_path, capsys) -> None:

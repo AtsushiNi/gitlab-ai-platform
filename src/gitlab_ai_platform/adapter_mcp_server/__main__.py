@@ -1,4 +1,4 @@
-"""`python -m gitlab_ai_platform.mcp_bridge` で起動できるようにするエントリポイント。"""
+"""`python -m gitlab_ai_platform.adapter_mcp_server` で起動できるようにするエントリポイント。"""
 
 from __future__ import annotations
 

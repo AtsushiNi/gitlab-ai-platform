@@ -1,7 +1,7 @@
-"""`python -m gitlab_ai_platform.mcp_bridge`で起動するMCPサーバーのエントリポイント。
+"""`python -m gitlab_ai_platform.adapter_mcp_server`で起動するMCPサーバーのエントリポイント。
 
 方針(M2-12 [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62)、
-`docs/adr/0010-gitlab-mcp-tool-bridge.md`):
+`docs/adr/0010-gitlab-mcp-tool-bridge.md`。#67で「GitLab Adapter MCP Server」に改称):
 
 - 対話型Claude Code(Windows VS Code拡張・CLI)が`--mcp-config`でこのコマンドをstdio MCP
   サーバーとして起動する想定。標準入出力はMCPプロトコル専用に使われるため、ログは
@@ -45,14 +45,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
     server = create_server(adapter, name=DEFAULT_SERVER_NAME)
 
-    _logger.info("mcp_bridge.start", extra={"server_name": DEFAULT_SERVER_NAME})
+    _logger.info("adapter_mcp_server.start", extra={"server_name": DEFAULT_SERVER_NAME})
     server.run(transport="stdio")
     return EXIT_OK
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="gitlab_ai_platform.mcp_bridge",
+        prog="gitlab_ai_platform.adapter_mcp_server",
         description="GitLab AdapterをラップしたMCPサーバー(stdio)を起動する。",
     )
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="config.tomlのパス")

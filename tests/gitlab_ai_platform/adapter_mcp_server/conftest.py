@@ -1,6 +1,6 @@
-"""mcp_bridge テスト用のフェイクGitLabAdapter。
+"""adapter_mcp_server テスト用のフェイクGitLabAdapter。
 
-実GitLabへは繋がず、mcp_bridgeのツール関数がAdapter(Protocol、ADR-0002)へ正しく
+実GitLabへは繋がず、adapter_mcp_serverのツール関数がAdapter(Protocol、ADR-0002)へ正しく
 委譲することだけを検証するために使う(CLAUDE.mdのテスト方針)。
 """
 

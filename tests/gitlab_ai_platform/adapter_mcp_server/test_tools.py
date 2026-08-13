@@ -8,7 +8,7 @@ MCPプロトコル(stdio・`MCPServer`)は経由せず、`TOOL_FACTORIES`が返�
 from __future__ import annotations
 
 from gitlab_ai_platform.gitlab_adapter.types import CommitActionType
-from gitlab_ai_platform.mcp_bridge.tools import TOOL_FACTORIES
+from gitlab_ai_platform.adapter_mcp_server.tools import TOOL_FACTORIES
 
 from .conftest import FakeGitLabAdapter
 

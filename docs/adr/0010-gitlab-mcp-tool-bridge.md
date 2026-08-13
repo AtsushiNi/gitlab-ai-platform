@@ -1,7 +1,8 @@
 # ADR-0010: GitLab MCP Tool Bridge の設計
 
 - Issue: [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62) (M2-12)
-- 状態: 決定
+- 状態: 決定(名称は[#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)で
+  「GitLab Adapter MCP Server」に改称。設計内容自体はこのADRのまま有効。追記節を参照)
 
 ## 背景・制約
 
@@ -176,3 +177,22 @@ TOOL_FACTORIES: dict[str, ToolFactory] = {
   「決定」節のTODOに従って`tools.py`・テスト・specを追従させる必要があった
   (M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み。
   対象メソッド数は9→14に更新した)。
+
+## 追記([#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)): 「GitLab Adapter MCP Server」への改称
+
+「GitLab MCP Tool Bridge」という名称は、`gitlab-mcp`(`zereight/gitlab-mcp`等)のような
+GitLab API全般を汎用に公開する既存のOSS MCPサーバー群と、ドキュメント上・会話上で混同されやすい
+という指摘があった。実態は「`GitLabAdapter`(既存の許可リスト付きライブラリ)を薄くラップした
+MCPサーバー」であり、汎用GitLab MCPサーバーとはスコープが大きく異なる
+(「対象操作は現時点のGitLabAdapterの9メソッドのみ」「新しい権限を追加してはならない」節参照)。
+この実態がより正確に伝わるよう、名称を **GitLab Adapter MCP Server** に改称した。
+
+このADRが決定した設計内容(別経路であること、新しい権限を追加しないこと、対応表方式、
+入出力の扱い、認証情報の扱い)自体に変更はない。改称に伴うスコープ:
+
+- `src/gitlab_ai_platform/mcp_bridge/` → `src/gitlab_ai_platform/adapter_mcp_server/`
+  (エントリポイントは`python -m gitlab_ai_platform.adapter_mcp_server`に変わる)
+- `tests/gitlab_ai_platform/mcp_bridge/` → `tests/gitlab_ai_platform/adapter_mcp_server/`
+- `docs/specs/gitlab-mcp-bridge.md` → [`docs/specs/adapter-mcp-server.md`](../specs/adapter-mcp-server.md)
+- 本ADRのファイル名(`0010-gitlab-mcp-tool-bridge.md`)・Issue番号・タイトルは、決定の経緯を
+  そのまま追える記録として変更しない
