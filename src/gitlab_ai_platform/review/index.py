@@ -12,7 +12,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from ..logging_ import get_logger
 from .types import IndexEntry
+
+_logger = get_logger(__name__)
 
 _INDEX_FILE_NAME = "index.jsonl"
 
@@ -26,13 +29,29 @@ def append_entry(root: Path | str, entry: IndexEntry) -> None:
 
 
 def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
-    """索引の全件を、追記順(古い順)で返す。索引ファイルが無ければ空を返す。"""
+    """索引の全件を、追記順(古い順)で返す。索引ファイルが無ければ空を返す。
+
+    書き込み中のクラッシュ等で末尾の行が壊れていても、そこで全体の読み込みを諦めず
+    直前までの行はそのまま返す(このモジュールがJSON Linesを選んだ理由そのもの)。
+    壊れていた行はスキップし、警告ログに残す。
+    """
     index_path = Path(root) / _INDEX_FILE_NAME
     if not index_path.exists():
         return ()
 
+    entries = []
     with index_path.open(encoding="utf-8") as f:
-        return tuple(_entry_from_dict(json.loads(line)) for line in f if line.strip())
+        for lineno, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            try:
+                entries.append(_entry_from_dict(json.loads(line)))
+            except (json.JSONDecodeError, KeyError, ValueError):
+                _logger.warning(
+                    "review.index_entry_skipped",
+                    extra={"index_path": str(index_path), "line": lineno},
+                )
+    return tuple(entries)
 
 
 def _entry_to_dict(entry: IndexEntry) -> dict:

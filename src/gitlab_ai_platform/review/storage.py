@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..logging_ import get_logger
+from .errors import ReviewError
 from .index import append_entry
 from .markdown import render_markdown
 from .types import IndexEntry, ReviewPaths, ReviewResult, Severity
@@ -48,7 +49,7 @@ def save_review(
     の戻り値)を想定する。`run_log_path`はRunnerが書き出した実行ログ(`RunResult.log_path`)を指し、
     このディレクトリ内にコピーして、レビュー結果と同じ場所から実行ログもたどれるようにする。
     """
-    dest_dir = Path(root) / project / str(mr_iid) / sha
+    dest_dir = _resolve_dest_dir(root, project, mr_iid, sha)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     result_json_path = dest_dir / _RESULT_JSON_NAME
@@ -75,7 +76,18 @@ def save_review(
         log_path=log_path,
     )
 
-    append_entry(root, _build_index_entry(project, mr_iid, sha, result, dest_dir, root, reviewed_at))
+    append_entry(
+        root,
+        _build_index_entry(
+            project=project,
+            mr_iid=mr_iid,
+            sha=sha,
+            result=result,
+            dest_dir=dest_dir,
+            root=root,
+            reviewed_at=reviewed_at,
+        ),
+    )
 
     _logger.info(
         "review.saved",
@@ -90,6 +102,24 @@ def save_review(
     return paths
 
 
+def _resolve_dest_dir(root: Path | str, project: str, mr_iid: int, sha: str) -> Path:
+    """`<root>/<project>/<mr_iid>/<sha>`を組み立て、`root`の外へ出ないことを保証する。
+
+    `project`/`sha`は現状GitLab APIのレスポンス由来・config.tomlの設定由来で信頼できるが、
+    将来より信頼できない経路(webhook等)からも渡されうるため、".."や絶対パスによって
+    `root`の外に書き込んでしまわないことを機構として保証しておく(プロンプト上の約束事に
+    頼らないというこのリポジトリ全体の設計方針と同じ考え方)。
+    """
+    root_resolved = Path(root).resolve()
+    dest_dir = (root_resolved / project / str(mr_iid) / sha).resolve()
+    if not dest_dir.is_relative_to(root_resolved):
+        raise ReviewError(
+            f"project/shaの値が不正です(保存先が{root_resolved!s}の外に出ます): "
+            f"project={project!r}, sha={sha!r}"
+        )
+    return dest_dir
+
+
 def _result_to_dict(result: ReviewResult) -> dict:
     return {
         "summary": result.summary,
@@ -100,6 +130,7 @@ def _result_to_dict(result: ReviewResult) -> dict:
 
 
 def _build_index_entry(
+    *,
     project: str,
     mr_iid: int,
     sha: str,

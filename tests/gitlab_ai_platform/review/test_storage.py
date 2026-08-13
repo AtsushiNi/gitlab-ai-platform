@@ -1,7 +1,16 @@
 import json
 from datetime import UTC, datetime
 
-from gitlab_ai_platform.review import Finding, ReviewResult, Severity, read_index, save_review
+import pytest
+
+from gitlab_ai_platform.review import (
+    Finding,
+    ReviewError,
+    ReviewResult,
+    Severity,
+    read_index,
+    save_review,
+)
 
 
 def _result() -> ReviewResult:
@@ -144,3 +153,42 @@ def test_save_review_defaults_reviewed_at_to_now(tmp_path):
     after = datetime.now(UTC)
     entry = read_index(root)[0]
     assert before <= entry.reviewed_at <= after
+
+
+def test_save_review_rejects_project_containing_path_traversal(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "runner-log.json"
+    log_source.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ReviewError):
+        save_review(
+            root,
+            "../../etc",
+            1,
+            "sha1",
+            _result(),
+            input_prompt="prompt",
+            run_log_path=log_source,
+        )
+
+    # rootの外には何も書き込まれていないこと
+    assert not (tmp_path / "etc").exists()
+
+
+def test_save_review_rejects_sha_containing_path_traversal(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "runner-log.json"
+    log_source.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ReviewError):
+        save_review(
+            root,
+            "group/project",
+            1,
+            "../" * 10 + "escape",
+            _result(),
+            input_prompt="prompt",
+            run_log_path=log_source,
+        )
+
+    assert not (tmp_path / "escape").exists()

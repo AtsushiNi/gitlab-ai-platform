@@ -48,3 +48,23 @@ def test_append_creates_root_directory_if_missing(tmp_path):
 
     assert root.exists()
     assert read_index(root) == (_entry(),)
+
+
+def test_read_index_skips_malformed_trailing_line(tmp_path):
+    # JSON Linesを選んだ理由(書き込み中のクラッシュ等で末尾が壊れても、直前までの
+    # 行はそのまま読める)の回帰テスト。壊れた行だけをスキップし、例外は送出しない
+    first = _entry(mr_iid=1, sha="sha1")
+    append_entry(tmp_path, first)
+    with (tmp_path / "index.jsonl").open("a", encoding="utf-8") as f:
+        f.write('{"project": "group/project", "mr_iid": 2, "sha": "sha2"\n')  # 途中で切れた行
+
+    assert read_index(tmp_path) == (first,)
+
+
+def test_read_index_skips_line_missing_required_field(tmp_path):
+    first = _entry(mr_iid=1, sha="sha1")
+    append_entry(tmp_path, first)
+    with (tmp_path / "index.jsonl").open("a", encoding="utf-8") as f:
+        f.write('{"project": "group/project"}\n')  # 必須フィールドが欠けている
+
+    assert read_index(tmp_path) == (first,)

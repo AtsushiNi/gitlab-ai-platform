@@ -18,7 +18,11 @@ Runnerに渡した入力プロンプトと実行ログのコピーも同じデ�
 ## 前提と非対象
 
 - 前提:
-  - `parser.parse_review_output`に渡す`result_text`は、`prompts.build_review_instructions`
+  - `parser.parse_review_output`は`RunResult`(`result_text`単体ではない)を受け取る。
+    `runner/types.py`が「`result_text`の内容だけで成否判定してはならない。`is_error`と
+    `permission_denials`を必ず確認すること」と定めているため、その確認を呼び出し側の
+    自己申告に頼らず構造的に強制する(`is_error`がTrueなら`result_text`の中身を解釈せず
+    `ReviewOutputParseError`を送出する)。`result_text`自体は`prompts.build_review_instructions`
     (`docs/specs/prompts.md`)の指示に従ってClaude Codeが応答したものであることを前提とする。
     プロンプトの「出力」セクションとパーサーの実装は1対1の契約であり、どちらかを変更する場合は
     もう一方も見直すこと。
@@ -40,10 +44,12 @@ Runnerに渡した入力プロンプトと実行ログのコピーも同じデ�
 実装場所: `src/gitlab_ai_platform/review/`。`__init__.py`から以下をすべて再エクスポートしている。
 
 ```python
-def parse_review_output(result_text: str) -> ReviewResult:
-    """`result_text`から結果スキーマ(`summary`/`findings`)を抽出する。
+def parse_review_output(run_result: RunResult) -> ReviewResult:
+    """`run_result`から結果スキーマ(`summary`/`findings`)を抽出する。
 
-    抽出できない場合は`ReviewOutputParseError`を送出する。
+    `run_result.is_error`がTrueなら`result_text`を解釈せず`ReviewOutputParseError`を
+    送出する。`permission_denials`が空でなければ警告ログのみ残し、解析は続行する。
+    JSONを抽出できない場合も`ReviewOutputParseError`を送出する。
     """
 
 def render_markdown(result: ReviewResult, *, project: str, mr_iid: int, sha: str) -> str:
@@ -144,10 +150,12 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 - `test_errors.py`: `ReviewOutputParseError`が`ReviewError`のサブクラスであること、
   `raw_text`を保持することを検証する。
 - `test_parser.py`: ```json フェンス付き応答・フェンス無しの全文JSON・複数フェンスがある場合に
-  最後を採用すること・`line: null`を許容すること・スキーマ違反(`findings`が配列でない、
-  `severity`が不正、必須フィールド欠落、`line`が整数でも`null`でもない)で
+  最後を採用すること・`suggestion`内に入れ子の```があっても正しく抽出できること・
+  `line: null`を許容すること・スキーマ違反(`findings`が配列でない、`severity`が不正、
+  必須フィールド欠落、`line`が整数でも`null`でもない、`line`が`bool`)、および
+  `run_result.is_error`がTrueの場合に`result_text`の中身を解釈せず
   `ReviewOutputParseError`を送出することを検証する。実際にClaude Codeを起動するテストは行わない
-  (`RunResult.result_text`に相当する文字列を直接与える)。
+  (テスト用ヘルパーで`RunResult`を組み立てて直接与える)。
 - `test_markdown.py`: 指摘0件の場合の表示、重要度順(critical→major→minor)の並び替え、
   根拠・改善案が本文に含まれること、`line`が`None`の場合に`file:None`のような表示にならないことを
   検証する。
