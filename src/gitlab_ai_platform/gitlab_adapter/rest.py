@@ -324,14 +324,27 @@ class GitLabRestAdapter:
 
         attempt = 0
         while True:
-            response = self._session.request(
-                method,
-                url,
-                headers=self._headers,
-                params=params,
-                json=json_body,
-                timeout=self._timeout,
-            )
+            try:
+                response = self._session.request(
+                    method,
+                    url,
+                    headers=self._headers,
+                    params=params,
+                    json=json_body,
+                    timeout=self._timeout,
+                )
+            except requests.exceptions.RequestException as exc:
+                # 接続失敗・タイムアウト等はGitLabApiErrorに変換する(呼び出し側が
+                # GitLabAdapterErrorだけをcatchすればよいという契約を守るため。Poller等の
+                # 呼び出し元は、生のrequests例外までは想定していない)。冪等なGETのみ、
+                # 副作用のあるPOST等と同じ理由でリトライする(接続断がリクエスト送信後に
+                # 起きたのか送信前かは判別できず、非冪等操作の再送は重複実行の危険がある)
+                if method == "GET" and budget[0] > 0:
+                    self._sleep(_exponential_backoff_seconds(attempt, self._backoff_seconds))
+                    budget[0] -= 1
+                    attempt += 1
+                    continue
+                raise GitLabApiError(f"GitLab APIへの接続に失敗しました: {exc}") from exc
 
             if response.status_code < 400:
                 return response
@@ -363,6 +376,10 @@ def _retry_wait_seconds(
             return float(retry_after)
         except ValueError:
             pass
+    return _exponential_backoff_seconds(attempt, backoff_seconds)
+
+
+def _exponential_backoff_seconds(attempt: int, backoff_seconds: float) -> float:
     return backoff_seconds * (2**attempt)
 
 

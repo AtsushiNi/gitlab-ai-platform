@@ -9,6 +9,7 @@ from gitlab_ai_platform.store import (
     RecordNotFoundError,
     ReviewStatus,
     SqliteStateStore,
+    StateStoreError,
 )
 
 
@@ -140,3 +141,27 @@ def test_store_is_usable_from_a_different_thread_than_the_constructor(store):
 
     assert errors == []
     assert store.find("group/project", 99, "thread-sha") is not None
+
+
+def test_find_wraps_sqlite_errors_as_state_store_error(store):
+    # sqlite3の低レベル例外(接続が閉じられている等)がそのまま伝播すると、
+    # 呼び出し側(Poller等)がStateStoreErrorだけをcatchする契約をすり抜けてしまう回帰テスト
+    store.close()
+
+    with pytest.raises(StateStoreError):
+        store.find("group/project", 1, "abc123")
+
+
+def test_create_wraps_sqlite_errors_as_state_store_error(store):
+    store.close()
+
+    with pytest.raises(StateStoreError):
+        store.create("group/project", 1, "abc123")
+
+
+def test_update_status_wraps_sqlite_errors_as_state_store_error(store):
+    store.create("group/project", 1, "abc123")
+    store.close()
+
+    with pytest.raises(StateStoreError):
+        store.update_status("group/project", 1, "abc123", ReviewStatus.DONE)
