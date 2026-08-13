@@ -103,6 +103,14 @@ PENDING → RUNNING → WAITING_HUMAN → DONE / FAILED
 
 このニーズは M4(Issue駆動開発)で扱う。M1〜M3で作る部品(GitLab Adapter / Workspace / Runner / Store / Job)が、そのままM4の土台として使える境界で設計されていることが前提となる。
 
+### C. 新規の開発要件をIssueへ分解する(Windows・対話型)
+
+**目的**: 何か新しい開発要件が出てきたとき、それを個々のGitLab Issueへ分解・起票する作業をAIに担わせる。このリポジトリ自体の開発を `references/タスク整理.md` からGitHub Issueへ人手で分解してきたのと同じ作業を、対象プロジェクトに対してAI支援で行えるようにする。
+
+Bとの違い: Bは「既にあるIssue」を起点に要求分析・設計・実装・MR作成まで進める、主に無人実行(M3以降Linux/Docker)のパイプラインである。Cはその前段、すなわち**Issueがまだ存在しない状態**から始まる。要件の大きさ・優先度・依存関係の切り方には人間の判断が本質的に必要であり、`docs/architecture.md`の設計原則(人間が介在する処理はWindows、無人で回すAI処理はLinux/Docker)に従い、**Windows端末上でCLIを介した対話型の機能**として提供する(M4のLinux/Docker無人トラックには含めない)。
+
+このニーズを満たすには、GitLab AdapterがMR関連操作に加えてIssueの読み取り・作成にも対応している必要がある(現時点の許可リストにはIssue操作が一切存在しない)。
+
 ## 4. スコープと非スコープ
 
 ### スコープ(このプロジェクトが対象とするもの)
@@ -111,6 +119,7 @@ PENDING → RUNNING → WAITING_HUMAN → DONE / FAILED
 - レビュー結果のローカル保存・人間による確認導線
 - 複数プロジェクト・複数MRにまたがる並列レビュー
 - 将来的な、Issueを起点とした要求分析・設計・実装・MR作成の自動化(B。M4で着手)
+- 新規の開発要件をGitLab Issueへ分解・起票する対話型の支援(C。M2で着手)
 - 上記を支えるGitLab操作の抽象化(Adapter)、Job/状態管理、実行環境(Runner)
 
 ### 非スコープ(このプロジェクトが対象としないもの・意図的にやらないこと)
@@ -150,7 +159,7 @@ PENDING → RUNNING → WAITING_HUMAN → DONE / FAILED
 ### セキュリティ
 
 - Claude Code(AI)に人間と同等の強いGitLab権限を渡さない
-- GitLab Adapter層で、許可する操作(read / branch作成 / push / MR作成 / コメント)と禁止する操作(merge / protected branchへの直接push / branch削除 / 管理操作)を機構として分離する。プロンプト上の指示のみに依存しない
+- GitLab Adapter層で、許可する操作(read / branch作成 / push / MR作成・コメント / Issue参照・作成)と禁止する操作(merge / protected branchへの直接push / branch削除 / 管理操作)を機構として分離する。プロンプト上の指示のみに依存しない(Issue参照・作成はC向けにM2で追加。既存の許可リストにはまだ含まれない)
 - PAT(Personal Access Token)などのシークレットをログに出力しない
 
 ## 6. 制約
