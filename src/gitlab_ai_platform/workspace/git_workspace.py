@@ -29,6 +29,7 @@ import shutil
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 from ..logging_ import get_logger
 from .errors import DiskLimitExceededError, GitCommandError
@@ -88,6 +89,10 @@ class GitWorkspaceManager:
         resolved_ref = self._resolve_ref(bare_path, ref)
 
         if worktree_path.exists():
+            # 予算チェック(GC)の対象に自分自身が選ばれないよう、reset前に
+            # 最終利用時刻を更新しておく(GCはLRU=最終利用時刻が古いものから破棄するため)
+            os.utime(worktree_path, None)
+            self._ensure_disk_budget()
             self._run_git(["reset", "--hard", resolved_ref], cwd=worktree_path)
         else:
             self._ensure_disk_budget()
@@ -96,9 +101,8 @@ class GitWorkspaceManager:
                 ["worktree", "add", "-B", branch_name, str(worktree_path), resolved_ref],
                 cwd=bare_path,
             )
-
-        # GCのLRU判定に使う最終利用時刻を更新する
-        os.utime(worktree_path, None)
+            # GCのLRU判定に使う最終利用時刻を更新する
+            os.utime(worktree_path, None)
 
         sha = self._run_git(["rev-parse", "HEAD"], cwd=worktree_path).strip()
         return WorktreeHandle(
@@ -177,10 +181,13 @@ class GitWorkspaceManager:
     def _resolve_ref(self, bare_path: Path, ref: str) -> str:
         # `refs/remotes/origin/<ref>`が存在すればそちらを優先する(clone直後のstaleな
         # refs/heads/<ref>ではなく、常にfetch済みの最新commitを見るため)。存在しなければ
-        # commit shaが渡されたとみなし、`ref`をそのまま使う
+        # commit shaが渡されたとみなし、`ref`をそのまま使う。
+        # `--quiet`のため終了コード非0は「存在しない」を意味する想定だが、_run_gitと
+        # 同じく`git_config`の`-c`引数も適用する(safe.directory等の認証・環境設定が
+        # このプローブだけ効かず、無関係な失敗を「refが存在しない」と誤解釈しないため)
         remote_ref = f"refs/remotes/origin/{ref}"
         probe = self._run(
-            ["git", "rev-parse", "--verify", "--quiet", remote_ref],
+            ["git", *self._config_args(), "rev-parse", "--verify", "--quiet", remote_ref],
             cwd=str(bare_path),
             capture_output=True,
             text=True,
@@ -196,11 +203,13 @@ class GitWorkspaceManager:
     def _worktree_path(self, project: str, mr_iid: int) -> Path:
         return self._worktrees_dir / _slugify_project(project) / _branch_name(mr_iid)
 
-    def _run_git(self, args: list[str], *, cwd: Path) -> str:
-        config_args = [
+    def _config_args(self) -> list[str]:
+        return [
             arg for key, value in self._git_config.items() for arg in ("-c", f"{key}={value}")
         ]
-        command = ["git", *config_args, *args]
+
+    def _run_git(self, args: list[str], *, cwd: Path) -> str:
+        command = ["git", *self._config_args(), *args]
         result = self._run(
             command, cwd=str(cwd), capture_output=True, text=True
         )
@@ -220,12 +229,16 @@ def _branch_name(mr_iid: int) -> str:
 
 def _slugify_project(project: str) -> str:
     # `group/subgroup/project`のようなスラッシュ区切りを、深いディレクトリ階層を作らずに
-    # 1階層のディレクトリ名へ落とし込む(Spike S-3 §7、Windowsのパス長制限対策)
-    return project.replace("/", "__")
+    # 1階層のディレクトリ名へ落とし込む(Spike S-3 §7、Windowsのパス長制限対策)。
+    # 単純な"/"→"__"置換は、GitLabのproject/group名にアンダースコアが許可されているため
+    # 単射でない(例: "ab/cd"と"ab__cd"が衝突し、別プロジェクトのcloneを共有してしまう)。
+    # パーセントエンコーディング(gitlab_adapter._encode_projectと同じ方式)なら
+    # 1階層のまま単射・可逆に変換できる
+    return quote(project, safe="")
 
 
 def _deslugify_project(slug: str) -> str:
-    return slug.replace("__", "/")
+    return unquote(slug)
 
 
 def _dir_size_bytes(path: Path) -> int:

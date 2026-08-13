@@ -90,7 +90,9 @@ repos/<slug>.git             # プロジェクト単位のbare clone
 worktrees/<slug>/mr-<iid>/   # MR単位のworktree
 ```
 
-`slug`はproject名の`/`を`__`に置換したもの。worktreeのローカルbranch名は`mr-<iid>`
+`slug`はproject名をパーセントエンコーディング(`urllib.parse.quote`)したもの
+(単純な`/`→`__`置換は単射でなく別プロジェクトと衝突しうるため不採用。詳細はADR-0004)。
+worktreeのローカルbranch名は`mr-<iid>`
 (ソースbranch名はディレクトリ名・branch名に含めない。[ADR-0004](../adr/0004-workspace-manager-design.md)参照)。
 
 ## エラー時の振る舞い

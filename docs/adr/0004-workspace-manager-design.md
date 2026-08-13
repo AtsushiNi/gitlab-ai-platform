@@ -37,10 +37,14 @@ Protocol型だけを見て実装し、git実装(`GitWorkspaceManager`)に直接�
 <root>/worktrees/<slug>/mr-<iid>/   # MR単位のworktree
 ```
 
-`slug`はproject名(`group/subgroup/project`)の`/`を`__`に置換したもの。S-3 §7の
-「深いディレクトリ階層を避ける」という助言に従い、GitLabのグループ/サブグループ階層を
-そのままディレクトリ階層化しない(1階層のディレクトリ名に潰す)。worktree側のディレクトリ名も
-`mr-<iid>`という短い識別子のみとし、branch名やプロジェクト名を含めない(同じくS-3 §7)。
+`slug`はproject名(`group/subgroup/project`)をパーセントエンコーディング(`urllib.parse.quote`、
+`gitlab_adapter._encode_project`と同じ方式)したもの。単純な`/`→`__`置換は、GitLabの
+project/group名にアンダースコアが許可されているため単射でなく(例: `ab/cd`と`ab__cd`が
+衝突し、別プロジェクトのbare cloneを共有してしまう)、パーセントエンコーディングに変更した。
+S-3 §7の「深いディレクトリ階層を避ける」という助言に従い、GitLabのグループ/サブグループ階層を
+そのままディレクトリ階層化しない(1階層のディレクトリ名に潰す)点は変わらない。worktree側の
+ディレクトリ名も`mr-<iid>`という短い識別子のみとし、branch名やプロジェクト名を含めない
+(同じくS-3 §7)。
 
 呼び出し側が意識するのは`prepare(project, mr_iid, ref) -> WorktreeHandle`(用意)と
 `discard(project, mr_iid)`(破棄)の2操作のみで、bare cloneの存在確認・作成・fetchは
