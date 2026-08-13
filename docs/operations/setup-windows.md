@@ -208,8 +208,9 @@ db_path = "state.db"              # 既定: "state.db"
 GitLab PATのみ必須で、他はすべて省略可)。
 
 **Windowsのパス指定について**: TOMLの文字列内で`\`はエスケープ文字になるため、
-Windowsの絶対パスを書く場合は`workspace_root = "C:/Users/me/workspace"`のように
-スラッシュを使うか、`"C:\\Users\\me\\workspace"`のように`\\`でエスケープする。
+Windowsの絶対パスを書く場合は`[workspace]`セクションの`root`に
+`root = "C:/Users/me/workspace"`のようにスラッシュを使うか、
+`"C:\\Users\\me\\workspace"`のように`\\`でエスケープする。
 本手順では相対パス(リポジトリルート基準)を使っており、この問題を避けられる。
 
 ## 5. 初回起動確認
