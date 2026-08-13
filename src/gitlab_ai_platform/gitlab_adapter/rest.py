@@ -12,6 +12,10 @@
 - 一覧取得は`per_page=100`固定 + `X-Next-Page`レスポンスヘッダに基づくoffsetページングとする。
 - `429`(レート制限)と`5xx`は再試行対象とし、`429`は`Retry-After`ヘッダに従う。それ以外の
   エラーレスポンスは`GitLabApiError`として送出する。
+- 書き込み操作(`GitLabWriter`の4メソッド)は、呼び出し結果(成功/protected branchによる拒否/
+  エラー)を構造化ログとして記録する([M1-3](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31)、
+  X-1セキュリティレビューの証跡)。commit本文やコメント本文など任意長・機微になりうる内容は
+  含めず、操作対象を特定できる識別子(project/branch/mr_iid等)のみを記録する。
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from urllib.parse import quote
 
 import requests
 
+from ..logging_ import get_logger
 from .errors import GitLabApiError, ProtectedBranchError
 from .types import (
     Branch,
@@ -38,6 +43,8 @@ _PER_PAGE = 100
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_BACKOFF_SECONDS = 1.0
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+_logger = get_logger(__name__)
 
 
 class GitLabRestAdapter:
@@ -107,12 +114,25 @@ class GitLabRestAdapter:
     # 意図的にメソッドとして追加しない。
 
     def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:
-        data = self._request_json(
-            "POST",
-            f"/projects/{_encode_project(project)}/repository/branches",
-            params={"branch": branch_name, "ref": ref},
+        # マッピング(_map_branch)まで含めてtry内で行う。GitLab APIが2xxを返しても
+        # 必須フィールドが欠けていれば失敗とみなし、監査ログをsuccessのまま残さない
+        try:
+            data = self._request_json(
+                "POST",
+                f"/projects/{_encode_project(project)}/repository/branches",
+                params={"branch": branch_name, "ref": ref},
+            )
+            branch = _map_branch(data)
+        except GitLabApiError:
+            self._record_write(
+                "create_branch", status="error", project=project, branch_name=branch_name, ref=ref
+            )
+            raise
+
+        self._record_write(
+            "create_branch", status="success", project=project, branch_name=branch_name, ref=ref
         )
-        return _map_branch(data)
+        return branch
 
     def push_file_changes(
         self,
@@ -121,19 +141,51 @@ class GitLabRestAdapter:
         commit_message: str,
         actions: Sequence[CommitAction],
     ) -> str:
-        self._reject_if_branch_protected(project, branch)
+        try:
+            self._reject_if_branch_protected(project, branch)
+        except ProtectedBranchError:
+            self._record_write(
+                "push_file_changes", status="rejected_protected_branch", project=project, branch=branch
+            )
+            raise
+        except GitLabApiError:
+            # protected判定用のGET自体が失敗した場合(404/リトライ枯渇等)も、
+            # 拒否と同様に「Commits APIへは到達していない」ことを監査ログに残す
+            self._record_write(
+                "push_file_changes", status="error", project=project, branch=branch
+            )
+            raise
 
         body = {
             "branch": branch,
             "commit_message": commit_message,
             "actions": [_map_commit_action(action) for action in actions],
         }
-        data = self._request_json(
-            "POST",
-            f"/projects/{_encode_project(project)}/repository/commits",
-            json_body=body,
+        try:
+            data = self._request_json(
+                "POST",
+                f"/projects/{_encode_project(project)}/repository/commits",
+                json_body=body,
+            )
+            new_sha = _require(data, "id")
+        except GitLabApiError:
+            self._record_write(
+                "push_file_changes",
+                status="error",
+                project=project,
+                branch=branch,
+                action_count=len(actions),
+            )
+            raise
+
+        self._record_write(
+            "push_file_changes",
+            status="success",
+            project=project,
+            branch=branch,
+            action_count=len(actions),
         )
-        return _require(data, "id")
+        return new_sha
 
     def _reject_if_branch_protected(self, project: str, branch: str) -> None:
         """protected branchへの直pushを、AdapterがGitLabへ書き込む前に拒否する。
@@ -165,20 +217,64 @@ class GitLabRestAdapter:
             "title": title,
             "description": description,
         }
-        data = self._request_json(
-            "POST",
-            f"/projects/{_encode_project(project)}/merge_requests",
-            json_body=body,
+        try:
+            data = self._request_json(
+                "POST",
+                f"/projects/{_encode_project(project)}/merge_requests",
+                json_body=body,
+            )
+            mr = _map_merge_request(project, data)
+        except GitLabApiError:
+            self._record_write(
+                "create_merge_request",
+                status="error",
+                project=project,
+                source_branch=source_branch,
+                target_branch=target_branch,
+            )
+            raise
+
+        self._record_write(
+            "create_merge_request",
+            status="success",
+            project=project,
+            source_branch=source_branch,
+            target_branch=target_branch,
+            mr_iid=mr.iid,
         )
-        return _map_merge_request(project, data)
+        return mr
 
     def create_merge_request_comment(self, project: str, mr_iid: int, body: str) -> Note:
-        data = self._request_json(
-            "POST",
-            f"/projects/{_encode_project(project)}/merge_requests/{mr_iid}/notes",
-            json_body={"body": body},
+        try:
+            data = self._request_json(
+                "POST",
+                f"/projects/{_encode_project(project)}/merge_requests/{mr_iid}/notes",
+                json_body={"body": body},
+            )
+            note = _map_note(data)
+        except GitLabApiError:
+            self._record_write(
+                "create_merge_request_comment", status="error", project=project, mr_iid=mr_iid
+            )
+            raise
+
+        self._record_write(
+            "create_merge_request_comment",
+            status="success",
+            project=project,
+            mr_iid=mr_iid,
+            note_id=note.id,
         )
-        return _map_note(data)
+        return note
+
+    def _record_write(self, operation: str, *, status: str, **fields: Any) -> None:
+        """書き込み操作の実行結果を監査ログとして記録する(M1-3、X-1の証跡)。
+
+        `logging_`モジュール(M0-3)のJSON構造化ログに`operation`/`status`等を
+        `extra`として乗せる。commit本文やコメント本文は含めず、対象を特定できる
+        識別子のみを記録する。
+        """
+        _logger.info("gitlab_adapter.write", extra={"operation": operation, "status": status, **fields})
 
     # -- 内部ヘルパー ----------------------------------------------------------
 

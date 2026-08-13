@@ -46,7 +46,7 @@ Adapterのインターフェースだけを見て実装する限り、これら�
 
 `push_file_changes`はGitLab Commits API(`POST /projects/:id/repository/commits`)経由の
 コミット作成を表し、git経由の直接pushではない。protected branchへの拒否など**実行時の権限判定**は
-このインターフェースの責務ではなく、REST実装(M1-2)と許可リスト機構の強化(M1-3)側で行う
+このインターフェースの責務ではなく、REST実装(M1-2)側で行う
 (インターフェースはあくまで「呼び出せる操作の形」を絞るところまで)。
 
 ### データ型はGitLab REST APIのレスポンスをそのまま透過させない
@@ -70,7 +70,21 @@ JSON構造やフィールド名の変化に直接依存しないようにする�
 ## 影響
 
 - M1-2(REST実装)は`GitLabReader`/`GitLabWriter`を満たす具象クラスとして実装する。
-- M1-3(書き込み許可リスト機構)は、本ADRで定義した「メソッドとして存在しない」という静的な制約に加え、
-  実行時のチェック(protected branch判定など)を積み上げる。
 - 将来のMCP実装(M1後続)も本ADRのProtocolを満たす形で追加すれば、呼び出し側の変更なしに
   差し替えられる。
+
+## 追記(M1-3、[#31](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31))
+
+本ADRで定義した「メソッドとして存在しない」という静的な制約に加えて積み上げる予定だった
+実行時チェックのうち、確定した内容:
+
+- **protected branchへの直push拒否**は、当初の想定通りM1-2([PR #46](https://github.com/AtsushiNi/gitlab-ai-platform/pull/46))で
+  `push_file_changes`の対象branch事前チェック(`ProtectedBranchError`)として実装済み。
+- **全書き込み操作の監査ログ**をM1-3でREST実装(`rest.py`)に追加した。X-1(セキュリティレビュー)の
+  証跡として、書き込み操作の呼び出し(成功/拒否/エラー)を構造化ログに残す。
+- **GitLabのprotected branchフラグに依存しない、config層でのbranch名パターンによる追加ガード**は
+  M1-3では見送った。理由: (1) push先branch名を決めるのはRunner/Poller側だが、M1時点ではまだ
+  未実装でどんなbranch名を生成しうるか実態がなく、パターンを先に固定する費用対効果が低い。
+  (2) 追加するとAdapter層がConfigに依存する形になり、「GitLab APIとのやりとりに専念する」という
+  Adapterの責務境界(`docs/architecture.md`)が崩れる。Runner側の設計が固まった時点
+  (M2以降)で、Runner層のガードとして再検討する。

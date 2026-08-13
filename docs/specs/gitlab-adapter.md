@@ -1,11 +1,11 @@
 # GitLab Adapter
 
 - 実装場所: `src/gitlab_ai_platform/gitlab_adapter/`
-- 対応Issue: [#29](https://github.com/AtsushiNi/gitlab-ai-platform/issues/29) (M1-1、インターフェース定義)。
-  REST実装は [M1-2](https://github.com/AtsushiNi/gitlab-ai-platform/issues/30)、
-  書き込み許可リスト機構の強化は [M1-3](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31)
+- 対応Issue: [#29](https://github.com/AtsushiNi/gitlab-ai-platform/issues/29) (M1-1、インターフェース定義)、
+  [#30](https://github.com/AtsushiNi/gitlab-ai-platform/issues/30) (M1-2、REST実装)、
+  [#31](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31) (M1-3、書き込み許可リスト機構の強化)
 - 関連ADR: [ADR-0002](../adr/0002-gitlab-adapter-interface.md)
-- ステータス: 実装中(インターフェース定義のみ実装済み。REST実装[M1-2]は未着手)
+- ステータス: 実装済み(インターフェース定義[M1-1] + REST実装[M1-2] + 許可リスト機構の強化[M1-3])
 
 ## 責務
 
@@ -28,7 +28,7 @@ GitLabとのやりとりを一手に引き受ける唯一の窓口。読み取�
   - `merge`・protected branchへの直push・branch削除・プロジェクト管理系操作
     (作成/メンバー管理等)は提供しない。これらが必要な操作は人間がGitLab UI/CLIで行う
   - protected branchかどうかの実行時判定・権限エラーの詳細ハンドリングはこのインターフェース
-    自体の責務ではなく、具象実装(REST, M1-2)と許可リスト機構の強化(M1-3)側で行う
+    自体の責務ではなく、具象実装(REST, M1-2)側で行う
   - GitLab以外の外部システム(Slack通知等)は扱わない
   - リトライ・レート制限(429)ハンドリングの具体的なポリシーは実装(M1-2)側の責務。
     このインターフェースは例外の型のみを定義する
@@ -98,8 +98,8 @@ class GitLabWriter(Protocol):
     ) -> str:
         """`branch`にファイル変更のコミットをpushし、新しいcommit shaを返す。
 
-        Commits API経由のコミット作成であり、git経由の直接pushではない。実装は対象branchが
-        protectedの場合に拒否すること(M1-3で許可リスト機構として強化)。
+        Commits API経由のコミット作成であり、git経由の直接pushではない。実装(REST, M1-2)は
+        対象branchがprotectedの場合、GitLab APIへ到達する前に`ProtectedBranchError`を送出して拒否する。
         """
         ...
 
@@ -157,8 +157,28 @@ class GitLabAdapter(GitLabReader, GitLabWriter, Protocol):
 - 429ハンドリングやリトライの具体的な回数・バックオフ方針は、このインターフェースでは定義しない。
   REST実装(M1-2)側の責務であり、実装時にこの仕様(または新設するADR)を更新すること
 - `GitLabWriter`の各メソッドは、対象branchがprotectedである等の理由でGitLab側が操作を拒否した
-  場合も`GitLabApiError`を送出する想定(protected branch判定自体はREST実装/M1-3の責務で、
+  場合も`GitLabApiError`を送出する想定(protected branch判定自体はREST実装(M1-2)の責務で、
   このインターフェースは「拒否されたらエラーになる」という契約のみを保証する)
+
+## 監査ログ(M1-3)
+
+実装場所: `src/gitlab_ai_platform/gitlab_adapter/rest.py`の`GitLabRestAdapter._record_write`。
+`GitLabWriter`の4メソッド(`create_branch` / `push_file_changes` / `create_merge_request` /
+`create_merge_request_comment`)は、呼び出し結果を`logging_`モジュール(M0-3)経由で構造化ログに
+記録する。X-1(セキュリティレビュー)の証跡として、書き込み操作が実際に何を行った/拒否したかを
+後から追跡できるようにするためのもの。
+
+- ログの`message`は固定文字列`"gitlab_adapter.write"`。`extra`に以下のフィールドを乗せる:
+  - `operation`: メソッド名(例: `push_file_changes`)
+  - `status`: `success` / `rejected_protected_branch`(`push_file_changes`がprotected branchを
+    拒否した場合) / `error`(GitLab APIがエラーを返した場合)
+  - 操作対象を特定する識別子(`project` / `branch` / `mr_iid` / `note_id`等。
+    操作によって異なる)
+- **commit本文・MRの説明文・コメント本文など、任意長・機微になりうる内容は記録しない**。
+  監査ログは「誰が/いつ/どのbranch・MRに対して/何の操作を/成功したか拒否・失敗したか」を
+  追えれば十分という設計判断による
+- ファイルログ(JSON)への出力は`logging_.setup_logging(log_dir=...)`の設定に依存する
+  (このモジュール自体はロガーを取得するだけで、出力先やレベルは呼び出し側の責務)
 
 ## テスト方針
 
@@ -177,8 +197,35 @@ class GitLabAdapter(GitLabReader, GitLabWriter, Protocol):
 - `test_types.py`: dataclassのデフォルト値・イミュータブル性(`frozen=True`)を検証する
 - `test_errors.py`: `GitLabApiError`が`status_code`を保持すること、`GitLabAdapterError`の
   サブクラスであることを検証する
+- `test_rest.py`(REST実装、M1-2/M1-3):
+  - `GitLabRestAdapter`の公開メソッド集合が許可リストと完全一致することを、`test_protocol.py`と
+    同じ強さで具象クラス側にも適用する(`test_rest_adapter_exposes_only_allow_listed_operations`)
+  - `push_file_changes`がprotected branchへの直pushを、Commits APIへ到達する前に
+    `ProtectedBranchError`で拒否すること(`test_push_file_changes_rejects_protected_branch_without_calling_commits_api`)
+  - 監査ログ(M1-3): 4つの書き込みメソッドそれぞれについて、成功時に`status="success"`のログが
+    1件記録されること、`push_file_changes`はprotected branch拒否時に`status="rejected_protected_branch"`、
+    GitLab APIエラー時に`status="error"`が記録されること、コメント本文などの機微な内容が
+    ログに含まれないことを`caplog`で検証する
 - REST実装(M1-2)のテストでは、実GitLabへは繋がず、HTTPレイヤーをモック/フィクスチャ化する
   (CLAUDE.mdのテスト方針)。このインターフェース自体のテストはHTTPに触れない
+
+## セキュリティ機構の棚卸し(X-1向け)
+
+X-1(セキュリティレビュー。`references/タスク整理.md`の該当項目。本ドキュメント作成時点では
+GitHub Issue未作成なので、Issue化した時点でこの節にリンクを追加すること)向けに、
+「禁止操作が機構として不可能であること」をどの実装・テストが担保しているかをまとめる。
+
+| 担保したい性質 | 実装 | テスト |
+|---|---|---|
+| merge/branch削除/管理操作がAdapter経由で呼び出せない | `protocol.py`の`GitLabWriter`にメソッドとして定義しない(ADR-0002) | `test_protocol.py`(`GitLabWriter`公開メソッド集合の完全一致・禁止操作名との非交差)、`test_rest.py`(`GitLabRestAdapter`側でも同様の完全一致) |
+| protected branchへの直pushを拒否する | `rest.py`の`_reject_if_branch_protected`(`push_file_changes`内でGitLab APIへ到達する前にチェック) | `test_rest.py::test_push_file_changes_rejects_protected_branch_without_calling_commits_api` |
+| 書き込み操作の実行を事後に追跡できる | `rest.py`の`_record_write`(全4メソッドの成功/拒否/エラーを構造化ログに記録) | `test_rest.py`の監査ログ系テスト(上記テスト方針参照) |
+| PATスコープだけに頼らない設計であること | `typing.Protocol`による許可リスト方式そのもの(`references/spike-S2-gitlab-rest-api.md`でPATスコープの粒度不足を確認済み) | 上記2項目のテストが機構として担保 |
+
+**M1-3で見送った項目**(理由は[ADR-0002の追記](../adr/0002-gitlab-adapter-interface.md#追記m1-3-31)参照):
+
+- GitLabのprotected branchフラグに依存しない、config層でのbranch名パターンによる追加ガード。
+  Runner/Poller側の設計が固まる時点(M2以降)で再検討する
 
 ## 関連ドキュメント
 
@@ -186,5 +233,5 @@ class GitLabAdapter(GitLabReader, GitLabWriter, Protocol):
   および「設計原則(ADR化する判断)」節
 - [ADR-0002: GitLab Adapter のインターフェース設計](../adr/0002-gitlab-adapter-interface.md)
 - ソースコード: `src/gitlab_ai_platform/gitlab_adapter/`
-  (`protocol.py` / `types.py` / `errors.py` / `__init__.py`)
+  (`protocol.py` / `types.py` / `errors.py` / `rest.py` / `__init__.py`)
 - `references/spike-S2-gitlab-rest-api.md` — PATスコープの制御粒度に関する調査
