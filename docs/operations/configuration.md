@@ -65,7 +65,7 @@
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
 | `root` | `"workspace"` | str | 省略可 | `GitWorkspaceManager`のベースディレクトリ。`<root>/repos/`(bare clone群)と`<root>/worktrees/`(worktree群)を作る([specs/workspace-manager.md](../specs/workspace-manager.md)) |
-| `max_disk_mb` | `5000` | int(正の整数、MB単位) | 省略可 | `<root>/worktrees/`配下の合計サイズ上限。超過すると古いworktreeの破棄を試み、それでも収まらない場合はエラー(`WorkspaceDiskFullError`系、[specs/workspace-manager.md](../specs/workspace-manager.md)参照) |
+| `max_disk_mb` | `5000` | int(正の整数、MB単位) | 省略可 | `<root>/worktrees/`配下の合計サイズ上限。超過すると古いworktreeの破棄を試み、それでも収まらない場合はエラー(`DiskLimitExceededError`、[specs/workspace-manager.md](../specs/workspace-manager.md)参照) |
 
 ### `[runner]`
 
