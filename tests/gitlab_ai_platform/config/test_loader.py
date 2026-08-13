@@ -16,6 +16,20 @@ max_parallel = 3
 
 [review]
 label = "レビュー待ち"
+
+[workspace]
+root = "custom-workspace"
+max_disk_mb = 1000
+
+[runner]
+log_dir = "custom-logs"
+timeout_seconds = 900
+
+[reviews]
+root = "custom-reviews"
+
+[store]
+db_path = "custom-state.db"
 """
 
 
@@ -62,6 +76,12 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
     assert config.poll_interval_seconds == 30
     assert config.max_parallel == 3
     assert config.review_label == "レビュー待ち"
+    assert config.workspace_root == "custom-workspace"
+    assert config.workspace_max_disk_mb == 1000
+    assert config.runner_log_dir == "custom-logs"
+    assert config.runner_timeout_seconds == 900
+    assert config.reviews_root == "custom-reviews"
+    assert config.state_db_path == "custom-state.db"
 
 
 def test_load_config_prefers_real_env_var_over_dotenv_file(tmp_path, monkeypatch):
@@ -90,6 +110,12 @@ def test_load_config_applies_defaults_when_optional_sections_missing(tmp_path, m
     assert config.poll_interval_seconds == 60
     assert config.max_parallel == 5
     assert config.review_label == "レビュー待ち"
+    assert config.workspace_root == "workspace"
+    assert config.workspace_max_disk_mb == 5000
+    assert config.runner_log_dir == "logs/runner"
+    assert config.runner_timeout_seconds == 1800
+    assert config.reviews_root == "reviews"
+    assert config.state_db_path == "state.db"
 
 
 def test_load_config_raises_without_leaking_token_when_other_fields_invalid(tmp_path, monkeypatch):

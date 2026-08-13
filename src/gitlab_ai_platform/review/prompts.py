@@ -2,7 +2,7 @@
 
 `docs/architecture.md` の Review の責務のうち、レビュープロンプトの設計(M1-8, #36)を担当する。
 ここで返す文字列は、Claude Code Runner(`runner.SubprocessClaudeCodeRunner.run`)の
-`instructions` 引数にそのまま渡す。Runner側の`_build_prompt`がこの文字列の直後に
+`instructions` 引数にそのまま渡す。Runner側の`build_prompt`がこの文字列の直後に
 MRタイトル・説明・コメント・diffを自動的に追記する(`docs/specs/claude-code-runner.md`)ため、
 ここではMR固有のデータを一切含めず、「何を・どう見るか」という観点だけを書く。
 

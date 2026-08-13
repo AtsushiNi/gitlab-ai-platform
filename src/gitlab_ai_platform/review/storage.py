@@ -45,7 +45,7 @@ def save_review(
 ) -> ReviewPaths:
     """`result`を`<root>/<project>/<mr_iid>/<sha>/`へ保存し、索引に1行追記する。
 
-    `input_prompt`はRunnerに渡した完成後のプロンプト全文(`runner.subprocess_runner._build_prompt`
+    `input_prompt`はRunnerに渡した完成後のプロンプト全文(`runner.build_prompt`
     の戻り値)を想定する。`run_log_path`はRunnerが書き出した実行ログ(`RunResult.log_path`)を指し、
     このディレクトリ内にコピーして、レビュー結果と同じ場所から実行ログもたどれるようにする。
     """

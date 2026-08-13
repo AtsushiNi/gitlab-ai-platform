@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from .._paths import deslugify_project, slugify_project
@@ -47,7 +47,7 @@ class GitWorkspaceManager:
         clone_url_for: Callable[[str], str],
         *,
         max_disk_bytes: int,
-        git_config: Mapping[str, str] | None = None,
+        git_config: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
         run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     ) -> None:
         """
@@ -55,14 +55,19 @@ class GitWorkspaceManager:
         GitLab側のURL構築はこのモジュールの責務外とし、呼び出し側(config層)に委ねる。
 
         `git_config`は全てのgitコマンド呼び出しに`-c key=value`として渡す追加設定
-        (`credential.helper`/`core.sshCommand`等の認証設定を想定)。
+        (`credential.helper`/`core.sshCommand`等の認証設定を想定)。`Mapping`(キー毎に
+        1個)のほか、同じキーを複数回渡したい場合(例: 既存の`credential.helper`を
+        空値でクリアしてから新しい値を設定する)のために`(key, value)`のタプル列も
+        受け付ける。
         """
         self._root = Path(root)
         self._repos_dir = self._root / "repos"
         self._worktrees_dir = self._root / "worktrees"
         self._clone_url_for = clone_url_for
         self._max_disk_bytes = max_disk_bytes
-        self._git_config = dict(git_config or {})
+        self._git_config: tuple[tuple[str, str], ...] = tuple(
+            git_config.items() if isinstance(git_config, Mapping) else (git_config or ())
+        )
         self._run = run
 
         self._repos_dir.mkdir(parents=True, exist_ok=True)
@@ -205,7 +210,7 @@ class GitWorkspaceManager:
 
     def _config_args(self) -> list[str]:
         return [
-            arg for key, value in self._git_config.items() for arg in ("-c", f"{key}={value}")
+            arg for key, value in self._git_config for arg in ("-c", f"{key}={value}")
         ]
 
     def _run_git(self, args: list[str], *, cwd: Path) -> str:

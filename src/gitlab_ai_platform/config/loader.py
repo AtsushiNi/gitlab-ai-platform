@@ -18,6 +18,12 @@ DEFAULT_ENV_PATH = Path(".env")
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 DEFAULT_MAX_PARALLEL = 5
 DEFAULT_REVIEW_LABEL = "レビュー待ち"
+DEFAULT_WORKSPACE_ROOT = "workspace"
+DEFAULT_WORKSPACE_MAX_DISK_MB = 5000
+DEFAULT_RUNNER_LOG_DIR = "logs/runner"
+DEFAULT_RUNNER_TIMEOUT_SECONDS = 1800
+DEFAULT_REVIEWS_ROOT = "reviews"
+DEFAULT_STATE_DB_PATH = "state.db"
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -76,6 +82,10 @@ def load_config(
     gitlab_section = raw.get("gitlab", {})
     poller_section = raw.get("poller", {})
     review_section = raw.get("review", {})
+    workspace_section = raw.get("workspace", {})
+    runner_section = raw.get("runner", {})
+    reviews_section = raw.get("reviews", {})
+    store_section = raw.get("store", {})
 
     return Config.from_raw(
         gitlab_url=gitlab_section.get("url", ""),
@@ -86,4 +96,14 @@ def load_config(
         ),
         max_parallel=poller_section.get("max_parallel", DEFAULT_MAX_PARALLEL),
         review_label=review_section.get("label", DEFAULT_REVIEW_LABEL),
+        workspace_root=workspace_section.get("root", DEFAULT_WORKSPACE_ROOT),
+        workspace_max_disk_mb=workspace_section.get(
+            "max_disk_mb", DEFAULT_WORKSPACE_MAX_DISK_MB
+        ),
+        runner_log_dir=runner_section.get("log_dir", DEFAULT_RUNNER_LOG_DIR),
+        runner_timeout_seconds=runner_section.get(
+            "timeout_seconds", DEFAULT_RUNNER_TIMEOUT_SECONDS
+        ),
+        reviews_root=reviews_section.get("root", DEFAULT_REVIEWS_ROOT),
+        state_db_path=store_section.get("db_path", DEFAULT_STATE_DB_PATH),
     )

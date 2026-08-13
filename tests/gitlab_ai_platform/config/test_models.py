@@ -11,6 +11,12 @@ def _valid_kwargs(**overrides):
         poll_interval_seconds=60,
         max_parallel=5,
         review_label="レビュー待ち",
+        workspace_root="workspace",
+        workspace_max_disk_mb=5000,
+        runner_log_dir="logs/runner",
+        runner_timeout_seconds=1800,
+        reviews_root="reviews",
+        state_db_path="state.db",
     )
     kwargs.update(overrides)
     return kwargs
@@ -25,6 +31,12 @@ def test_from_raw_builds_config_with_valid_values():
     assert config.poll_interval_seconds == 60
     assert config.max_parallel == 5
     assert config.review_label == "レビュー待ち"
+    assert config.workspace_root == "workspace"
+    assert config.workspace_max_disk_mb == 5000
+    assert config.runner_log_dir == "logs/runner"
+    assert config.runner_timeout_seconds == 1800
+    assert config.reviews_root == "reviews"
+    assert config.state_db_path == "state.db"
 
 
 def test_from_raw_strips_trailing_slash_from_url():
@@ -56,6 +68,14 @@ def test_from_raw_strips_whitespace_from_projects():
         {"poll_interval_seconds": "60"},
         {"max_parallel": 0},
         {"review_label": ""},
+        {"workspace_root": ""},
+        {"workspace_max_disk_mb": 0},
+        {"workspace_max_disk_mb": -1},
+        {"runner_log_dir": ""},
+        {"runner_timeout_seconds": 0},
+        {"runner_timeout_seconds": True},
+        {"reviews_root": ""},
+        {"state_db_path": ""},
     ],
 )
 def test_from_raw_rejects_invalid_values(overrides):
