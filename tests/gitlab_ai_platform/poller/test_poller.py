@@ -1,5 +1,7 @@
 import threading
 
+import pytest
+
 from gitlab_ai_platform.gitlab_adapter import GitLabApiError, MergeRequest
 from gitlab_ai_platform.poller import DetectedReview, MrPoller, PollError
 from gitlab_ai_platform.store import DuplicateReviewError, ReviewRecord, ReviewStatus, StateStoreError
@@ -224,3 +226,69 @@ def test_run_stops_when_stop_event_is_set_and_runs_poll_once_at_least_once():
     poller.run(interval_seconds=0, stop_event=stop_event)
 
     assert call_count == 1
+
+
+def test_run_calls_on_detected_for_each_created_review_then_stops():
+    adapter = _FakeGitLabReader(
+        {
+            "group/project-a": [_mr("group/project-a", 1, "sha-a1")],
+            "group/project-b": [_mr("group/project-b", 5, "sha-b5")],
+        }
+    )
+    store = _FakeStateStore()
+    poller = MrPoller(
+        adapter, store, ["group/project-a", "group/project-b"], review_label=_LABEL
+    )
+    stop_event = threading.Event()
+
+    detected: list[DetectedReview] = []
+
+    def _on_detected(review: DetectedReview) -> None:
+        detected.append(review)
+
+    original_poll_once = poller.poll_once
+
+    def _poll_once_then_stop():
+        stop_event.set()
+        return original_poll_once()
+
+    poller.poll_once = _poll_once_then_stop  # type: ignore[method-assign]
+
+    poller.run(interval_seconds=0, stop_event=stop_event, on_detected=_on_detected)
+
+    assert set(detected) == {
+        DetectedReview(project="group/project-a", mr_iid=1, commit_sha="sha-a1"),
+        DetectedReview(project="group/project-b", mr_iid=5, commit_sha="sha-b5"),
+    }
+
+
+def test_run_without_on_detected_does_not_require_a_callback():
+    # on_detected省略時(既定None)でも例外にならず、単に呼び出されないだけであることの確認
+    adapter = _FakeGitLabReader({"group/project": [_mr("group/project", 1, "sha-1")]})
+    store = _FakeStateStore()
+    poller = MrPoller(adapter, store, ["group/project"], review_label=_LABEL)
+    stop_event = threading.Event()
+
+    original_poll_once = poller.poll_once
+
+    def _poll_once_then_stop():
+        stop_event.set()
+        return original_poll_once()
+
+    poller.poll_once = _poll_once_then_stop  # type: ignore[method-assign]
+
+    poller.run(interval_seconds=0, stop_event=stop_event)
+
+
+def test_run_propagates_exception_from_on_detected():
+    # レビュー実行失敗を握りつぶすかどうかは呼び出し側(CLI watchモード)の判断に委ねるため、
+    # on_detectedが送出した例外はrunの外へそのまま伝播する
+    adapter = _FakeGitLabReader({"group/project": [_mr("group/project", 1, "sha-1")]})
+    store = _FakeStateStore()
+    poller = MrPoller(adapter, store, ["group/project"], review_label=_LABEL)
+
+    def _on_detected(review: DetectedReview) -> None:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        poller.run(interval_seconds=0, on_detected=_on_detected)

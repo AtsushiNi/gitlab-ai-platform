@@ -1,25 +1,31 @@
 """CLIエントリポイント。
 
 方針(M1-10 [#38](https://github.com/AtsushiNi/gitlab-ai-platform/issues/38)、
-`docs/architecture.md`「CLI」、`docs/adr/0008-cli-single-run-design.md`):
+M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
+`docs/architecture.md`「CLI」、`docs/adr/0008-cli-single-run-design.md`、
+`docs/adr/0009-cli-watch-design.md`):
 
-- `review`サブコマンドで単発レビュー実行(デバッグ・プロンプト改善用)を提供する。
-  常駐(watch)モード(M1-11)は別サブコマンドとして後日追加する想定で、あらかじめ
-  `argparse`のサブコマンド構成にしてある。
+- `review`サブコマンドで単発レビュー実行(デバッグ・プロンプト改善用)、`watch`サブコマンドで
+  常駐モード(M1-11)を提供する。
 - パイプライン(`single_run.run_single_review`)が送出する各段階の例外
   (`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)を捕まえ、`exit_codes`の対応する終了コードとエラーメッセージ
   (標準エラー出力)に変換する。オーケストレーション(Job間の遷移)はしない
   (`docs/architecture.md`のCLIの境界)。
 - 結果(保存先パス・指摘件数のサマリ)は標準出力に表示し、人間がすぐ確認できるようにする。
+- `watch`サブコマンドはSIGINT/SIGTERM受信時に`stop_event`をセットするハンドラを登録し、
+  `watch.run_watch`のポーリングループへgraceful shutdownを伝える(ハンドラ登録自体は
+  ここ、実行中サイクルの完了を待ってから止める判断は`poller.MrPoller.run`側)。
 """
 
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
+import threading
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ..config import DEFAULT_CONFIG_PATH, DEFAULT_ENV_PATH, Config, ConfigError, load_config
@@ -30,7 +36,9 @@ from ..runner.errors import RunnerError
 from ..store.errors import StateStoreError
 from ..workspace.errors import WorkspaceError
 from . import exit_codes
+from .lock import AlreadyRunningError
 from .single_run import SingleRunResult, run_single_review
+from .watch import run_watch
 
 _logger = get_logger(__name__)
 
@@ -53,6 +61,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "review":
             return _run_review_command(config, args)
+        if args.command == "watch":
+            return _run_watch_command(config)
 
         parser.error(f"不明なコマンドです: {args.command!r}")
         return exit_codes.EXIT_UNEXPECTED_ERROR  # pragma: no cover - parser.errorがexitする
@@ -99,6 +109,65 @@ def _run_review_command(config: Config, args: argparse.Namespace) -> int:
 
     _print_summary(result)
     return exit_codes.EXIT_OK
+
+
+def _run_watch_command(config: Config) -> int:
+    stop_event = threading.Event()
+    restore_handlers = _install_shutdown_handler(stop_event)
+    try:
+        run_watch(config, stop_event=stop_event)
+    except AlreadyRunningError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "lock", "error": str(exc)})
+        print(f"多重起動エラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_ALREADY_RUNNING
+    except GitLabAdapterError as exc:
+        # ループ内で発生した分は`watch.build_on_detected`が既に握りつぶしているため、
+        # ここに届くのは具象実装の組み立て(構成)段階の失敗のみ(`_run_review_command`と
+        # 同じ変換で、`review`/`watch`間の挙動を揃える)
+        _logger.error("cli.watch_failed", extra={"stage": "gitlab_adapter", "error": str(exc)})
+        print(f"GitLab Adapterエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_GITLAB_ADAPTER_ERROR
+    except WorkspaceError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "workspace", "error": str(exc)})
+        print(f"Workspace Managerエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_WORKSPACE_ERROR
+    except RunnerError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "runner", "error": str(exc)})
+        print(f"Claude Code Runnerエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_RUNNER_ERROR
+    except ReviewError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "review", "error": str(exc)})
+        print(f"レビュー結果の解析エラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_REVIEW_ERROR
+    except StateStoreError as exc:
+        _logger.error("cli.watch_failed", extra={"stage": "state_store", "error": str(exc)})
+        print(f"State Storeエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_STATE_STORE_ERROR
+    finally:
+        restore_handlers()
+
+    return exit_codes.EXIT_OK
+
+
+def _install_shutdown_handler(stop_event: threading.Event) -> Callable[[], None]:
+    """SIGINT/SIGTERM受信時に`stop_event`をセットするハンドラを登録する。
+
+    戻り値は元のハンドラへ戻すための関数(呼び出し側が`finally`で呼ぶ)。
+    """
+
+    def _handle_signal(signum: int, frame: object) -> None:
+        _logger.info("cli.watch_shutdown_requested", extra={"signal": signum})
+        stop_event.set()
+
+    previous_handlers = {
+        sig: signal.signal(sig, _handle_signal) for sig in (signal.SIGINT, signal.SIGTERM)
+    }
+
+    def _restore() -> None:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
+
+    return _restore
 
 
 def _print_summary(result: SingleRunResult) -> None:
@@ -175,6 +244,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--permission-mode",
         default=None,
         help="Claude Codeの--permission-modeに対応する値",
+    )
+
+    subparsers.add_parser(
+        "watch",
+        help=(
+            "対象プロジェクトを定期走査し、レビュー待ちMRを検出次第レビューし続ける"
+            "(常駐モード。Ctrl+C/SIGTERMで終了)"
+        ),
     )
 
     return parser

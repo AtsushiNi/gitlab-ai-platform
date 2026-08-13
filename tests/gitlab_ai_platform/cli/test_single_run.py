@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gitlab_ai_platform.cli.single_run import (
-    _build_workspace_manager,
+    build_workspace_manager,
     _clone_url_for,
     _credential_helper,
     execute_review,
@@ -432,7 +432,7 @@ def test_build_workspace_manager_clears_existing_credential_helper_before_settin
     # (実行環境の~/.gitconfig等)を空値でクリアしてから独自のものを設定する必要がある
     config = _config(tmp_path)
 
-    manager = _build_workspace_manager(config)
+    manager = build_workspace_manager(config)
 
     config_args = manager._config_args()  # noqa: SLF001
     helper_values = [

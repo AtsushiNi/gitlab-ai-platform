@@ -15,6 +15,8 @@
 - 各段階の例外(`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)は変換せずそのまま呼び出し側(`cli.main`)へ伝播させる。呼び出し側が
   終了コード・エラーメッセージへ変換する(このモジュール自身はCLI表示に関与しない)。
+- `build_workspace_manager`(GitLab認証込みの`GitWorkspaceManager`組み立て)は常駐(watch)
+  モード(M1-11、`cli/watch.py`)からも再利用する前提で公開している。
 """
 
 from __future__ import annotations
@@ -52,7 +54,7 @@ _logger = get_logger(__name__)
 # GitLabのHTTPS認証は、PATを`.git/config`やコマンド引数に残さないよう、gitのcredential
 # helperプロトコル(`get`要求に対して`username=`/`password=`を標準出力へ返す)経由で都度供給する
 # (`references/spike-S3-git-worktree-windows.md` §8.1)。トークンの値そのものはこの文字列には
-# 含めず、環境変数名だけを埋め込む(実際の値は`_build_workspace_manager`がsubprocessの
+# 含めず、環境変数名だけを埋め込む(実際の値は`build_workspace_manager`がsubprocessの
 # 環境変数として注入する)。`!`で始まる値はgitがシェル経由で実行する
 _CREDENTIAL_HELPER_TEMPLATE = '!f() {{ echo username=oauth2; echo "password=${var}"; }}; f'
 
@@ -86,7 +88,7 @@ def run_single_review(
     具象実装(REST/git/subprocess/SQLite)を組み立て、`execute_review`に委譲する。
     """
     adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
-    workspace = _build_workspace_manager(config)
+    workspace = build_workspace_manager(config)
     runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
     store = SqliteStateStore(config.state_db_path)
     try:
@@ -116,6 +118,7 @@ def execute_review(
     project: str,
     mr_iid: int,
     *,
+    sha: str | None = None,
     timeout_seconds: int | None = None,
     allowed_tools: Sequence[str] = (),
     disallowed_tools: Sequence[str] = (),
@@ -129,6 +132,14 @@ def execute_review(
     `FAILED`に更新してから例外を再送出する。全段階が成功した場合のみ`DONE`に更新する。
     `config`は`runner_log_dir`等ではなく`runner_timeout_seconds`/`reviews_root`の
     デフォルト値・保存先としてのみ使う(具象実装の構築は`run_single_review`の責務)。
+
+    `sha`は呼び出し側が既にState Storeへ起票済みのcommitがある場合(常駐(watch)モード、
+    `cli/watch.py`)に指定する。省略時(単発実行)はMR取得時点の最新`merge_request.sha`を
+    使う。`sha`を指定した場合、取得時点でMRがさらに進んでいても指定commitに対して
+    起票・レビューを行う(先に進んだ最新commitは次回のPoller走査が別途検出・起票する)。
+    これを省略して常に最新shaを使うと、Pollerが起票した`(project, mr_iid, 起票時のsha)`
+    レコードがRUNNING/DONE/FAILEDへ一度も遷移しないまま孤立してしまう
+    (`execute_review`が別の新しいshaで起票し直すため)。
     """
     # 3つとも独立したGitLab REST呼び出しなので、CLIの主用途(デバッグ時に繰り返し実行する)
     # で毎回の待ち時間を減らすため並列に取得する(逐次だと3回分のネットワーク往復が積み上がる)
@@ -141,7 +152,7 @@ def execute_review(
         merge_request = merge_request_future.result()
         diffs = tuple(diffs_future.result())
         discussions = tuple(discussions_future.result())
-    sha = merge_request.sha
+    sha = sha if sha is not None else merge_request.sha
 
     _ticket_running(store, project, mr_iid, sha)
 
@@ -242,7 +253,7 @@ def _credential_helper() -> str:
     return _CREDENTIAL_HELPER_TEMPLATE.format(var=GITLAB_TOKEN_ENV_KEY)
 
 
-def _build_workspace_manager(config: Config) -> GitWorkspaceManager:
+def build_workspace_manager(config: Config) -> GitWorkspaceManager:
     token_env = {GITLAB_TOKEN_ENV_KEY: config.gitlab_token}
     run_with_token = functools.partial(subprocess.run, env={**os.environ, **token_env})
 
@@ -259,4 +270,4 @@ def _build_workspace_manager(config: Config) -> GitWorkspaceManager:
     )
 
 
-__all__ = ["SingleRunResult", "run_single_review", "execute_review"]
+__all__ = ["SingleRunResult", "run_single_review", "execute_review", "build_workspace_manager"]

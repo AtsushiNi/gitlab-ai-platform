@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
+import signal
+import threading
 from pathlib import Path
 
 import pytest
 
 from gitlab_ai_platform.cli import exit_codes
+from gitlab_ai_platform.cli.lock import AlreadyRunningError
 from gitlab_ai_platform.cli.main import main
 from gitlab_ai_platform.cli.single_run import SingleRunResult
 from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY
@@ -234,3 +238,96 @@ def test_review_command_rejects_non_positive_timeout(tmp_path, value):
         main(_argv(tmp_path, "--timeout", value))
 
     assert excinfo.value.code == 2
+
+
+def _watch_argv(tmp_path: Path) -> list[str]:
+    config_path, env_path = _write_config(tmp_path)
+    return ["--config", str(config_path), "--env", str(env_path), "watch"]
+
+
+def test_watch_command_returns_ok_when_run_watch_returns_normally(tmp_path, monkeypatch):
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_watch", lambda *a, **k: None)
+
+    exit_code = main(_watch_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_OK
+
+
+def test_watch_command_passes_a_stop_event_to_run_watch(tmp_path, monkeypatch):
+    captured = {}
+
+    def _fake_run_watch(config, *, stop_event=None):
+        captured["stop_event"] = stop_event
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_watch", _fake_run_watch)
+
+    main(_watch_argv(tmp_path))
+
+    assert isinstance(captured["stop_event"], threading.Event)
+    assert not captured["stop_event"].is_set()
+
+
+def test_watch_command_returns_already_running_exit_code(tmp_path, monkeypatch, capsys):
+    def _raise(*args, **kwargs):
+        raise AlreadyRunningError("別プロセスが実行中です")
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_watch", _raise)
+
+    exit_code = main(_watch_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_ALREADY_RUNNING
+    assert "多重起動エラー" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("exception", "expected_exit_code"),
+    [
+        (GitLabApiError("boom"), exit_codes.EXIT_GITLAB_ADAPTER_ERROR),
+        (
+            GitCommandError("boom", command=["git"], returncode=1, stderr=""),
+            exit_codes.EXIT_WORKSPACE_ERROR,
+        ),
+        (
+            ClaudeCodeTimeoutError("boom", timeout_seconds=1, log_path=Path("/tmp/x"), stderr=""),
+            exit_codes.EXIT_RUNNER_ERROR,
+        ),
+        (ReviewOutputParseError("boom", raw_text=""), exit_codes.EXIT_REVIEW_ERROR),
+        (StateStoreError("boom"), exit_codes.EXIT_STATE_STORE_ERROR),
+    ],
+)
+def test_watch_command_maps_pipeline_errors_to_exit_codes(
+    tmp_path, monkeypatch, capsys, exception, expected_exit_code
+):
+    # run_watch_loop内(1MR分の失敗)はwatch.build_on_detectedが既に握りつぶすため、
+    # ここに届くのは具象実装の組み立て(構成)段階の失敗のみ。reviewコマンドと同じ
+    # 変換になっていることを確認する
+    def _raise(*args, **kwargs):
+        raise exception
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_watch", _raise)
+
+    exit_code = main(_watch_argv(tmp_path))
+
+    assert exit_code == expected_exit_code
+    assert capsys.readouterr().err.strip() != ""
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+def test_watch_command_sets_stop_event_on_signal_and_restores_handler(tmp_path, monkeypatch, sig):
+    # run_watchを、自プロセスにシグナルを送ってからstop_eventの状態を確認するフェイクに差し替え、
+    # SIGINT/SIGTERM受信時にstop_eventがセットされることを検証する
+    original_handler = signal.getsignal(sig)
+    observed = {}
+
+    def _fake_run_watch(config, *, stop_event=None):
+        os.kill(os.getpid(), sig)
+        observed["was_set_after_signal"] = stop_event.is_set()
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_watch", _fake_run_watch)
+
+    exit_code = main(_watch_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_OK
+    assert observed["was_set_after_signal"] is True
+    # ハンドラがmain終了後に元へ戻されていること(他のテスト・プロセス全体への影響防止)
+    assert signal.getsignal(sig) == original_handler
