@@ -29,8 +29,8 @@ import shutil
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from urllib.parse import quote, unquote
 
+from .._paths import deslugify_project, slugify_project
 from ..logging_ import get_logger
 from .errors import DiskLimitExceededError, GitCommandError
 from .types import WorktreeHandle
@@ -227,18 +227,11 @@ def _branch_name(mr_iid: int) -> str:
     return f"mr-{mr_iid}"
 
 
-def _slugify_project(project: str) -> str:
-    # `group/subgroup/project`のようなスラッシュ区切りを、深いディレクトリ階層を作らずに
-    # 1階層のディレクトリ名へ落とし込む(Spike S-3 §7、Windowsのパス長制限対策)。
-    # 単純な"/"→"__"置換は、GitLabのproject/group名にアンダースコアが許可されているため
-    # 単射でない(例: "ab/cd"と"ab__cd"が衝突し、別プロジェクトのcloneを共有してしまう)。
-    # パーセントエンコーディング(gitlab_adapter._encode_projectと同じ方式)なら
-    # 1階層のまま単射・可逆に変換できる
-    return quote(project, safe="")
-
-
-def _deslugify_project(slug: str) -> str:
-    return unquote(slug)
+# runner/subprocess_runner.pyも同じ規則(project→1階層ディレクトリ名)を必要とするため、
+# `_paths`モジュールに集約したものをそのまま使う(以前はモジュールごとに同じコードを
+# 複製していた)
+_slugify_project = slugify_project
+_deslugify_project = deslugify_project
 
 
 def _dir_size_bytes(path: Path) -> int:
