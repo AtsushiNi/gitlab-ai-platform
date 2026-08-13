@@ -88,3 +88,55 @@ JSON構造やフィールド名の変化に直接依存しないようにする�
   (2) 追加するとAdapter層がConfigに依存する形になり、「GitLab APIとのやりとりに専念する」という
   Adapterの責務境界(`docs/architecture.md`)が崩れる。Runner側の設計が固まった時点
   (M2以降)で、Runner層のガードとして再検討する。
+
+## 追記(M2-10、[#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47))
+
+`docs/requirements.md` 3-C(新規の開発要件をIssueへ分解する)の土台として、Issue操作
+(読み取り・作成・更新)とMR更新を許可リストに追加した。
+
+### 許可リストの拡張
+
+`GitLabReader`に`list_issues` / `get_issue`を追加(読み取り5→7)。`GitLabWriter`に
+`create_issue` / `update_issue` / `update_merge_request`を追加(書き込み4→7)。
+
+`Issue`型は`types.py`に新設し、`MergeRequest`と同じ設計方針(project/iid/title/description/
+state/author/labels/web_urlの正規化されたdataclass、`frozen=True`)に倣った。
+
+### 状態遷移を「引数として存在しない」ことで禁止する
+
+Issue本文(#47)の「merge・クローズ・削除等は含めない」という制約を、`update_issue`/
+`update_merge_request`という**更新系メソッドの内部**でも維持する必要があった。GitLab REST API
+の`PUT /projects/:id/issues/:iid`および`PUT /projects/:id/merge_requests/:iid`は、
+`title`/`description`と同じボディに`state_event`(`close`/`reopen`、MRの場合はさらに
+mergeに近い遷移も)を受け付けるため、素朴に「更新用のオプション引数を全部受け取る」設計にすると
+呼び出し側が`state_event="close"`を渡すだけでクローズできてしまい、「メソッドとして存在しない」
+という本ADRの元々の設計思想(禁止操作をコード上呼び出しようがなくする)が骨抜きになる。
+
+このため、`update_issue`/`update_merge_request`のシグネチャには`title: str | None = None`と
+`description: str | None = None`の2つのキーワード専用引数のみを持たせ、`state_event`に相当する
+引数を**メソッドシグネチャ自体に存在させない**設計にした。REST実装(`rest.py`)側も、送信ボディを
+組み立てるヘルパー`_build_update_body(*, title, description)`を経由させることで、実装の途中で
+誰かが`state_event`を書き足そうとしても、まずヘルパー関数のシグネチャ変更が必要になるという
+一段の防御を入れている。
+
+これは本ADRの「実行時チェックではなく、そもそも呼び出せない・渡せないという構造的な制約を
+優先する」という設計思想(冒頭「書き込みの許可リストは『メソッドとして存在しないこと』で表現する」
+節)を、メソッド単位の粒度からメソッドの**引数**単位の粒度まで一段細かく適用したもの。
+
+`test_protocol.py`には、`close_issue` / `reopen_issue` / `close_merge_request` /
+`reopen_merge_request` / `delete_issue`を禁止操作名の集合に追加し、`GitLabWriter`の公開メソッド
+集合との非交差を検証する形で反映した。`test_rest.py`には、`update_issue`/`update_merge_request`
+が実際にGitLab APIへ送信するリクエストボディに`state_event`キーが含まれないことを直接検証する
+回帰テストを追加した(メソッドが存在しないことのテストだけでは、「引数を持たない」という制約は
+検証できないため)。
+
+### 却下した選択肢
+
+- **`update_issue`/`update_merge_request`に`state_event: Literal["close", "reopen"] | None`を
+  持たせ、実装側(REST実装)で`merge`相当の値だけを拒否する**: 実行時バリデーションに頼る設計であり、
+  本ADRが最初から避けてきた「プロンプト上の約束事・実行時チェックへの依存」に逆戻りする。
+  型システムレベルで「存在しない」ことを保証できる今回の設計を優先した。
+- **`close_issue` / `reopen_issue`のような専用メソッドを別途増やす**: Issue本文で明示的に
+  「merge・クローズ・削除等は含めない」とされており、現時点で必要になっていない操作を
+  先回りして許可リストに載せる理由がない。将来必要になった時点で、個別に本ADRを更新して追加する
+  (Issue本文の「必要になれば個別に追加を検討する」という方針に従う)。

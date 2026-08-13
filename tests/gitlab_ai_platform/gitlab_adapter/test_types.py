@@ -2,7 +2,12 @@ import dataclasses
 
 import pytest
 
-from gitlab_ai_platform.gitlab_adapter import CommitAction, CommitActionType, MergeRequest
+from gitlab_ai_platform.gitlab_adapter import (
+    CommitAction,
+    CommitActionType,
+    Issue,
+    MergeRequest,
+)
 
 
 def test_merge_request_labels_default_to_empty_tuple():
@@ -19,6 +24,34 @@ def test_merge_request_labels_default_to_empty_tuple():
     )
 
     assert mr.labels == ()
+
+
+def test_issue_labels_and_web_url_default():
+    issue = Issue(
+        project="group/project",
+        iid=1,
+        title="title",
+        description="",
+        state="opened",
+        author="alice",
+    )
+
+    assert issue.labels == ()
+    assert issue.web_url == ""
+
+
+def test_issue_is_frozen():
+    issue = Issue(
+        project="group/project",
+        iid=1,
+        title="title",
+        description="",
+        state="opened",
+        author="alice",
+    )
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        issue.title = "changed"
 
 
 def test_dataclasses_are_frozen():

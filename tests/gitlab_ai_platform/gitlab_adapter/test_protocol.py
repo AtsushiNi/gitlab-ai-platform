@@ -8,6 +8,7 @@ from gitlab_ai_platform.gitlab_adapter import (
     GitLabAdapter,
     GitLabReader,
     GitLabWriter,
+    Issue,
     MergeRequest,
     MergeRequestDiff,
     Note,
@@ -20,6 +21,9 @@ _ALLOWED_WRITE_OPERATIONS = {
     "push_file_changes",
     "create_merge_request",
     "create_merge_request_comment",
+    "update_merge_request",
+    "create_issue",
+    "update_issue",
 }
 
 _FORBIDDEN_WRITE_OPERATIONS = {
@@ -33,6 +37,14 @@ _FORBIDDEN_WRITE_OPERATIONS = {
     "delete_project",
     "add_project_member",
     "update_project_member",
+    # Issue/MRの状態遷移(state_event相当)。update_issue/update_merge_requestは
+    # タイトル・説明のみを更新でき、close/reopen/mergeは別メソッドとしても
+    # 引数としても存在しない(M2-10、#47)
+    "close_issue",
+    "reopen_issue",
+    "close_merge_request",
+    "reopen_merge_request",
+    "delete_issue",
 }
 
 
@@ -57,6 +69,8 @@ def test_gitlab_reader_exposes_read_operations():
         "get_merge_request",
         "get_merge_request_diffs",
         "list_merge_request_discussions",
+        "list_issues",
+        "get_issue",
     }
 
 
@@ -90,6 +104,21 @@ class _FakeFullAdapter:
     def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
         return []
 
+    def list_issues(
+        self, project: str, *, labels: Sequence[str] = (), state: str = "opened"
+    ) -> list[Issue]:
+        return []
+
+    def get_issue(self, project: str, issue_iid: int) -> Issue:
+        return Issue(
+            project=project,
+            iid=issue_iid,
+            title="title",
+            description="",
+            state="opened",
+            author="alice",
+        )
+
     def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:
         return Branch(name=branch_name, commit_sha="abc123", protected=False)
 
@@ -115,6 +144,29 @@ class _FakeFullAdapter:
     def create_merge_request_comment(self, project: str, mr_iid: int, body: str) -> Note:
         return Note(id=1, body=body, author="ai-bot", created_at="2026-08-13T00:00:00Z")
 
+    def update_merge_request(
+        self,
+        project: str,
+        mr_iid: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> MergeRequest:
+        return self.get_merge_request(project, mr_iid)
+
+    def create_issue(self, project: str, title: str, description: str = "") -> Issue:
+        return self.get_issue(project, 1)
+
+    def update_issue(
+        self,
+        project: str,
+        issue_iid: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> Issue:
+        return self.get_issue(project, issue_iid)
+
 
 class _FakeReaderOnly:
     """書き込みメソッドを一切持たない、読み取り専用実装の例。"""
@@ -135,6 +187,14 @@ class _FakeReaderOnly:
 
     def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
         return []
+
+    def list_issues(
+        self, project: str, *, labels: Sequence[str] = (), state: str = "opened"
+    ) -> list[Issue]:
+        return []
+
+    def get_issue(self, project: str, issue_iid: int) -> Issue:
+        raise NotImplementedError
 
 
 def test_full_fake_satisfies_gitlab_adapter_protocol():
