@@ -45,6 +45,7 @@
 - [specs/gitlab-adapter.md](specs/gitlab-adapter.md) — GitLab Adapter(M1-1)の仕様。
   最初の実例
 - [specs/state-store.md](specs/state-store.md) — State Store(M1-4)の仕様
+- [specs/workspace-manager.md](specs/workspace-manager.md) — Workspace Manager(M1-6)の仕様
 
 ## 更新ルール
 
