@@ -54,6 +54,20 @@ class MergeRequest:
 
 
 @dataclass(frozen=True)
+class Issue:
+    """GitLab Issue。`MergeRequest`と同様、APIレスポンスから必要なフィールドだけを正規化する。"""
+
+    project: str
+    iid: int
+    title: str
+    description: str
+    state: str
+    author: str
+    labels: tuple[str, ...] = field(default_factory=tuple)
+    web_url: str = ""
+
+
+@dataclass(frozen=True)
 class MergeRequestDiff:
     """MR差分の1ファイル分。`GET /merge_requests/:iid/diffs`のレスポンスに対応する。
 
@@ -91,6 +105,7 @@ __all__ = [
     "CommitActionType",
     "CommitAction",
     "Branch",
+    "Issue",
     "MergeRequest",
     "MergeRequestDiff",
     "Note",

@@ -81,10 +81,15 @@ _ALLOWED_PUBLIC_OPERATIONS = {
     "get_merge_request",
     "get_merge_request_diffs",
     "list_merge_request_discussions",
+    "list_issues",
+    "get_issue",
     "create_branch",
     "push_file_changes",
     "create_merge_request",
     "create_merge_request_comment",
+    "update_merge_request",
+    "create_issue",
+    "update_issue",
 }
 
 
@@ -364,6 +369,193 @@ def test_create_merge_request_comment():
     assert session.calls[0]["json"] == {"body": "LGTM"}
 
 
+def test_list_issues_paginates_using_x_next_page_header():
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data=[
+                    {
+                        "iid": 1,
+                        "title": "first",
+                        "description": "",
+                        "state": "opened",
+                        "author": _author(),
+                        "labels": ["bug"],
+                        "web_url": "https://gitlab.example.com/g/p/-/issues/1",
+                    }
+                ],
+                headers={"X-Next-Page": "2"},
+            ),
+            _FakeResponse(
+                json_data=[
+                    {
+                        "iid": 2,
+                        "title": "second",
+                        "description": "",
+                        "state": "opened",
+                        "author": _author("bob"),
+                    }
+                ],
+                headers={"X-Next-Page": ""},
+            ),
+        ]
+    )
+
+    result = adapter.list_issues("group/project", labels=["bug"], state="opened")
+
+    assert [issue.iid for issue in result] == [1, 2]
+    assert result[0].labels == ("bug",)
+    assert result[0].author == "alice"
+    assert len(session.calls) == 2
+    assert session.calls[0]["params"]["labels"] == "bug"
+    assert session.calls[0]["url"].endswith("/issues")
+
+
+def test_get_issue():
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 5,
+                    "title": "title",
+                    "description": "desc",
+                    "state": "opened",
+                    "author": _author(),
+                }
+            )
+        ]
+    )
+
+    issue = adapter.get_issue("group/project", 5)
+
+    assert issue.iid == 5
+    assert issue.project == "group/project"
+    assert session.calls[0]["url"] == (
+        f"{_BASE_URL}/api/v4/projects/group%2Fproject/issues/5"
+    )
+
+
+def test_create_issue():
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 3,
+                    "title": "new issue",
+                    "description": "body",
+                    "state": "opened",
+                    "author": _author("ai-bot"),
+                }
+            )
+        ]
+    )
+
+    issue = adapter.create_issue("group/project", "new issue", "body")
+
+    assert issue.iid == 3
+    assert session.calls[0]["method"] == "POST"
+    assert session.calls[0]["json"] == {"title": "new issue", "description": "body"}
+
+
+def test_update_issue_sends_only_specified_fields():
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 3,
+                    "title": "updated title",
+                    "description": "old desc",
+                    "state": "opened",
+                    "author": _author(),
+                }
+            )
+        ]
+    )
+
+    issue = adapter.update_issue("group/project", 3, title="updated title")
+
+    assert issue.title == "updated title"
+    assert session.calls[0]["method"] == "PUT"
+    assert session.calls[0]["json"] == {"title": "updated title"}
+
+
+def test_update_issue_does_not_send_state_event():
+    """update_issueにはstate_eventを渡す引数自体が存在しない。送信ボディに
+    close/reopen相当のキーが決して含まれないことを回帰確認する。"""
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 3,
+                    "title": "t",
+                    "description": "d",
+                    "state": "opened",
+                    "author": _author(),
+                }
+            )
+        ]
+    )
+
+    adapter.update_issue("group/project", 3, title="t", description="d")
+
+    assert "state_event" not in session.calls[0]["json"]
+    assert set(session.calls[0]["json"].keys()) == {"title", "description"}
+
+
+def test_update_merge_request_sends_only_specified_fields():
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 9,
+                    "title": "updated",
+                    "description": "",
+                    "state": "opened",
+                    "source_branch": "feature/x",
+                    "target_branch": "main",
+                    "sha": "abc",
+                    "author": _author(),
+                }
+            )
+        ]
+    )
+
+    mr = adapter.update_merge_request("group/project", 9, description="new desc")
+
+    assert mr.iid == 9
+    assert session.calls[0]["method"] == "PUT"
+    assert session.calls[0]["url"] == (
+        f"{_BASE_URL}/api/v4/projects/group%2Fproject/merge_requests/9"
+    )
+    assert session.calls[0]["json"] == {"description": "new desc"}
+
+
+def test_update_merge_request_does_not_send_state_event():
+    """update_merge_requestにはstate_event(close/reopen/merge相当)を渡す引数が
+    存在しない。送信ボディにも決して含まれないことを回帰確認する。"""
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 9,
+                    "title": "t",
+                    "description": "d",
+                    "state": "opened",
+                    "source_branch": "feature/x",
+                    "target_branch": "main",
+                    "sha": "abc",
+                    "author": _author(),
+                }
+            )
+        ]
+    )
+
+    adapter.update_merge_request("group/project", 9, title="t", description="d")
+
+    assert "state_event" not in session.calls[0]["json"]
+    assert set(session.calls[0]["json"].keys()) == {"title", "description"}
+
+
 def test_429_retries_using_retry_after_header_then_succeeds():
     sleeps: list[float] = []
     adapter, session = _adapter(
@@ -574,6 +766,132 @@ def test_create_merge_request_comment_records_success_audit_log_without_body(
     assert records[0].note_id == 42
     # コメント本文そのものは監査ログに含めない(機微・任意長になりうるため)
     assert not hasattr(records[0], "body")
+
+
+def test_update_merge_request_records_success_audit_log(caplog: pytest.LogCaptureFixture):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 9,
+                    "title": "updated",
+                    "description": "",
+                    "state": "opened",
+                    "source_branch": "feature/x",
+                    "target_branch": "main",
+                    "sha": "abc",
+                    "author": _author(),
+                }
+            )
+        ]
+    )
+
+    adapter.update_merge_request("group/project", 9, title="updated")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].operation == "update_merge_request"
+    assert records[0].status == "success"
+    assert records[0].mr_iid == 9
+    # 更新後のタイトル・説明文そのものは監査ログに含めない
+    assert not hasattr(records[0], "title")
+    assert not hasattr(records[0], "description")
+
+
+def test_create_issue_records_success_audit_log(caplog: pytest.LogCaptureFixture):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 3,
+                    "title": "new issue",
+                    "description": "",
+                    "state": "opened",
+                    "author": _author("ai-bot"),
+                }
+            )
+        ]
+    )
+
+    adapter.create_issue("group/project", "new issue")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].operation == "create_issue"
+    assert records[0].status == "success"
+    assert records[0].issue_iid == 3
+
+
+def test_update_issue_records_success_audit_log(caplog: pytest.LogCaptureFixture):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter(
+        [
+            _FakeResponse(
+                json_data={
+                    "iid": 3,
+                    "title": "updated",
+                    "description": "",
+                    "state": "opened",
+                    "author": _author(),
+                }
+            )
+        ]
+    )
+
+    adapter.update_issue("group/project", 3, title="updated")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].operation == "update_issue"
+    assert records[0].status == "success"
+    assert records[0].issue_iid == 3
+
+
+def test_update_merge_request_records_error_audit_log_on_api_failure(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_FakeResponse(status_code=404, json_data={"message": "not found"})])
+
+    with pytest.raises(GitLabApiError):
+        adapter.update_merge_request("group/project", 9, title="x")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].operation == "update_merge_request"
+    assert records[0].status == "error"
+
+
+def test_create_issue_records_error_audit_log_on_malformed_response(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_FakeResponse(json_data={"title": "no iid"})])
+
+    with pytest.raises(GitLabApiError):
+        adapter.create_issue("group/project", "new issue")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].operation == "create_issue"
+    assert records[0].status == "error"
+
+
+def test_update_issue_records_error_audit_log_on_api_failure(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
+    adapter, _ = _adapter([_FakeResponse(status_code=404, json_data={"message": "not found"})])
+
+    with pytest.raises(GitLabApiError):
+        adapter.update_issue("group/project", 3, title="x")
+
+    records = _write_log_records(caplog)
+    assert len(records) == 1
+    assert records[0].operation == "update_issue"
+    assert records[0].status == "error"
 
 
 # 2xxだが必須フィールドが欠けている(=マッピングに失敗する)応答は、監査ログ上も

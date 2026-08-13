@@ -4,15 +4,17 @@
 `docs/adr/0002-gitlab-adapter-interface.md`、`references/spike-S2-gitlab-rest-api.md`):
 
 - `GitLabWriter`の許可リスト(create_branch / push_file_changes / create_merge_request /
-  create_merge_request_comment)以外の書き込み操作(merge、branch削除、管理操作等)は
-  このクラスにメソッドとして実装しない。呼び出し可能な操作をコード上絞り込むというADR-0002の
-  方針を、具象クラス側でも厳密に守る。
+  create_merge_request_comment / update_merge_request / create_issue / update_issue)以外の
+  書き込み操作(merge、branch削除、管理操作等)はこのクラスにメソッドとして実装しない。
+  呼び出し可能な操作をコード上絞り込むというADR-0002の方針を、具象クラス側でも厳密に守る。
+  `update_merge_request`/`update_issue`はGitLab APIの`state_event`パラメータを一切送信しない
+  (M2-10、[#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47))。
 - diffは`changes`ではなく`diffs`エンドポイントを使う。コメントは`discussions`を使い、
   返信関係(スレッド構造)を保つ。
 - 一覧取得は`per_page=100`固定 + `X-Next-Page`レスポンスヘッダに基づくoffsetページングとする。
 - `429`(レート制限)と`5xx`は再試行対象とし、`429`は`Retry-After`ヘッダに従う。それ以外の
   エラーレスポンスは`GitLabApiError`として送出する。
-- 書き込み操作(`GitLabWriter`の4メソッド)は、呼び出し結果(成功/protected branchによる拒否/
+- 書き込み操作(`GitLabWriter`の7メソッド)は、呼び出し結果(成功/protected branchによる拒否/
   エラー)を構造化ログとして記録する([M1-3](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31)、
   X-1セキュリティレビューの証跡)。commit本文やコメント本文など任意長・機微になりうる内容は
   含めず、操作対象を特定できる識別子(project/branch/mr_iid等)のみを記録する。
@@ -33,6 +35,7 @@ from .types import (
     Branch,
     CommitAction,
     Discussion,
+    Issue,
     MergeRequest,
     MergeRequestDiff,
     Note,
@@ -109,9 +112,31 @@ class GitLabRestAdapter:
         )
         return [_map_discussion(item) for item in items]
 
+    def list_issues(
+        self,
+        project: str,
+        *,
+        labels: Sequence[str] = (),
+        state: str = "opened",
+    ) -> list[Issue]:
+        params: dict[str, Any] = {"state": state}
+        if labels:
+            params["labels"] = ",".join(labels)
+
+        items = self._paginated_get(
+            f"/projects/{_encode_project(project)}/issues", params=params
+        )
+        return [_map_issue(project, item) for item in items]
+
+    def get_issue(self, project: str, issue_iid: int) -> Issue:
+        data = self._request_json(
+            "GET", f"/projects/{_encode_project(project)}/issues/{issue_iid}"
+        )
+        return _map_issue(project, data)
+
     # -- GitLabWriter --------------------------------------------------------
-    # 許可リスト(ADR-0002)にある4操作のみを実装する。merge・branch削除・管理操作などは
-    # 意図的にメソッドとして追加しない。
+    # 許可リスト(ADR-0002、M2-10で拡充)にある7操作のみを実装する。merge・branch削除・
+    # 管理操作、およびIssue/MRの状態遷移(close/reopen等)は意図的にメソッドとして追加しない。
 
     def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:
         # マッピング(_map_branch)まで含めてtry内で行う。GitLab APIが2xxを返しても
@@ -267,6 +292,79 @@ class GitLabRestAdapter:
         )
         return note
 
+    def update_merge_request(
+        self,
+        project: str,
+        mr_iid: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> MergeRequest:
+        # state_eventは意図的に受け付けない(引数として存在しない)。close/reopen/merge等の
+        # 状態遷移をAdapter経由で行えないようにするための構造的な制約(ADR-0002 M2-10追記)
+        body = _build_update_body(title=title, description=description)
+        try:
+            data = self._request_json(
+                "PUT",
+                f"/projects/{_encode_project(project)}/merge_requests/{mr_iid}",
+                json_body=body,
+            )
+            mr = _map_merge_request(project, data)
+        except GitLabApiError:
+            self._record_write(
+                "update_merge_request", status="error", project=project, mr_iid=mr_iid
+            )
+            raise
+
+        self._record_write(
+            "update_merge_request", status="success", project=project, mr_iid=mr_iid
+        )
+        return mr
+
+    def create_issue(self, project: str, title: str, description: str = "") -> Issue:
+        body = {"title": title, "description": description}
+        try:
+            data = self._request_json(
+                "POST", f"/projects/{_encode_project(project)}/issues", json_body=body
+            )
+            issue = _map_issue(project, data)
+        except GitLabApiError:
+            self._record_write("create_issue", status="error", project=project)
+            raise
+
+        self._record_write(
+            "create_issue", status="success", project=project, issue_iid=issue.iid
+        )
+        return issue
+
+    def update_issue(
+        self,
+        project: str,
+        issue_iid: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> Issue:
+        # update_merge_requestと同様、state_eventは受け付けない
+        body = _build_update_body(title=title, description=description)
+        try:
+            data = self._request_json(
+                "PUT",
+                f"/projects/{_encode_project(project)}/issues/{issue_iid}",
+                json_body=body,
+            )
+            issue = _map_issue(project, data)
+        except GitLabApiError:
+            self._record_write(
+                "update_issue", status="error", project=project, issue_iid=issue_iid
+            )
+            raise
+
+        self._record_write(
+            "update_issue", status="success", project=project, issue_iid=issue_iid
+        )
+        return issue
+
     def _record_write(self, operation: str, *, status: str, **fields: Any) -> None:
         """書き込み操作の実行結果を監査ログとして記録する(M1-3、X-1の証跡)。
 
@@ -401,6 +499,20 @@ def _encode_project(project: str) -> str:
     return quote(project, safe="")
 
 
+def _build_update_body(*, title: str | None, description: str | None) -> dict[str, Any]:
+    """`update_issue`/`update_merge_request`向けのリクエストボディを組み立てる。
+
+    指定されたフィールドだけを送る(未指定のNoneは送らない)。`state_event`はこの関数の
+    引数にも存在しないため、呼び出し元がどう呼んでも送信されようがない。
+    """
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["title"] = title
+    if description is not None:
+        body["description"] = description
+    return body
+
+
 def _require(data: dict[str, Any], key: str) -> Any:
     """必須フィールドを取り出す。欠けていればGitLabApiErrorに変換する。
 
@@ -427,6 +539,19 @@ def _map_merge_request(project: str, data: dict[str, Any]) -> MergeRequest:
         source_branch=_require(data, "source_branch"),
         target_branch=_require(data, "target_branch"),
         sha=data.get("sha") or "",
+        author=_require(_require(data, "author"), "username"),
+        labels=tuple(data.get("labels", ())),
+        web_url=data.get("web_url", ""),
+    )
+
+
+def _map_issue(project: str, data: dict[str, Any]) -> Issue:
+    return Issue(
+        project=project,
+        iid=_require(data, "iid"),
+        title=_require(data, "title"),
+        description=data.get("description") or "",
+        state=_require(data, "state"),
         author=_require(_require(data, "author"), "username"),
         labels=tuple(data.get("labels", ())),
         web_url=data.get("web_url", ""),
