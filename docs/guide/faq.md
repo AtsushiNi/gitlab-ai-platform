@@ -46,7 +46,8 @@ IIDを直接コマンドライン引数で指定する単発実行のため、`g
 
 されない。`(project, MR IID, commit SHA)` の組み合わせをState Storeが記録しており、
 同一commitへの二重レビューを防ぐ。新しいpushがあれば新しいcommit SHAとして
-再レビュー対象になる(`docs/architecture.md`「状態管理・冪等性」参照)。ただし
+再レビュー対象になる([architecture.md](../architecture.md)「コンポーネントの責務と境界」
+表のState Store行参照)。ただし
 `review` サブコマンドでの単発実行は、デバッグ用途のため同一commitへの再実行を
 あえて許可している(既存レコードを `RUNNING` に更新して実行し直す)。
 
