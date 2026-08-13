@@ -47,8 +47,9 @@
 - [specs/state-store.md](specs/state-store.md) — State Store(M1-4)の仕様
 - [specs/workspace-manager.md](specs/workspace-manager.md) — Workspace Manager(M1-6)の仕様
 - [specs/claude-code-runner.md](specs/claude-code-runner.md) — Claude Code Runner(M1-7)の仕様
-- [specs/prompts.md](specs/prompts.md) — レビュープロンプト(M1-8)の仕様。結果スキーマは
-  M1-9で`specs/review-output.md`として別途追加予定
+- [specs/prompts.md](specs/prompts.md) — レビュープロンプト(M1-8)の仕様
+- [specs/review-output.md](specs/review-output.md) — レビュー結果スキーマと保存レイアウト
+  (M1-9)の仕様
 
 ## 更新ルール
 
