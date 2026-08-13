@@ -15,6 +15,8 @@
 - 各段階の例外(`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)は変換せずそのまま呼び出し側(`cli.main`)へ伝播させる。呼び出し側が
   終了コード・エラーメッセージへ変換する(このモジュール自身はCLI表示に関与しない)。
+- `build_workspace_manager`(GitLab認証込みの`GitWorkspaceManager`組み立て)は常駐(watch)
+  モード(M1-11、`cli/watch.py`)からも再利用する前提で公開している。
 """
 
 from __future__ import annotations
@@ -52,7 +54,7 @@ _logger = get_logger(__name__)
 # GitLabのHTTPS認証は、PATを`.git/config`やコマンド引数に残さないよう、gitのcredential
 # helperプロトコル(`get`要求に対して`username=`/`password=`を標準出力へ返す)経由で都度供給する
 # (`references/spike-S3-git-worktree-windows.md` §8.1)。トークンの値そのものはこの文字列には
-# 含めず、環境変数名だけを埋め込む(実際の値は`_build_workspace_manager`がsubprocessの
+# 含めず、環境変数名だけを埋め込む(実際の値は`build_workspace_manager`がsubprocessの
 # 環境変数として注入する)。`!`で始まる値はgitがシェル経由で実行する
 _CREDENTIAL_HELPER_TEMPLATE = '!f() {{ echo username=oauth2; echo "password=${var}"; }}; f'
 
@@ -86,7 +88,7 @@ def run_single_review(
     具象実装(REST/git/subprocess/SQLite)を組み立て、`execute_review`に委譲する。
     """
     adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
-    workspace = _build_workspace_manager(config)
+    workspace = build_workspace_manager(config)
     runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
     store = SqliteStateStore(config.state_db_path)
     try:
@@ -242,7 +244,7 @@ def _credential_helper() -> str:
     return _CREDENTIAL_HELPER_TEMPLATE.format(var=GITLAB_TOKEN_ENV_KEY)
 
 
-def _build_workspace_manager(config: Config) -> GitWorkspaceManager:
+def build_workspace_manager(config: Config) -> GitWorkspaceManager:
     token_env = {GITLAB_TOKEN_ENV_KEY: config.gitlab_token}
     run_with_token = functools.partial(subprocess.run, env={**os.environ, **token_env})
 
@@ -259,4 +261,4 @@ def _build_workspace_manager(config: Config) -> GitWorkspaceManager:
     )
 
 
-__all__ = ["SingleRunResult", "run_single_review", "execute_review"]
+__all__ = ["SingleRunResult", "run_single_review", "execute_review", "build_workspace_manager"]

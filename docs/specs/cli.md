@@ -1,16 +1,23 @@
 # CLI
 
 - 実装場所: `src/gitlab_ai_platform/cli/`
-- 対応Issue: [#38](https://github.com/AtsushiNi/gitlab-ai-platform/issues/38) (M1-10)
-- 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)
-- ステータス: 実装中(単発レビュー実行`review`サブコマンドのみ。常駐`watch`モードはM1-11で追加)
+- 対応Issue: [#38](https://github.com/AtsushiNi/gitlab-ai-platform/issues/38) (M1-10)、
+  [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39) (M1-11)
+- 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
+  [ADR-0009](../adr/0009-cli-watch-design.md)
+- ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド)
 
 ## 責務
 
-指定した1つのproject/MRに対し、GitLab Adapter → Workspace Manager → Review(プロンプト) →
-Claude Code Runner → Review(パース・保存) → State Storeという一連のパイプラインを実行する
-`review`サブコマンドを提供する。「デバッグとプロンプト改善の主要導線」
-(`docs/architecture.md`)として、結果の保存先パスと簡単なサマリを標準出力に表示する。
+2つのサブコマンドを提供する:
+
+- `review`: 指定した1つのproject/MRに対し、GitLab Adapter → Workspace Manager →
+  Review(プロンプト) → Claude Code Runner → Review(パース・保存) → State Storeという
+  一連のパイプラインを1回だけ実行する。「デバッグとプロンプト改善の主要導線」
+  (`docs/architecture.md`)として、結果の保存先パスと簡単なサマリを標準出力に表示する
+- `watch`: MR Poller(M1-5)で対象プロジェクトを定期走査し、検出したMRごとに`review`と
+  同じレビュー実行パイプラインを呼び出し続ける常駐モード。Ctrl+C(SIGINT)/SIGTERMで
+  graceful shutdownし、同一設定に対する多重起動を防ぐ
 
 ## 前提と非対象
 
@@ -23,9 +30,11 @@ Claude Code Runner → Review(パース・保存) → State Storeという一連
   - 対象プロジェクトへのgit clone/fetchがネットワーク的に到達可能であること
 - 非対象:
   - オーケストレーション(Job間の遷移)はしない(`docs/architecture.md`のCLIの境界)
-  - MR Pollerによる複数MR横断の走査はしない。`project`/`mr_iid`は呼び出し時に人間が指定する
+  - `review`はMR Pollerによる複数MR横断の走査はしない。`project`/`mr_iid`は呼び出し時に
+    人間が指定する
   - GitLabへの自動コメント投稿はしない(Review, M1-9の境界を継承)
-  - 常駐(watch)モードはM1-11で別サブコマンドとして追加する
+  - `watch`は失敗したレビューの自動リトライ・監視・プロセス再起動はしない
+    (`docs/adr/0009-cli-watch-design.md`。M3以降のLinux/Docker移行後のスコープ)
 
 ## 公開インターフェース
 
@@ -38,6 +47,8 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
     [--allowed-tools TOOL [TOOL ...]] \
     [--disallowed-tools TOOL [TOOL ...]] \
     [--permission-mode MODE]
+
+gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] watch
 ```
 
 `pip install -e .`後は`gitlab-ai-platform`(`[project.scripts]`)として、それ以外でも
@@ -51,14 +62,19 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 | `--log-dir` | - | なし(コンソールのみ) | 構造化ログ(JSON、日次ローテーション)の出力先 |
 | `project`(review) | ✓ | - | GitLabのプロジェクトパス(`group/project`形式) |
 | `mr_iid`(review) | ✓ | - | MRのIID |
-| `--timeout` | - | `config.toml`の`runner.timeout_seconds` | Claude Codeのタイムアウト秒数 |
-| `--allowed-tools` | - | 空 | `claude --allowedTools`に対応 |
-| `--disallowed-tools` | - | 空 | `claude --disallowedTools`に対応 |
-| `--permission-mode` | - | なし | `claude --permission-mode`に対応 |
+| `--timeout`(review) | - | `config.toml`の`runner.timeout_seconds` | Claude Codeのタイムアウト秒数 |
+| `--allowed-tools`(review) | - | 空 | `claude --allowedTools`に対応 |
+| `--disallowed-tools`(review) | - | 空 | `claude --disallowedTools`に対応 |
+| `--permission-mode`(review) | - | なし | `claude --permission-mode`に対応 |
+
+`watch`はサブコマンド固有の引数を持たない。走査対象プロジェクト・ポーリング間隔・
+レビュー待ちラベル等はすべて`config.toml`(`Config`)から読む
+(`--timeout`等をMR単位で都度変えるユースケースは想定していない。デバッグ用途は
+`review`を使う)。
 
 ### Python API
 
-実装場所: `src/gitlab_ai_platform/cli/single_run.py`。
+#### `review`(実装場所: `src/gitlab_ai_platform/cli/single_run.py`)
 
 ```python
 from gitlab_ai_platform.config import Config
@@ -97,6 +113,56 @@ def run_single_review(
 ) -> "SingleRunResult":
     """合成ルート。`config`からGitLabRestAdapter/GitWorkspaceManager/
     SubprocessClaudeCodeRunner/SqliteStateStoreを組み立て、`execute_review`に委譲する。"""
+
+
+def build_workspace_manager(config: Config) -> "GitWorkspaceManager":
+    """GitLab認証(credential helper)込みの`GitWorkspaceManager`を組み立てる。
+    `run_single_review`と`run_watch`の両方から再利用する(M1-11、ADR-0009)。"""
+```
+
+#### `watch`(実装場所: `src/gitlab_ai_platform/cli/watch.py`)
+
+[ADR-0008](../adr/0008-cli-single-run-design.md)の`execute_review`/`run_single_review`
+分離パターンをそのまま踏襲する([ADR-0009](../adr/0009-cli-watch-design.md))。
+
+```python
+import threading
+
+from gitlab_ai_platform.config import Config
+from gitlab_ai_platform.gitlab_adapter.protocol import GitLabReader
+from gitlab_ai_platform.poller import DetectedReview
+from gitlab_ai_platform.runner.protocol import ClaudeCodeRunner
+from gitlab_ai_platform.store.protocol import StateStore
+from gitlab_ai_platform.workspace.protocol import WorkspaceManager
+
+
+def build_on_detected(
+    adapter: GitLabReader,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    store: StateStore,
+    config: Config,
+) -> "Callable[[DetectedReview], None]":
+    """`DetectedReview`ごとに`execute_review`を呼ぶコールバックを組み立てる。既知の
+    パイプライン例外はログに記録して握りつぶし、想定外の例外はそのまま伝播させる。"""
+
+
+def run_watch_loop(
+    adapter: GitLabReader,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    store: StateStore,
+    config: Config,
+    *,
+    stop_event: threading.Event | None = None,
+) -> None:
+    """パイプライン本体。`MrPoller`と`build_on_detected`を結線する。
+    4つの依存先はすべてProtocol型で受け取る(具象実装に依存しない)。"""
+
+
+def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> None:
+    """合成ルート。`config`から具象実装を組み立て、`ProcessLock`(多重起動防止、
+    `cli/lock.py`)を取得してから`run_watch_loop`に委譲する。"""
 ```
 
 ## 入出力スキーマ
@@ -138,22 +204,48 @@ def run_single_review(
    元の例外を再送出する。全て成功した場合は`DONE`に更新し(`reviewed_at`/`result_path`も
    記録)、`SingleRunResult`を返す
 
+## 処理の流れ(`watch`: `run_watch_loop`/`build_on_detected`)
+
+1. `MrPoller(adapter, store, config.projects, review_label=config.review_label)`を構築する
+2. `poller.run(interval_seconds=config.poll_interval_seconds, stop_event=stop_event,
+   on_detected=build_on_detected(...))`で`config.poll_interval_seconds`間隔の走査ループを
+   開始する(ループ制御自体はMR Poller、`docs/specs/poller.md`の責務)
+3. 各サイクルで新たに起票された`DetectedReview`ごとに、`execution_id_scope()`で新しい
+   実行IDを振ってから`execute_review(adapter, workspace, runner, store, config,
+   review.project, review.mr_iid)`を呼ぶ(`review`サブコマンドと同じパイプライン本体を再利用)
+4. 既知のパイプライン例外(`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/
+   `ReviewError`/`StateStoreError`)はログ(`watch.review_failed`)に記録して次のMRの
+   処理を続ける。State Storeは`execute_review`が既に`FAILED`へ更新済みのため、
+   このレコードは以降のサイクルで「処理済み」としてMR Pollerがスキップする
+   (自動リトライはしない)
+5. 上記5種類に属さない想定外の例外は握りつぶさず、`run_watch_loop`の外(`run_watch`
+   → `cli.main`)へそのまま伝播させ、プロセスを終了させる([ADR-0009](../adr/0009-cli-watch-design.md)
+   「1件のレビュー失敗はログに記録して継続する。想定外の例外はプロセスを落とす」)
+6. `stop_event`がセットされると、実行中のサイクル(検出された全MRの処理)完了後に
+   ループを終了する
+
 ## エラー時の振る舞い(`cli/main.py`)
 
-このモジュール自身は独自の例外型を持たない。`execute_review`/`run_single_review`が送出する
-各段階の例外をそのまま受け取り、`cli/exit_codes.py`の終了コードとエラーメッセージ
-(標準エラー出力)に変換する。
+このモジュール自身は独自の例外型を持たない。パイプライン(`review`は
+`execute_review`/`run_single_review`、`watch`は`run_watch`)が送出する例外をそのまま
+受け取り、`cli/exit_codes.py`の終了コードとエラーメッセージ(標準エラー出力)に変換する。
 
-| 例外 | 終了コード | 備考 |
-|---|---|---|
-| `config.ConfigError` | 10 | `load_config`失敗時。PATの値は含めない(`ConfigError`自体の契約) |
-| `gitlab_adapter.errors.GitLabAdapterError` | 11 | |
-| `workspace.errors.WorkspaceError` | 12 | |
-| `runner.errors.RunnerError` | 13 | `log_path`属性があれば標準エラー出力にあわせて表示する |
-| `review.errors.ReviewError` | 14 | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
-| `store.errors.StateStoreError` | 15 | |
-| `KeyboardInterrupt` | 130 | |
-| 上記以外の例外 | 1 | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
+| 例外 | 終了コード | サブコマンド | 備考 |
+|---|---|---|---|
+| `config.ConfigError` | 10 | 両方 | `load_config`失敗時。PATの値は含めない(`ConfigError`自体の契約) |
+| `gitlab_adapter.errors.GitLabAdapterError` | 11 | review | |
+| `workspace.errors.WorkspaceError` | 12 | review | |
+| `runner.errors.RunnerError` | 13 | review | `log_path`属性があれば標準エラー出力にあわせて表示する |
+| `review.errors.ReviewError` | 14 | review | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
+| `store.errors.StateStoreError` | 15 | review | |
+| `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`) |
+| `KeyboardInterrupt` | 130 | 両方 | `watch`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
+| 上記以外の例外 | 1 | 両方 | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
+
+`watch`は上記5種類のパイプライン例外(11〜15)を1件のレビュー失敗としてログに記録し
+プロセスを継続するため(前節参照)、通常はこれらの終了コードでは終了しない。プロセスが
+終了するのはCtrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、
+または想定外の例外(1)の場合のみ。
 
 `argparse`の引数エラーは自動的に終了コード`2`・使い方メッセージになる(このCLIでは独自定義しない)。
 
@@ -177,9 +269,24 @@ def run_single_review(
     やり直せること
   - `_clone_url_for`/`_credential_helper`(GitLab認証の組み立てロジック)を単体で検証し、
     トークンの値そのものが含まれないことを確認する
-- `test_main.py`: `run_single_review`を`monkeypatch`で差し替え、CLI引数が正しく
+  - `build_workspace_manager`が既存の`credential.helper`を空値でクリアしてから
+    独自の値を設定すること
+- `test_watch.py`: `build_on_detected`/`run_watch_loop`/`run_watch`を検証する(`test_single_run.py`
+  と同じくフェイク+実DBの`SqliteStateStore(":memory:")`で、実サービスには繋がない)。
+  - `build_on_detected`: 正常系で`execute_review`相当の結果(State Storeが`DONE`)になること、
+    既知のパイプライン例外はログに記録して例外を送出しないこと(呼び出し元を止めない)、
+    それ以外の例外はそのまま伝播すること
+  - `run_watch_loop`: `MrPoller`が検出した複数の`DetectedReview`を順に処理すること
+  - `run_watch`: `ProcessLock`を取得・解放すること、ロック取得済みの状態で呼ぶと
+    `AlreadyRunningError`を送出すること
+- `test_lock.py`: `ProcessLock`の取得・解放・多重取得時の`AlreadyRunningError`を検証する。
+  Windows分岐(`msvcrt`)は開発機がmacOSのため実機検証はできず、`sys.platform`/
+  `sys.modules["msvcrt"]`をテスト用のフェイクに差し替えてロジックのみ検証する
+  (`references/spike-S3-git-worktree-windows.md`と同様の制約)
+- `test_main.py`: `run_single_review`/`run_watch`を`monkeypatch`で差し替え、CLI引数が正しく
   渡ること、各例外型が対応する終了コード・標準エラー出力になること、正常系で標準出力に
-  サマリ(結果パス・指摘件数)が表示されることを検証する
+  サマリ(結果パス・指摘件数)が表示されることを検証する。`watch`はSIGINT/SIGTERM受信で
+  `stop_event`がセットされること、`main`終了後にシグナルハンドラが元へ戻ることも検証する
 - `test_exit_codes.py`: 終了コードの値が重複しないこと、`argparse`が使う`2`と衝突しないことを
   検証する
 
@@ -188,10 +295,13 @@ def run_single_review(
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のCLI行、
   「データフロー(MVP)」2〜9
 - [ADR-0008: CLI 単発レビュー実行の設計](../adr/0008-cli-single-run-design.md)
+- [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md)
+- [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /
   [claude-code-runner.md](claude-code-runner.md) / [review-output.md](review-output.md) /
   [state-store.md](state-store.md) — このCLIが結線する各コンポーネントの仕様
 - `references/spike-S3-git-worktree-windows.md` §8.1 — GitLab認証(credential helper)の
   実機検証結果
 - ソースコード: `src/gitlab_ai_platform/cli/`
-  (`main.py` / `single_run.py` / `exit_codes.py` / `__main__.py` / `__init__.py`)
+  (`main.py` / `single_run.py` / `watch.py` / `lock.py` / `exit_codes.py` /
+  `__main__.py` / `__init__.py`)

@@ -1,13 +1,16 @@
 """CLIの終了コード定義。
 
 方針(M1-10 [#38](https://github.com/AtsushiNi/gitlab-ai-platform/issues/38)、
-`docs/adr/0008-cli-single-run-design.md`):
+`docs/adr/0008-cli-single-run-design.md`、
+M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)):
 
 - `argparse`が引数エラー時に自動的に使う`2`と衝突しないよう、10番台をパイプラインの
   各段階(GitLab Adapter/Workspace/Runner/Review/State Store)専用に割り当てる。
 - どの段階で失敗したかを終了コードだけで判別できるようにし、デバッグ・自動化スクリプトの
   両方から失敗箇所を特定しやすくする(「デバッグとプロンプト改善の主要導線」という
   M1-10の目的に合わせた設計)。
+- `EXIT_ALREADY_RUNNING`(16)は`watch`サブコマンド(M1-11)専用。多重起動防止の
+  `ProcessLock`がロック取得に失敗した場合に返す。
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ EXIT_WORKSPACE_ERROR = 12
 EXIT_RUNNER_ERROR = 13
 EXIT_REVIEW_ERROR = 14
 EXIT_STATE_STORE_ERROR = 15
+EXIT_ALREADY_RUNNING = 16
 EXIT_INTERRUPTED = 130
 
 __all__ = [
@@ -32,5 +36,6 @@ __all__ = [
     "EXIT_RUNNER_ERROR",
     "EXIT_REVIEW_ERROR",
     "EXIT_STATE_STORE_ERROR",
+    "EXIT_ALREADY_RUNNING",
     "EXIT_INTERRUPTED",
 ]

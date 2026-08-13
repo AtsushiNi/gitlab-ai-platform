@@ -17,6 +17,11 @@
 - ポーリング間隔でのループ(`run`)自体はPollerの責務(`docs/architecture.md`の
   「30〜60秒間隔で走査」)。プロセスのgraceful shutdown(SIGINT/SIGTERM等)はCLI(M1-10/11)の
   責務であり、`stop_event`経由でPollerのループに停止を伝える形で連携する。
+- `run`は各サイクルで新たに起票した`DetectedReview`ごとに、呼び出し側が渡した`on_detected`
+  コールバックを呼ぶ。実際にレビューを実行する(Workspace Manager以降を結線する)処理自体は
+  CLI(M1-11、`cli/watch.py`)の責務であり、Pollerは「いつ・どのMRが検出されたか」を伝える
+  だけに留める。これにより、Pollerは`GitLabReader`/`StateStore`以外の型(Runner/Workspace
+  Managerの例外型等)を一切知らなくてよい。
 - Webhookは当面採用しない(MVP時点)。走査対象プロジェクトは構築時に渡された一覧固定で、
   実行中の動的な追加/削除は扱わない。
 """
@@ -24,7 +29,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from ..gitlab_adapter.errors import GitLabAdapterError
 from ..gitlab_adapter.protocol import GitLabReader
@@ -84,19 +89,29 @@ class MrPoller:
         *,
         interval_seconds: int,
         stop_event: threading.Event | None = None,
+        on_detected: Callable[[DetectedReview], None] | None = None,
     ) -> None:
         """`interval_seconds`間隔で`poll_once`を繰り返す。
 
         `stop_event`がセットされると、実行中のサイクルの完了後に停止する
         (省略時は呼び出し側が別途プロセスを止める手段を用意する必要がある)。
+        `on_detected`を渡すと、そのサイクルで新たに起票された`DetectedReview`ごとに
+        (`result.created`の順番で)呼び出す。`on_detected`が送出する例外はそのまま
+        `run`の外へ伝播する(1件のレビュー失敗を握りつぶして継続するかどうかは
+        呼び出し側の判断に委ねる)。
         """
         stop_event = stop_event if stop_event is not None else threading.Event()
         while not stop_event.is_set():
             result = self.poll_once()
             _logger.info(
                 "poller.cycle_completed",
-                extra={"created": len(result.created), "errors": len(result.errors)},
+                # extraのキーは`logging.LogRecord`の予約属性(`created`はタイムスタンプ)と
+                # 衝突するとKeyErrorで例外になるため、"created_count"を使う
+                extra={"created_count": len(result.created), "error_count": len(result.errors)},
             )
+            if on_detected is not None:
+                for review in result.created:
+                    on_detected(review)
             stop_event.wait(interval_seconds)
 
     def _ticket_if_unprocessed(

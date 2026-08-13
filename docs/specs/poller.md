@@ -32,6 +32,11 @@
   - プロセスのgraceful shutdown(シグナルハンドリング)・多重起動防止はしない。
     `run`は`stop_event`(`threading.Event`)を受け取って停止するだけで、シグナルの
     登録自体はCLI(M1-10/11)の責務([ADR-0007](../adr/0007-mr-poller-design.md))
+  - 検出した`DetectedReview`に対して実際にレビューを実行する(Workspace Manager準備→
+    Claude Code Runner起動→Review解析)処理自体は持たない。`run`の`on_detected`
+    コールバックはあくまで「検出をどう伝えるか」のフックであり、レビュー実行の結線・
+    エラー処理はCLI watchモード(M1-11、`cli/watch.py`)の責務
+    ([ADR-0009](../adr/0009-cli-watch-design.md))
 
 ## 公開インターフェース
 
@@ -41,9 +46,10 @@
 
 ```python
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from gitlab_ai_platform.gitlab_adapter import GitLabReader
+from gitlab_ai_platform.poller import DetectedReview
 from gitlab_ai_platform.store import StateStore
 
 
@@ -66,9 +72,12 @@ class MrPoller:
         *,
         interval_seconds: int,
         stop_event: threading.Event | None = None,
+        on_detected: Callable[[DetectedReview], None] | None = None,
     ) -> None:
         """`interval_seconds`間隔で`poll_once`を繰り返す。`stop_event`がセットされると、
-        実行中のサイクル完了後に停止する。"""
+        実行中のサイクル完了後に停止する。`on_detected`を渡すと、そのサイクルで新たに
+        起票された`DetectedReview`ごと(`result.created`の順)に呼ぶ(M1-11、
+        `ADR-0009`)。`on_detected`が送出する例外は`run`の外へそのまま伝播する。"""
 ```
 
 ## 入出力スキーマ
@@ -138,9 +147,15 @@ Poller構築前に検知する。
   - `create`が(`DuplicateReviewError`以外の)`StateStoreError`を送出した場合、そのMRだけ
     `errors`に記録し、他のMRの処理は継続すること
   - `run`が`stop_event`のセットで停止し、少なくとも1回`poll_once`相当の処理を行うこと
+  - `on_detected`を渡すと、そのサイクルで新たに起票された`DetectedReview`ごとに
+    呼ばれること。省略時は呼び出されないだけで例外にならないこと。`on_detected`が
+    送出した例外が`run`の外へそのまま伝播すること
 
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のMR Poller行
 - [ADR-0007: MR Poller の設計](../adr/0007-mr-poller-design.md)
+- [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md) — `on_detected`
+  を使ってレビュー実行パイプラインを結線するCLI側の設計
+- [cli.md](cli.md) — `on_detected`経由でこのPollerを結線するCLI(`watch`サブコマンド)の仕様
 - ソースコード: `src/gitlab_ai_platform/poller/`(`poller.py` / `types.py` / `__init__.py`)
