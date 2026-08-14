@@ -1,7 +1,8 @@
-# GitLab MCP Tool Bridge
+# GitLab Adapter MCP Server
 
-- 実装場所: `src/gitlab_ai_platform/mcp_bridge/`
-- 対応Issue: [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62) (M2-12)
+- 実装場所: `src/gitlab_ai_platform/adapter_mcp_server/`
+- 対応Issue: [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62) (M2-12)、
+  [#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)(「GitLab MCP Tool Bridge」から改称)
 - 関連ADR: [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)
 - ステータス: 実装済み(`GitLabAdapter`の許可された14メソッド全て。M2-10 [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47)
   分は M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み)
@@ -32,21 +33,21 @@ MCPサーバーの起動コマンドを渡すことで、エージェント自�
     `config.load_config`(M0-2)を通じて取得される。本コンポーネント自身は認証情報の
     パース・保管ロジックを持たない
   - MCPクライアント(対話型Claude Code)側で`--mcp-config`にこのサーバーの起動コマンド
-    (`python -m gitlab_ai_platform.mcp_bridge`)を登録すること
+    (`python -m gitlab_ai_platform.adapter_mcp_server`)を登録すること
 - 非対象:
   - 新しい権限の追加。`GitLabWriter`の許可リスト(ADR-0002、M2-10で拡充: `create_branch` /
     `push_file_changes` / `create_merge_request` / `create_merge_request_comment` /
     `update_merge_request` / `create_issue` / `update_issue`)を回避・拡張する経路には
     ならない。merge・protected branchへの直push・branch削除・管理操作、Issue/MRの
     close/reopen等の状態遷移は`GitLabAdapter`自体にメソッド(または引数)として存在しない
-    ため、このブリッジ経由でも呼び出し不可能(`tests/gitlab_ai_platform/mcp_bridge/test_server.py`で担保)
+    ため、このサーバー経由でも呼び出し不可能(`tests/gitlab_ai_platform/adapter_mcp_server/test_server.py`で担保)
   - 実MCPプロトコル(stdio上のJSON-RPC)のトランスポート実装そのもの。これは`mcp`パッケージ
     (MCP Python SDK)に委譲し、本コンポーネントはツールの登録・委譲のみを行う
   - GitLab以外の外部システムとの連携
 
 ## 公開インターフェース
 
-実装場所: `src/gitlab_ai_platform/mcp_bridge/server.py` / `tools.py`。
+実装場所: `src/gitlab_ai_platform/adapter_mcp_server/server.py` / `tools.py`。
 
 ```python
 from gitlab_ai_platform.gitlab_adapter import GitLabAdapter
@@ -63,11 +64,11 @@ def create_server(adapter: GitLabAdapter, *, name: str = "gitlab-adapter") -> MC
 - `ALLOWED_TOOL_NAMES: frozenset[str]`(`server.py`) — `TOOL_FACTORIES`のキー集合。
   現時点で14個(下記「対象ツール」節)。
 
-起動用エントリポイント: `src/gitlab_ai_platform/mcp_bridge/main.py`の`main(argv=None) -> int`。
-`python -m gitlab_ai_platform.mcp_bridge`(`__main__.py`)で起動する。
+起動用エントリポイント: `src/gitlab_ai_platform/adapter_mcp_server/main.py`の`main(argv=None) -> int`。
+`python -m gitlab_ai_platform.adapter_mcp_server`(`__main__.py`)で起動する。
 
 ```
-python -m gitlab_ai_platform.mcp_bridge [--config CONFIG] [--env ENV] [--log-dir LOG_DIR]
+python -m gitlab_ai_platform.adapter_mcp_server [--config CONFIG] [--env ENV] [--log-dir LOG_DIR]
 ```
 
 - `--config` / `--env`: `config.load_config`にそのまま渡す(デフォルトは`config.toml` /
@@ -125,12 +126,12 @@ python -m gitlab_ai_platform.mcp_bridge [--config CONFIG] [--env ENV] [--log-dir
 - `push_file_changes`の`actions`に不正な`action`値(`"create"`/`"update"`/`"delete"`以外)を
   渡した場合、`CommitActionType(...)`が送出する`ValueError`が同様に`ToolError`になる
 - いずれのエラーメッセージにも認証情報(GitLab PAT等)は含まれない
-  (`tests/gitlab_ai_platform/mcp_bridge/test_secrets.py`で担保。詳細は
+  (`tests/gitlab_ai_platform/adapter_mcp_server/test_secrets.py`で担保。詳細は
   [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)「セキュリティ上の考慮」の表)
 
 ## テスト方針
 
-実装場所: `tests/gitlab_ai_platform/mcp_bridge/`(`src/`をミラー、
+実装場所: `tests/gitlab_ai_platform/adapter_mcp_server/`(`src/`をミラー、
 [ADR-0001](../adr/0001-repository-structure.md))。実MCPプロトコル通信(stdioソケット・
 パイプ)・実GitLabのどちらへも繋がない(CLAUDE.mdのテスト方針)。
 
@@ -160,8 +161,8 @@ python -m gitlab_ai_platform.mcp_bridge [--config CONFIG] [--env ENV] [--log-dir
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表
-- [ADR-0010: GitLab MCP Tool Bridge の設計](../adr/0010-gitlab-mcp-tool-bridge.md)
+- [ADR-0010: GitLab Adapter MCP Server の設計(旧称: GitLab MCP Tool Bridge)](../adr/0010-gitlab-mcp-tool-bridge.md)
 - [gitlab-adapter.md](gitlab-adapter.md) — ラップ対象の`GitLabAdapter`(Protocol/REST実装)の仕様
 - [claude-code-runner.md](claude-code-runner.md) — 別経路であるClaude Code Runnerの仕様
-- ソースコード: `src/gitlab_ai_platform/mcp_bridge/`
+- ソースコード: `src/gitlab_ai_platform/adapter_mcp_server/`
   (`server.py` / `tools.py` / `serialization.py` / `main.py` / `__main__.py` / `__init__.py`)

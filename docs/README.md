@@ -52,7 +52,7 @@
   (M1-9)の仕様
 - [specs/poller.md](specs/poller.md) — MR Poller(M1-5)の仕様
 - [specs/cli.md](specs/cli.md) — CLI(M1-10)の仕様。単発レビュー実行(`review`サブコマンド)
-- [specs/gitlab-mcp-bridge.md](specs/gitlab-mcp-bridge.md) — GitLab MCP Tool Bridge(M2-12)の仕様。
+- [specs/adapter-mcp-server.md](specs/adapter-mcp-server.md) — GitLab Adapter MCP Server(M2-12)の仕様。
   対話型Claude CodeがGitLab Adapterの許可された操作をツールとして呼び出すための経路
 
 ## 更新ルール

@@ -19,7 +19,7 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from gitlab_ai_platform.gitlab_adapter import GitLabReader, GitLabWriter
-from gitlab_ai_platform.mcp_bridge import ALLOWED_TOOL_NAMES, create_server
+from gitlab_ai_platform.adapter_mcp_server import ALLOWED_TOOL_NAMES, create_server
 
 from .conftest import FakeGitLabAdapter
 
@@ -44,7 +44,7 @@ _EXPECTED_ALLOWED_TOOL_NAMES = {
 }
 
 # GitLab Adapter側(ADR-0002、M2-10)で機構的に存在しないと保証されている禁止操作。
-# このブリッジ経由でも当然公開されないことを重ねて確認する。
+# このサーバー経由でも当然公開されないことを重ねて確認する。
 _FORBIDDEN_OPERATIONS = {
     "merge",
     "merge_merge_request",
@@ -74,8 +74,8 @@ def test_allowed_tool_names_matches_current_fourteen_method_allow_list() -> None
 
 def test_allowed_tool_names_matches_gitlab_adapter_protocol_exactly() -> None:
     # 現時点ではGitLabReader(7) + GitLabWriter(7)のちょうど14個がAdapterの全許可メソッドであり、
-    # ブリッジのツール集合と完全一致するはず。Adapter側にメソッドが増えると
-    # このテストが先に落ち、ブリッジ側の追従漏れに気づける
+    # サーバーのツール集合と完全一致するはず。Adapter側にメソッドが増えると
+    # このテストが先に落ち、サーバー側の追従漏れに気づける
     adapter_methods = _protocol_public_methods(GitLabReader) | _protocol_public_methods(
         GitLabWriter
     )

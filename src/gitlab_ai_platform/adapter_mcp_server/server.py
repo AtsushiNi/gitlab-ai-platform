@@ -1,7 +1,7 @@
 """`GitLabAdapter`をラップするMCPサーバーの組み立て。
 
 方針(M2-12 [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62)、
-`docs/adr/0010-gitlab-mcp-tool-bridge.md`):
+`docs/adr/0010-gitlab-mcp-tool-bridge.md`。#67で「GitLab Adapter MCP Server」に改称):
 
 - `tools.TOOL_FACTORIES`(1メソッド=1ファクトリ関数の対応表)を走査し、`GitLabAdapter`の
   インスタンスに束縛したツール関数をすべて登録するだけ。ツールの権限そのものは`tools.py`側
@@ -10,7 +10,7 @@
 - Claude Code Runner(M1-7)の`build_prompt`(静的なプロンプト文字列へMR情報を埋め込む経路)とは
   別物。こちらは対話型Claude Code(Windows VS Code拡張・CLI)が実行中に能動的に呼び出す
   MCPツールの経路であり、`--mcp-config`でこのサーバーのstdio起動コマンドを渡すことを想定する
-  (`docs/specs/gitlab-mcp-bridge.md`)。
+  (`docs/specs/adapter-mcp-server.md`)。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .tools import TOOL_DESCRIPTIONS, TOOL_FACTORIES
 
 DEFAULT_SERVER_NAME = "gitlab-adapter"
 
-# 現時点でこのブリッジが公開するツール名の集合(`GitLabReader`7 + `GitLabWriter`7)。
+# 現時点でこのサーバーが公開するツール名の集合(`GitLabReader`7 + `GitLabWriter`7)。
 # `TOOL_FACTORIES`のキー集合と一致することをテストで担保する。
 ALLOWED_TOOL_NAMES = frozenset(TOOL_FACTORIES)
 

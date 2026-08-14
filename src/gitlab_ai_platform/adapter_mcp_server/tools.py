@@ -1,9 +1,10 @@
 """`GitLabAdapter`の各メソッドを1つのMCPツール関数に変換するマッピングテーブル。
 
 方針(M2-12 [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62)、
-`docs/adr/0010-gitlab-mcp-tool-bridge.md`、`docs/specs/gitlab-mcp-bridge.md`):
+`docs/adr/0010-gitlab-mcp-tool-bridge.md`、`docs/specs/adapter-mcp-server.md`。
+#67で「GitLab Adapter MCP Server」に改称):
 
-- このブリッジは**新しい権限を一切追加しない**。`GitLabAdapter`(Protocol、ADR-0002)に
+- このサーバーは**新しい権限を一切追加しない**。`GitLabAdapter`(Protocol、ADR-0002)に
   既に存在するメソッドだけをツールとして透過的に公開する層であり、`GitLabWriter`の許可リストを
   回避・拡張する経路になってはならない。merge・branch削除・管理操作はAdapter自体にメソッドが
   存在しないため、このモジュールにも対応するツールを追加しない(追加できない)。
@@ -223,7 +224,7 @@ def _make_update_issue(adapter: GitLabAdapter) -> Callable[..., Any]:
 
 # `GitLabAdapter`(Protocol)のメソッド名 → ツールファクトリ、の対応表。
 # キーの集合は、`GitLabReader`(7) + `GitLabWriter`(7) = 14メソッドの許可リストと
-# 完全一致する(`tests/gitlab_ai_platform/mcp_bridge/test_server.py`で検証)。
+# 完全一致する(`tests/gitlab_ai_platform/adapter_mcp_server/test_server.py`で検証)。
 TOOL_FACTORIES: dict[str, ToolFactory] = {
     # -- 読み取り --
     "get_version": _make_get_version,

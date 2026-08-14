@@ -86,7 +86,7 @@ flowchart TD
 | Claude Code Runner | `runner/` | worktree上でClaude Codeをヘッドレス実行し、MRタイトル・説明・コメント・diffをコンテキストとして渡す。タイムアウト・異常終了のハンドリング、実行ログ保存を行う | レビュー観点の判断そのもの(何を重大とするか)はプロンプト側の責務であり、Runnerは実行制御のみ | M1-7 |
 | Review | `review/` | レビュープロンプトの設計(`docs/specs/prompts.md`)と、結果スキーマ(重要度/ファイル/行/根拠/提案)の定義。JSON(機械可読)とMarkdown(人間可読)の両方を出力する | GitLabへの自動投稿はしない。最終判断は人間 | M1-8, M1-9 |
 | CLI | `cli/` | 単発レビュー実行(デバッグ・プロンプト改善用)と、常駐(watch)モードの入り口。graceful shutdown・多重起動防止 | オーケストレーション(Job間の遷移)はしない。M4以降もCLIは「人間が操作する入口」の役割に留める | M1-10, M1-11 |
-| GitLab MCP Tool Bridge | `mcp_bridge/` | GitLab Adapterの許可された操作をMCPサーバー(stdio)としてラップし、対話型Claude Code(Windows VS Code拡張・CLI)が実行中に能動的にGitLab操作を呼び出せるようにする。Claude Code Runner(M1-7)の静的プロンプト埋め込み(`build_prompt`)とは別の経路 | 新しい権限は追加しない(GitLab Adapterに既に存在するメソッドの透過的な公開のみ)。実MCPプロトコルのトランスポート実装自体は`mcp`パッケージに委譲する | M2-12 |
+| GitLab Adapter MCP Server | `adapter_mcp_server/` | GitLab Adapterの許可された操作をMCPサーバー(stdio)としてラップし、対話型Claude Code(Windows VS Code拡張・CLI)が実行中に能動的にGitLab操作を呼び出せるようにする。Claude Code Runner(M1-7)の静的プロンプト埋め込み(`build_prompt`)とは別の経路(旧称: GitLab MCP Tool Bridge。#67で改称) | 新しい権限は追加しない(GitLab Adapterに既に存在するメソッドの透過的な公開のみ)。実MCPプロトコルのトランスポート実装自体は`mcp`パッケージに委譲する | M2-12 |
 | config | `config/` | GitLab PAT・対象プロジェクト一覧・ポーリング間隔・並列数などの設定/シークレット管理。値のバリデーション、PATをログに出さない | (横断的関心事) | M0-2 |
 | logging_ | `logging_/` | 構造化ログ、実行ID付与、ローテーション。可観測性の土台 | (横断的関心事) | M0-3 |
 

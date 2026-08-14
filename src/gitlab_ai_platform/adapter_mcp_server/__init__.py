@@ -1,7 +1,7 @@
-"""対話型Claude CodeからGitLab Adapterの許可された操作を呼び出せるようにするMCPブリッジ。
+"""対話型Claude CodeからGitLab Adapterの許可された操作を呼び出せるようにするMCPサーバー。
 
 `docs/architecture.md`「コンポーネントの責務と境界」、
-`docs/adr/0010-gitlab-mcp-tool-bridge.md`、`docs/specs/gitlab-mcp-bridge.md`を参照。
+`docs/adr/0010-gitlab-mcp-tool-bridge.md`、`docs/specs/adapter-mcp-server.md`を参照。
 """
 
 from __future__ import annotations

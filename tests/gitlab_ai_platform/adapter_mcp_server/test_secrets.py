@@ -13,7 +13,7 @@ from typing import Any
 from mcp.server.mcpserver.exceptions import ToolError
 
 from gitlab_ai_platform.gitlab_adapter import GitLabRestAdapter
-from gitlab_ai_platform.mcp_bridge import TOOL_DESCRIPTIONS, create_server
+from gitlab_ai_platform.adapter_mcp_server import TOOL_DESCRIPTIONS, create_server
 
 _SECRET_TOKEN = "glpat-super-secret-should-never-leak"
 _BASE_URL = "https://gitlab.example.com"
