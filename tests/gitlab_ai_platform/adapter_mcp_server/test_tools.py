@@ -7,6 +7,8 @@ MCPプロトコル(stdio・`MCPServer`)は経由せず、`TOOL_FACTORIES`が返�
 
 from __future__ import annotations
 
+import pytest
+
 from gitlab_ai_platform.gitlab_adapter.types import CommitActionType
 from gitlab_ai_platform.adapter_mcp_server.tools import TOOL_FACTORIES
 
@@ -265,6 +267,60 @@ def test_update_issue_delegates_and_does_not_expose_state_event(
     ]
     assert result["title"] == "updated title"
     assert "state_event" not in fake_adapter.calls[0][1]
+
+
+def test_list_merge_requests_falls_back_to_default_project_when_omitted(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["list_merge_requests"](fake_adapter, "group/default-project")
+
+    tool()
+
+    assert fake_adapter.calls == [
+        (
+            "list_merge_requests",
+            {"project": "group/default-project", "labels": (), "state": "opened"},
+        )
+    ]
+
+
+def test_list_merge_requests_explicit_project_overrides_default(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["list_merge_requests"](fake_adapter, "group/default-project")
+
+    tool(project="group/other-project")
+
+    assert fake_adapter.calls[0][1]["project"] == "group/other-project"
+
+
+def test_get_merge_request_raises_when_project_omitted_and_no_default(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["get_merge_request"](fake_adapter)
+
+    with pytest.raises(ValueError):
+        tool(mr_iid=1)
+
+    assert fake_adapter.calls == []
+
+
+def test_create_merge_request_falls_back_to_default_project_when_omitted(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["create_merge_request"](fake_adapter, "group/default-project")
+
+    tool(source_branch="feature/x", target_branch="main", title="t")
+
+    assert fake_adapter.calls[0][1]["project"] == "group/default-project"
+
+
+def test_get_version_ignores_default_project_argument(fake_adapter: FakeGitLabAdapter) -> None:
+    # get_versionはprojectを取らないが、他のファクトリと同じ`(adapter, default_project)`の
+    # 呼び出し規約(server.pyのcreate_server)を満たせることを確認する
+    tool = TOOL_FACTORIES["get_version"](fake_adapter, "group/default-project")
+
+    assert tool() == "17.0.0-ee"
 
 
 def test_tool_factories_cover_exactly_the_fourteen_allowed_methods() -> None:

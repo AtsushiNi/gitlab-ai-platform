@@ -2,10 +2,12 @@
 
 - 実装場所: `src/gitlab_ai_platform/adapter_mcp_server/`
 - 対応Issue: [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62) (M2-12)、
-  [#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)(「GitLab MCP Tool Bridge」から改称)
+  [#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)(「GitLab MCP Tool Bridge」から改称)、
+  [#69](https://github.com/AtsushiNi/gitlab-ai-platform/issues/69)(projectのデフォルト自動解決)
 - 関連ADR: [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)
 - ステータス: 実装済み(`GitLabAdapter`の許可された14メソッド全て。M2-10 [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47)
-  分は M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み)
+  分は M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み。
+  projectのデフォルト自動解決は #69 で対応済み)
 
 ## 責務
 
@@ -34,6 +36,9 @@ MCPサーバーの起動コマンドを渡すことで、エージェント自�
     パース・保管ロジックを持たない
   - MCPクライアント(対話型Claude Code)側で`--mcp-config`にこのサーバーの起動コマンド
     (`python -m gitlab_ai_platform.adapter_mcp_server`)を登録すること
+  - MCPクライアント(VSCode拡張・CLI)は、通常ユーザーが開いているプロジェクトのディレクトリを
+    cwdとしてこのサーバーを起動する。この前提の上で、起動時にcwdのgit remoteからデフォルト
+    プロジェクトを自動解決する(下記「デフォルトプロジェクトの自動解決」)
 - 非対象:
   - 新しい権限の追加。`GitLabWriter`の許可リスト(ADR-0002、M2-10で拡充: `create_branch` /
     `push_file_changes` / `create_merge_request` / `create_merge_request_comment` /
@@ -76,30 +81,61 @@ python -m gitlab_ai_platform.adapter_mcp_server [--config CONFIG] [--env ENV] [-
 - `--log-dir`: ログ出力先。標準出力はMCPのstdioプロトコル専用のため、コンソールへの
   ログ出力は行わない(`setup_logging(console=False)`)
 
+## デフォルトプロジェクトの自動解決
+
+M2-12フォローアップ([#69](https://github.com/AtsushiNi/gitlab-ai-platform/issues/69))。
+毎回のツール呼び出しで`project`を明示するのが、対話型Claude Code(VSCode拡張・CLI)の
+典型的な使い方(「今開いているプロジェクトについてMRを作って」)に対してUX上の負担になる、
+という指摘を踏まえた機能。
+
+- 実装場所: `default_project.py`の`resolve_default_project(cwd: Path | str | None = None) -> str | None`
+- `main.py`がサーバー起動時に1回だけ`resolve_default_project()`(cwd省略=プロセスの
+  カレントディレクトリ)を呼び、`git remote get-url origin`の出力(SSH形式・URL形式どちらも
+  対応)からGitLabのproject path(`group/project`。サブグループも可)を解決して
+  `create_server(..., default_project=...)`に渡す
+- gitリポジトリでない/`origin`が無い/コマンド失敗、のいずれの場合も例外を送出せず`None`を
+  返す(サーバー起動自体は失敗させない)
+- 各ツールの`project`引数は省略可能(`str | None = None`)。省略時はこの`default_project`に
+  フォールバックする。呼び出し時に`project`を明示すれば常にそちらが優先される(複数
+  プロジェクトを横断する用途は維持)
+- 起動時のcwdからも`default_project`からも解決できない状態で`project`を省略してツールを
+  呼び出すと、`ValueError`(→MCP経由では`ToolError`)になる。silent fallbackで意図しない
+  プロジェクトを誤操作することを避けるため、この場合は必ずエラーにする(`tools.py`の
+  `_resolve_project`)
+- 各ツールのMCP上の説明文(`TOOL_DESCRIPTIONS`)にも、project省略可であることを明記している
+  (MCPクライアント=AIが説明文だけを見て省略可否を判断できるようにするため)
+
+`zereight/gitlab-mcp`等の既存OSSは環境変数(`GITLAB_PROJECT_ID`)でデフォルトを設定する方式
+だが、本サーバーは起動時のcwdから自動検出する方式を採用した。VSCode/Claude Code側の
+`--mcp-config`起動時、cwdは通常ユーザーが開いているプロジェクトのディレクトリになるため、
+設定ファイルへの記述なしにゼロコンフィグで「今開いているプロジェクトに対して動く」体験を
+実現できる。
+
 ## 対象ツール(入出力スキーマ)
 
 現時点で`GitLabAdapter`に存在する許可された14メソッドすべてを1:1でツール化している。
 引数・戻り値はプリミティブ型/`dict`/`list`のみとし、`gitlab_adapter/types.py`のdataclassは
 `serialization.to_jsonable`で再帰的にdictへ変換してから返す(フィールド名はdataclassの
 フィールド名をそのまま使う。詳細は[gitlab-adapter.md](gitlab-adapter.md#入出力スキーマ)の
-表を参照)。
+表を参照)。`get_version`以外の全ツールで`project`は省略可(上記「デフォルトプロジェクトの
+自動解決」参照)。
 
 | ツール名 | 引数 | 戻り値 | 対応するAdapterメソッド |
 |---|---|---|---|
 | `get_version` | なし | `str` | `get_version` |
-| `list_merge_requests` | `project: str`, `labels: list[str] \| None = None`, `state: str = "opened"` | `list[dict]`(`MergeRequest`) | `list_merge_requests` |
-| `get_merge_request` | `project: str`, `mr_iid: int` | `dict`(`MergeRequest`) | `get_merge_request` |
-| `get_merge_request_diffs` | `project: str`, `mr_iid: int` | `list[dict]`(`MergeRequestDiff`) | `get_merge_request_diffs` |
-| `list_merge_request_discussions` | `project: str`, `mr_iid: int` | `list[dict]`(`Discussion`。`notes`はネストした`dict`のlist) | `list_merge_request_discussions` |
-| `list_issues` | `project: str`, `labels: list[str] \| None = None`, `state: str = "opened"` | `list[dict]`(`Issue`) | `list_issues` |
-| `get_issue` | `project: str`, `issue_iid: int` | `dict`(`Issue`) | `get_issue` |
-| `create_branch` | `project: str`, `branch_name: str`, `ref: str` | `dict`(`Branch`) | `create_branch` |
-| `push_file_changes` | `project: str`, `branch: str`, `commit_message: str`, `actions: list[dict]` | `str`(新しいcommit sha) | `push_file_changes` |
-| `create_merge_request` | `project: str`, `source_branch: str`, `target_branch: str`, `title: str`, `description: str = ""` | `dict`(`MergeRequest`) | `create_merge_request` |
-| `create_merge_request_comment` | `project: str`, `mr_iid: int`, `body: str` | `dict`(`Note`) | `create_merge_request_comment` |
-| `update_merge_request` | `project: str`, `mr_iid: int`, `title: str \| None = None`, `description: str \| None = None` | `dict`(`MergeRequest`) | `update_merge_request` |
-| `create_issue` | `project: str`, `title: str`, `description: str = ""` | `dict`(`Issue`) | `create_issue` |
-| `update_issue` | `project: str`, `issue_iid: int`, `title: str \| None = None`, `description: str \| None = None` | `dict`(`Issue`) | `update_issue` |
+| `list_merge_requests` | `project: str \| None = None`, `labels: list[str] \| None = None`, `state: str = "opened"` | `list[dict]`(`MergeRequest`) | `list_merge_requests` |
+| `get_merge_request` | `project: str \| None = None`, `mr_iid: int` | `dict`(`MergeRequest`) | `get_merge_request` |
+| `get_merge_request_diffs` | `project: str \| None = None`, `mr_iid: int` | `list[dict]`(`MergeRequestDiff`) | `get_merge_request_diffs` |
+| `list_merge_request_discussions` | `project: str \| None = None`, `mr_iid: int` | `list[dict]`(`Discussion`。`notes`はネストした`dict`のlist) | `list_merge_request_discussions` |
+| `list_issues` | `project: str \| None = None`, `labels: list[str] \| None = None`, `state: str = "opened"` | `list[dict]`(`Issue`) | `list_issues` |
+| `get_issue` | `project: str \| None = None`, `issue_iid: int` | `dict`(`Issue`) | `get_issue` |
+| `create_branch` | `project: str \| None = None`, `branch_name: str`, `ref: str` | `dict`(`Branch`) | `create_branch` |
+| `push_file_changes` | `project: str \| None = None`, `branch: str`, `commit_message: str`, `actions: list[dict]` | `str`(新しいcommit sha) | `push_file_changes` |
+| `create_merge_request` | `project: str \| None = None`, `source_branch: str`, `target_branch: str`, `title: str`, `description: str = ""` | `dict`(`MergeRequest`) | `create_merge_request` |
+| `create_merge_request_comment` | `project: str \| None = None`, `mr_iid: int`, `body: str` | `dict`(`Note`) | `create_merge_request_comment` |
+| `update_merge_request` | `project: str \| None = None`, `mr_iid: int`, `title: str \| None = None`, `description: str \| None = None` | `dict`(`MergeRequest`) | `update_merge_request` |
+| `create_issue` | `project: str \| None = None`, `title: str`, `description: str = ""` | `dict`(`Issue`) | `create_issue` |
+| `update_issue` | `project: str \| None = None`, `issue_iid: int`, `title: str \| None = None`, `description: str \| None = None` | `dict`(`Issue`) | `update_issue` |
 
 `update_merge_request`/`update_issue`は`title`/`description`のみを受け付け、
 `state_event`(close/reopen/merge相当)に対応する引数はツール関数のシグネチャ自体に
@@ -125,6 +161,9 @@ python -m gitlab_ai_platform.adapter_mcp_server [--config CONFIG] [--env ENV] [-
   「未知のツール」としてしか呼び出しようがない(=禁止操作が呼び出せないことの実装上の根拠)
 - `push_file_changes`の`actions`に不正な`action`値(`"create"`/`"update"`/`"delete"`以外)を
   渡した場合、`CommitActionType(...)`が送出する`ValueError`が同様に`ToolError`になる
+- `project`未指定で呼び出され、かつ起動時のcwdからもデフォルトプロジェクトを自動解決
+  できていなかった場合も、`_resolve_project`が送出する`ValueError`が同様に`ToolError`になる
+  (上記「デフォルトプロジェクトの自動解決」)
 - いずれのエラーメッセージにも認証情報(GitLab PAT等)は含まれない
   (`tests/gitlab_ai_platform/adapter_mcp_server/test_secrets.py`で担保。詳細は
   [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)「セキュリティ上の考慮」の表)
@@ -157,6 +196,9 @@ python -m gitlab_ai_platform.adapter_mcp_server [--config CONFIG] [--env ENV] [-
 - `test_main.py`: エントリポイント(`main.py`)が設定エラー時にMCPサーバーを起動せず
   エラー終了すること、エラーメッセージにトークンが含まれないことを検証する
   (正常系の`server.run(transport="stdio")`は標準入力を読み続けるため呼ばない)
+- `test_default_project.py`: `resolve_default_project`が、実際に`git init`/`git remote add`
+  した一時ディレクトリ上で、SSH形式・URL形式それぞれのremote URLから正しくproject pathを
+  解決すること、`origin`が無い/gitリポジトリでない場合に`None`を返すことを検証する
 
 ## 関連ドキュメント
 
@@ -165,4 +207,5 @@ python -m gitlab_ai_platform.adapter_mcp_server [--config CONFIG] [--env ENV] [-
 - [gitlab-adapter.md](gitlab-adapter.md) — ラップ対象の`GitLabAdapter`(Protocol/REST実装)の仕様
 - [claude-code-runner.md](claude-code-runner.md) — 別経路であるClaude Code Runnerの仕様
 - ソースコード: `src/gitlab_ai_platform/adapter_mcp_server/`
-  (`server.py` / `tools.py` / `serialization.py` / `main.py` / `__main__.py` / `__init__.py`)
+  (`server.py` / `tools.py` / `default_project.py` / `serialization.py` / `main.py` /
+  `__main__.py` / `__init__.py`)

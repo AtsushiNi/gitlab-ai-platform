@@ -110,6 +110,37 @@ def test_call_tool_delegates_to_adapter(fake_adapter: FakeGitLabAdapter) -> None
     assert fake_adapter.calls == [("get_version", {})]
 
 
+def test_create_server_default_project_lets_tool_omit_project(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    server = create_server(fake_adapter, default_project="group/default-project")
+
+    async def _call() -> None:
+        result = await server.call_tool("list_merge_requests", {})
+        assert result.is_error is False
+
+    asyncio.run(_call())
+    assert fake_adapter.calls == [
+        (
+            "list_merge_requests",
+            {"project": "group/default-project", "labels": (), "state": "opened"},
+        )
+    ]
+
+
+def test_create_server_without_default_project_requires_explicit_project(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    server = create_server(fake_adapter)
+
+    async def _call() -> None:
+        with pytest.raises(ToolError):
+            await server.call_tool("list_merge_requests", {})
+
+    asyncio.run(_call())
+    assert fake_adapter.calls == []
+
+
 @pytest.mark.parametrize("forbidden_name", sorted(_FORBIDDEN_OPERATIONS))
 def test_call_tool_rejects_forbidden_operations_as_unknown(
     fake_adapter: FakeGitLabAdapter, forbidden_name: str

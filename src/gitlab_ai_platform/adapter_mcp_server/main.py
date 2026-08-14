@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from ..config import DEFAULT_CONFIG_PATH, DEFAULT_ENV_PATH, ConfigError, load_config
 from ..gitlab_adapter import GitLabRestAdapter
 from ..logging_ import get_logger, setup_logging
+from .default_project import resolve_default_project
 from .server import DEFAULT_SERVER_NAME, create_server
 
 _logger = get_logger(__name__)
@@ -43,9 +44,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_CONFIG_ERROR
 
     adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
-    server = create_server(adapter, name=DEFAULT_SERVER_NAME)
+    # 起動時のカレントディレクトリのgit remoteから、project引数省略時のデフォルトを解決する
+    # (#69)。解決できなくてもエラーにはせず、project未指定のツール呼び出し時にのみ失敗させる。
+    default_project = resolve_default_project()
+    server = create_server(adapter, name=DEFAULT_SERVER_NAME, default_project=default_project)
 
-    _logger.info("adapter_mcp_server.start", extra={"server_name": DEFAULT_SERVER_NAME})
+    _logger.info(
+        "adapter_mcp_server.start",
+        extra={"server_name": DEFAULT_SERVER_NAME, "default_project": default_project},
+    )
     server.run(transport="stdio")
     return EXIT_OK
 

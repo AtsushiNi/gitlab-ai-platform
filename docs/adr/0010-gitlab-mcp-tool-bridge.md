@@ -2,7 +2,9 @@
 
 - Issue: [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62) (M2-12)
 - 状態: 決定(名称は[#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)で
-  「GitLab Adapter MCP Server」に改称。設計内容自体はこのADRのまま有効。追記節を参照)
+  「GitLab Adapter MCP Server」に改称。projectのデフォルト自動解決を
+  [#69](https://github.com/AtsushiNi/gitlab-ai-platform/issues/69)で追加。
+  設計内容自体はこのADRのまま有効。追記節を参照)
 
 ## 背景・制約
 
@@ -196,3 +198,49 @@ MCPサーバー」であり、汎用GitLab MCPサーバーとはスコープが�
 - `docs/specs/gitlab-mcp-bridge.md` → [`docs/specs/adapter-mcp-server.md`](../specs/adapter-mcp-server.md)
 - 本ADRのファイル名(`0010-gitlab-mcp-tool-bridge.md`)・Issue番号・タイトルは、決定の経緯を
   そのまま追える記録として変更しない
+
+## 追記([#69](https://github.com/AtsushiNi/gitlab-ai-platform/issues/69)): projectのデフォルト自動解決
+
+### 背景
+
+このサーバーは全ツール呼び出しで`project`引数を毎回明示する設計だった。しかし対話型
+Claude Codeの典型的な使い方(VSCodeで特定のGitLabプロジェクトのローカルクローンを開いた
+状態で「MRを作って」と話しかける)に対して、毎回`project`を書かせるのはUX上の負担になる
+という指摘があった。
+
+既存OSSの`zereight/gitlab-mcp`は、環境変数`GITLAB_PROJECT_ID`でデフォルトプロジェクトを
+設定し、ツール呼び出し時に上書き可能にする方式を取っている。本サーバーでも同等の使い勝手を
+実現したいが、`.mcp.json`等に環境変数を書く手間自体をなくせないか検討した。
+
+### 決定: 起動時のcwdのgit remoteから自動検出する
+
+VSCode/Claude Code側が`--mcp-config`でこのサーバーを起動する際、cwdは通常ユーザーが
+開いているプロジェクトのディレクトリになる。この前提を使い、`main.py`起動時に
+`default_project.resolve_default_project()`でcwdの`git remote get-url origin`を読み、
+GitLabのproject path(`group/project`)を自動解決してデフォルトプロジェクトとする。
+環境変数・設定ファイルへの記述なしに「今開いているプロジェクトに対して動く」体験を実現する
+(zereight/gitlab-mcp方式より一段ゼロコンフィグに寄せた設計)。
+
+- 各ツールの`project`引数は`str | None = None`に変更し、省略時はこのデフォルトへ
+  フォールバックする(`tools.py`の`_resolve_project`)
+- `project`を明示指定すれば常にそちらが優先される。複数プロジェクトを横断する用途
+  (1セッション内で別プロジェクトも操作する)はこれまで通り維持される
+- cwdからの自動解決もデフォルトプロジェクトの指定も無い状態で`project`を省略すると
+  `ValueError`(→`ToolError`)にする。silent fallbackで別プロジェクトを誤操作すること
+  を避けるため、「デフォルトが無ければ明示を要求する」を維持する
+- 自動解決はサーバー起動時に1回だけ行う。同一サーバープロセス実行中にcwdが変わることは
+  想定しない(MCPサーバーはサブプロセスとして1回起動されるだけであり、シェルの`cd`のような
+  概念を持たない)
+
+### 却下した選択肢
+
+- **`zereight/gitlab-mcp`と同じ環境変数(`GITLAB_PROJECT_ID`等)方式**: 動作原理は単純だが、
+  `--mcp-config`の設定に環境変数を追加で書く手間が残る。cwdからの自動検出で同じ利便性を
+  設定不要で実現できるため不採用(cwd検出が失敗するケースの逃げ道として、将来的に
+  環境変数による明示オーバーライドを追加する余地は残す)
+- **ツール呼び出しのたびにcwdを再解決する**: MCPサーバーはVSCode/Claude Codeがプロジェクトを
+  開いた時点で1回起動されるプロセスであり、実行中にcwdが変わる想定がない。毎回`git remote`
+  を叩くのは無駄なプロセス起動コストになるだけで、起動時1回の解決で十分
+- **project未指定時に何らかのデフォルト値やダミー値にsilent fallbackする**: 「新しい権限を
+  追加しない」という本ADRの前提と同様、誤操作を機構的に防げない設計は避ける。デフォルトが
+  無ければ`ValueError`で明示要求する方針を選んだ
