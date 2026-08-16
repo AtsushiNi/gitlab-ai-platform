@@ -4,11 +4,19 @@
 `docs/adr/0006-review-output-schema.md`の通り、単一のJSON配列ファイルではなくJSON Linesを
 選んでいる(追記のたびに全件を読み直して書き直す必要がなく、書き込み中のクラッシュで
 壊れても直前までの行は読める)。
+
+並列レビュー実行(M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
+`docs/adr/0014-parallel-review-execution.md`)以降、複数のワーカースレッドが同じ`index.jsonl`に
+同時に`append_entry`しうる。OSの`O_APPEND`書き込みの原子性はプラットフォーム依存(特に
+Windowsでは複数ハンドルからの同時追記で行が混ざりうる)で当てにできないため、プロセス内の
+`threading.Lock`で明示的に直列化する(複数プロセスからの同時書き込みは`cli.lock.ProcessLock`が
+別途防いでいるため、プロセス内の排他だけで十分)。
 """
 
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -18,13 +26,14 @@ from .types import IndexEntry
 _logger = get_logger(__name__)
 
 _INDEX_FILE_NAME = "index.jsonl"
+_write_lock = threading.Lock()
 
 
 def append_entry(root: Path | str, entry: IndexEntry) -> None:
     """索引に`entry`を1行追記する。"""
     root_path = Path(root)
     root_path.mkdir(parents=True, exist_ok=True)
-    with (root_path / _INDEX_FILE_NAME).open("a", encoding="utf-8") as f:
+    with _write_lock, (root_path / _INDEX_FILE_NAME).open("a", encoding="utf-8") as f:
         f.write(json.dumps(_entry_to_dict(entry), ensure_ascii=False) + "\n")
 
 

@@ -1,7 +1,9 @@
 """常駐(watch)モードのパイプライン。
 
 方針(M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
-`docs/architecture.md`「CLI」、`docs/adr/0009-cli-watch-design.md`):
+M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
+`docs/architecture.md`「CLI」、`docs/adr/0009-cli-watch-design.md`、
+`docs/adr/0014-parallel-review-execution.md`):
 
 - `MrPoller.run(interval_seconds, stop_event, on_detected)`で定期走査させ、`poll_once`が
   検出した`DetectedReview`ごとに単発実行パイプライン(`cli/single_run.py`の`execute_review`、
@@ -14,13 +16,21 @@
   (合成ルート)がそれらの具象実装(REST/git/subprocess/SQLite)を`config`から組み立てて
   委譲する(`ADR-0008`が確立した「パイプライン本体と合成ルートを分離する」パターンをそのまま
   踏襲。テストは手書きフェイクを注入して行い、実サービスには繋がない)。
+- M2-1: 検出された各MRのレビューは`ReviewWorkerPool`(`cli/worker_pool.py`)経由で
+  `config.max_parallel`個までのワーカースレッドが並行実行する。`build_on_detected`が組み立てる
+  コールバック自体は従来通り1件を同期的に処理する関数のままで(単体テストは変更不要)、
+  `run_watch_loop`がその呼び出しをプールへの`submit`に置き換えることで並列化する
+  (`MrPoller.run`のループ自体・`build_on_detected`の中身は変更しない)。
 - 1件のレビュー失敗(`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/`ReviewError`/
   `StateStoreError`)はログに記録してプロセス全体は止めず、次のMR・次のサイクルの処理を
   続ける。State Store側は既に`execute_review`が`FAILED`へ更新済みのため、再度自動リトライは
   しない(MR Pollerが既存レコードを「処理済み」として無視する、という既存の挙動のまま)。
   一方、上記5種類に属さない想定外の例外は握りつぶさずそのまま伝播させ、プロセスを
   終了させる(このCLIはWindows上で人間が近くにいる運用が前提であり、想定外のバグを
-  ログに埋もれさせるより目に見える形で落とす方を優先する、`docs/adr/0009`参照)。
+  ログに埋もれさせるより目に見える形で落とす方を優先する、`docs/adr/0009`参照)。ワーカー
+  スレッド内で発生した想定外の例外も`ReviewWorkerPool`が捕まえて`stop_event`をセットし、
+  `run_watch_loop`が`pool.shutdown_and_reraise()`で同じ経路に乗せて再送出する
+  (`docs/adr/0014`参照)。
 - graceful shutdown: `stop_event`をセットする(通常はSIGINT/SIGTERM経由、ハンドラ登録自体は
   `cli/main.py`の責務)と、実行中のサイクルの完了後に停止する。
 - 多重起動防止: `ProcessLock`(`cli/lock.py`)で`state_db_path`に対応するロックファイルを
@@ -29,6 +39,7 @@
 
 from __future__ import annotations
 
+import functools
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -50,6 +61,7 @@ from ..workspace.errors import WorkspaceError
 from ..workspace.protocol import WorkspaceManager
 from .lock import ProcessLock
 from .single_run import build_workspace_manager, execute_review
+from .worker_pool import ReviewWorkerPool
 
 _logger = get_logger(__name__)
 
@@ -99,14 +111,30 @@ def run_watch_loop(
     `adapter`/`workspace`/`runner`/`store`は`execute_review`(`cli/single_run.py`)と同じ
     Protocol型の引数として受け取り、具象実装には依存しない。テスト時は手書きフェイクを
     注入できる。
+
+    検出された各MRの処理(`build_on_detected`が組み立てるコールバック1回分)は
+    `ReviewWorkerPool`(`config.max_parallel`個までのワーカースレッド、M2-1)へ投入し、
+    並行実行する(`cli/worker_pool.py`のモジュールdocstring参照)。`stop_event`を省略した
+    場合、ここで作る`threading.Event`を`MrPoller.run`とワーカープールの両方に渡す。同じ
+    オブジェクトを共有することで、ワーカースレッド内の想定外の例外がポーリングループの
+    早期終了(`stop_event.set()`)にそのまま反映される。
     """
+    effective_stop_event = stop_event if stop_event is not None else threading.Event()
     poller = MrPoller(adapter, store, config.projects, review_label=config.review_label)
-    on_detected = build_on_detected(adapter, workspace, runner, store, config)
-    poller.run(
-        interval_seconds=config.poll_interval_seconds,
-        stop_event=stop_event,
-        on_detected=on_detected,
-    )
+    review_job = build_on_detected(adapter, workspace, runner, store, config)
+    pool = ReviewWorkerPool(config.max_parallel, effective_stop_event)
+    try:
+        poller.run(
+            interval_seconds=config.poll_interval_seconds,
+            stop_event=effective_stop_event,
+            on_detected=lambda review: pool.submit(
+                functools.partial(review_job, review)
+            ),
+        )
+    finally:
+        # 実行中のジョブの完了を待ってから、ワーカースレッドで発生した想定外の例外
+        # (あれば)をここで再送出する(`run_watch`→`cli.main`へそのまま伝播させる)
+        pool.shutdown_and_reraise()
 
 
 def build_on_detected(

@@ -20,6 +20,22 @@
   共有ストア)はGCの対象にしない。
 - 認証(PAT/SSH)の詳細はこのモジュールの責務外。呼び出し側が`git_config`経由で
   `credential.helper`/`core.sshCommand`等を注入する(Spike S-3 §8)。
+
+並列レビュー実行(M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
+`docs/adr/0014-parallel-review-execution.md`)以降、`GitWorkspaceManager`は複数のワーカー
+スレッドから同時に呼ばれる。project単位のロック(`_project_lock`)で以下を守る:
+
+- 同一project(=同一bare repo)への`clone`/`fetch`/`worktree prune`/`worktree add`/
+  `reset --hard`が複数スレッドから同時に実行されないこと(bare repoの`.git/worktrees/`
+  メタデータやref更新が競合すると破損しうるため)。異なるprojectは別ロックのため
+  真に並行実行できる
+- ロックが保護するのは`prepare`/`discard`本体(git操作)のみで、Claude Code Runnerの
+  実行(呼び出し側が`prepare`の戻り値を受け取った後に行う、本来時間のかかる処理)は
+  ロックの外で行われる。並列化の効果はここで確保する
+- GC(`collect_garbage`/`_ensure_disk_budget`)は退避対象のprojectロックを
+  `acquire(blocking=False)`で試みる。他スレッドが操作中(ロック取得できない)候補は
+  スキップして次に古いものを試す。ブロッキング待ちをしないのは、A→B, B→Aのような
+  ロック待ちの循環(デッドロック)を構造的に起こさないため(詳細はADR-0014参照)
 """
 
 from __future__ import annotations
@@ -27,6 +43,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -71,11 +88,72 @@ class GitWorkspaceManager:
             else (git_config or ())
         )
         self._run = run
+        # project(bare repo)単位のロック。同一projectへのgit操作(clone/fetch/worktree
+        # add/reset等)が複数スレッドから同時に走るのを防ぐ(M2-1、ADR-0014)。ロック自体の
+        # 生成をスレッドセーフにするための guard を別途持つ。
+        # RLock(再入可能)にしているのは、prepare中のディスク上限チェック(GC)が同一project
+        # 内の別MR(=同じロック)を退避する正当なケースを許すため(同一スレッドからの再入は
+        # 許可し、他スレッドからの取得のみ非ブロッキングで弾く)
+        self._project_locks: dict[str, threading.RLock] = {}
+        self._project_locks_guard = threading.Lock()
 
         self._repos_dir.mkdir(parents=True, exist_ok=True)
         self._worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     def prepare(self, project: str, mr_iid: int, ref: str) -> WorktreeHandle:
+        with self._project_lock(project):
+            return self._prepare_locked(project, mr_iid, ref)
+
+    def discard(self, project: str, mr_iid: int) -> None:
+        with self._project_lock(project):
+            self._discard_worktree(
+                project, mr_iid, self._worktree_path(project, mr_iid)
+            )
+
+    def collect_garbage(self) -> list[WorktreeHandle]:
+        removed: list[WorktreeHandle] = []
+        if self._disk_usage_bytes() <= self._max_disk_bytes:
+            return removed
+
+        for candidate in self._worktrees_sorted_by_age():
+            if self._disk_usage_bytes() <= self._max_disk_bytes:
+                break
+
+            lock = self._project_lock(candidate.project)
+            # ブロッキング待ちをしない: 他スレッドがこのprojectを操作中(prepare/discard
+            # 実行中)なら安全のため退避をスキップし、次に古い候補を試す。ブロッキングで
+            # 待つと「自分のprojectロックを保持したままGC中に他projectのロック待ちをする」
+            # 別スレッドと循環待ち(デッドロック)になりうるため(ADR-0014参照)
+            if not lock.acquire(blocking=False):
+                continue
+            try:
+                # ロック取得までの間に既に破棄済み(別スレッドのGC等)なら何もしない
+                if not candidate.path.exists():
+                    continue
+                self._discard_worktree(
+                    candidate.project, candidate.mr_iid, candidate.path
+                )
+                removed.append(candidate)
+                _logger.info(
+                    "workspace.gc_evict",
+                    extra={"project": candidate.project, "mr_iid": candidate.mr_iid},
+                )
+            finally:
+                lock.release()
+        return removed
+
+    # -- 内部ヘルパー ----------------------------------------------------------
+
+    def _project_lock(self, project: str) -> threading.RLock:
+        with self._project_locks_guard:
+            lock = self._project_locks.get(project)
+            if lock is None:
+                lock = threading.RLock()
+                self._project_locks[project] = lock
+            return lock
+
+    def _prepare_locked(self, project: str, mr_iid: int, ref: str) -> WorktreeHandle:
+        # 呼び出し元の`prepare`が`_project_lock(project)`を保持した状態でのみ呼ばれる想定
         bare_path = self._bare_path(project)
         worktree_path = self._worktree_path(project, mr_iid)
         branch_name = _branch_name(mr_iid)
@@ -129,25 +207,6 @@ class GitWorkspaceManager:
             sha=sha,
         )
 
-    def discard(self, project: str, mr_iid: int) -> None:
-        self._discard_worktree(project, mr_iid, self._worktree_path(project, mr_iid))
-
-    def collect_garbage(self) -> list[WorktreeHandle]:
-        removed: list[WorktreeHandle] = []
-        while self._disk_usage_bytes() > self._max_disk_bytes:
-            candidate = self._oldest_worktree()
-            if candidate is None:
-                break
-            self._discard_worktree(candidate.project, candidate.mr_iid, candidate.path)
-            removed.append(candidate)
-            _logger.info(
-                "workspace.gc_evict",
-                extra={"project": candidate.project, "mr_iid": candidate.mr_iid},
-            )
-        return removed
-
-    # -- 内部ヘルパー ----------------------------------------------------------
-
     def _ensure_disk_budget(self) -> None:
         if self._disk_usage_bytes() <= self._max_disk_bytes:
             return
@@ -178,7 +237,10 @@ class GitWorkspaceManager:
                 # worktree自体の破棄は上で完了しているため、ここは後片付けの追加処理
                 pass
 
-    def _oldest_worktree(self) -> WorktreeHandle | None:
+    def _worktrees_sorted_by_age(self) -> list[WorktreeHandle]:
+        # GCの退避候補を最終利用時刻の古い順に並べて返す(LRU)。並行GC(M2-1)では
+        # 先頭からロック取得を試み、取得できない(他スレッドが操作中の)候補は
+        # 呼び出し側でスキップして次点を試す前提のため、1件だけでなく全件を返す
         candidates = [
             wt_dir
             for slug_dir in self._worktrees_dir.iterdir()
@@ -186,19 +248,26 @@ class GitWorkspaceManager:
             for wt_dir in slug_dir.iterdir()
             if wt_dir.is_dir() and wt_dir.name.startswith("mr-")
         ]
-        if not candidates:
-            return None
+        candidates.sort(key=lambda p: p.stat().st_mtime)
 
-        oldest = min(candidates, key=lambda p: p.stat().st_mtime)
-        project = _deslugify_project(oldest.parent.name)
-        mr_iid = int(oldest.name.removeprefix("mr-"))
-        try:
-            sha = self._run_git(["rev-parse", "HEAD"], cwd=oldest).strip()
-        except GitCommandError:
-            sha = ""
-        return WorktreeHandle(
-            project=project, mr_iid=mr_iid, path=oldest, branch=oldest.name, sha=sha
-        )
+        handles = []
+        for wt_dir in candidates:
+            project = _deslugify_project(wt_dir.parent.name)
+            mr_iid = int(wt_dir.name.removeprefix("mr-"))
+            try:
+                sha = self._run_git(["rev-parse", "HEAD"], cwd=wt_dir).strip()
+            except GitCommandError:
+                sha = ""
+            handles.append(
+                WorktreeHandle(
+                    project=project,
+                    mr_iid=mr_iid,
+                    path=wt_dir,
+                    branch=wt_dir.name,
+                    sha=sha,
+                )
+            )
+        return handles
 
     def _resolve_ref(self, bare_path: Path, ref: str) -> str:
         # `refs/remotes/origin/<ref>`が存在すればそちらを優先する(clone直後のstaleな

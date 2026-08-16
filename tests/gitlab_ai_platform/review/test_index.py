@@ -1,3 +1,4 @@
+import threading
 from datetime import UTC, datetime
 
 from gitlab_ai_platform.review import IndexEntry, append_entry, read_index
@@ -70,3 +71,24 @@ def test_read_index_skips_line_missing_required_field(tmp_path):
         f.write('{"project": "group/project"}\n')  # 必須フィールドが欠けている
 
     assert read_index(tmp_path) == (first,)
+
+
+def test_append_entry_from_many_threads_does_not_corrupt_lines(tmp_path):
+    # M2-1(並列レビュー実行、#80): 複数のワーカースレッドが同時に`append_entry`を
+    # 呼んでも、行が混ざって壊れたり欠落したりしないことを確認する
+    # (`_write_lock`によるプロセス内直列化の回帰テスト)
+    thread_count = 20
+    entries = [_entry(mr_iid=n, sha=f"sha-{n}") for n in range(thread_count)]
+
+    threads = [
+        threading.Thread(target=append_entry, args=(tmp_path, entry))
+        for entry in entries
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(read_index(tmp_path), key=lambda e: e.mr_iid) == sorted(
+        entries, key=lambda e: e.mr_iid
+    )

@@ -3,10 +3,12 @@
 - 実装場所: `src/gitlab_ai_platform/cli/`
 - 対応Issue: [#38](https://github.com/AtsushiNi/gitlab-ai-platform/issues/38) (M1-10)、
   [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39) (M1-11)、
-  [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48) (M2-11)
+  [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48) (M2-11)、
+  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、`watch`の並列実行)
 - 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
   [ADR-0009](../adr/0009-cli-watch-design.md)、
-  [ADR-0012](../adr/0012-decompose-interactive-session.md)
+  [ADR-0012](../adr/0012-decompose-interactive-session.md)、
+  [ADR-0014](../adr/0014-parallel-review-execution.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
   要件→Issue分解の対話型`decompose`サブコマンド)
 
@@ -19,8 +21,9 @@
   一連のパイプラインを1回だけ実行する。「デバッグとプロンプト改善の主要導線」
   (`docs/architecture.md`)として、結果の保存先パスと簡単なサマリを標準出力に表示する
 - `watch`: MR Poller(M1-5)で対象プロジェクトを定期走査し、検出したMRごとに`review`と
-  同じレビュー実行パイプラインを呼び出し続ける常駐モード。Ctrl+C(SIGINT)/SIGTERMで
-  graceful shutdownし、同一設定に対する多重起動を防ぐ
+  同じレビュー実行パイプラインを呼び出し続ける常駐モード。検出した複数MRのレビューは
+  `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、[ADR-0014](../adr/0014-parallel-review-execution.md))。
+  Ctrl+C(SIGINT)/SIGTERMでgraceful shutdownし、同一設定に対する多重起動を防ぐ
 - `decompose`: 指定した1つのprojectに対し、GitLab Adapter MCP Server(M2-12、
   `adapter_mcp_server`)を`--mcp-config`で登録した**対話型**の`claude`セッションを起動する
   (M2-11、`docs/requirements.md` 3-C)。`review`/`watch`のheadless実行(`-p`付き、標準出力の
@@ -154,7 +157,10 @@ def build_workspace_manager(config: Config) -> "GitWorkspaceManager":
 #### `watch`(実装場所: `src/gitlab_ai_platform/cli/watch.py`)
 
 [ADR-0008](../adr/0008-cli-single-run-design.md)の`execute_review`/`run_single_review`
-分離パターンをそのまま踏襲する([ADR-0009](../adr/0009-cli-watch-design.md))。
+分離パターンをそのまま踏襲する([ADR-0009](../adr/0009-cli-watch-design.md))。M2-1
+([ADR-0014](../adr/0014-parallel-review-execution.md))で検出済みMRの並列実行に対応した際も
+`build_on_detected`自体は変更せず、`run_watch_loop`が`ReviewWorkerPool`(`cli/worker_pool.py`)への
+投入に置き換える形で並列化した。
 
 ```python
 import threading
@@ -165,6 +171,20 @@ from gitlab_ai_platform.poller import DetectedReview
 from gitlab_ai_platform.runner.protocol import ClaudeCodeRunner
 from gitlab_ai_platform.store.protocol import StateStore
 from gitlab_ai_platform.workspace.protocol import WorkspaceManager
+
+
+class ReviewWorkerPool:
+    """`max_workers`個までのスレッドでレビュージョブ(`Callable[[], None]`)を並行実行する
+    (`cli/worker_pool.py`、M2-1)。"""
+
+    def __init__(self, max_workers: int, stop_event: threading.Event) -> None: ...
+
+    def submit(self, job: "Callable[[], None]") -> None:
+        """`job`をプールに投入する(即座に戻り、実行完了を待たない)。"""
+
+    def shutdown_and_reraise(self) -> None:
+        """実行中のジョブの完了を待ってプールを終了し、ワーカースレッド内で発生した
+        想定外の例外があれば再送出する。"""
 
 
 def build_on_detected(
@@ -188,7 +208,11 @@ def run_watch_loop(
     stop_event: threading.Event | None = None,
 ) -> None:
     """パイプライン本体。`MrPoller`と`build_on_detected`を結線する。
-    4つの依存先はすべてProtocol型で受け取る(具象実装に依存しない)。"""
+    4つの依存先はすべてProtocol型で受け取る(具象実装に依存しない)。検出された各MRの
+    処理は`ReviewWorkerPool(config.max_parallel, stop_event)`へ投入し、並行実行する
+    (M2-1)。`stop_event`を省略した場合はここで生成し、`MrPoller.run`とプールの両方に
+    同じオブジェクトを渡す(ワーカースレッドの想定外の例外がポーリングループの早期終了に
+    反映されるようにするため)。"""
 
 
 def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> None:
@@ -304,27 +328,39 @@ def run_decompose(
 
 ## 処理の流れ(`watch`: `run_watch_loop`/`build_on_detected`)
 
-1. `MrPoller(adapter, store, config.projects, review_label=config.review_label)`を構築する
+1. `stop_event`省略時は`threading.Event()`を生成する。`MrPoller(adapter, store,
+   config.projects, review_label=config.review_label)`と`ReviewWorkerPool(config.max_parallel,
+   stop_event)`(M2-1)を構築する
 2. `poller.run(interval_seconds=config.poll_interval_seconds, stop_event=stop_event,
-   on_detected=build_on_detected(...))`で`config.poll_interval_seconds`間隔の走査ループを
-   開始する(ループ制御自体はMR Poller、`docs/specs/poller.md`の責務)
-3. 各サイクルで新たに起票された`DetectedReview`ごとに、`execution_id_scope()`で新しい
-   実行IDを振ってから`execute_review(adapter, workspace, runner, store, config,
-   review.project, review.mr_iid, sha=review.commit_sha)`を呼ぶ(`review`サブコマンドと
-   同じパイプライン本体を再利用。`sha`にMR Pollerが検出・起票した時点のcommitを明示的に
-   渡すことで、`execute_review`が実行時点の最新commitを取得し直して別のcommitとして
-   起票し直してしまい、Pollerが起票した元のレコードが`RUNNING`/`FAILED`/`DONE`に
-   一度も遷移せず孤立する事態を防ぐ)
-4. 既知のパイプライン例外(`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/
+   on_detected=<pool.submitへ投入するラッパー>)`で`config.poll_interval_seconds`間隔の
+   走査ループを開始する(ループ制御自体はMR Poller、`docs/specs/poller.md`の責務)
+3. 各サイクルで新たに起票された`DetectedReview`ごとに、`build_on_detected(...)`が組み立てた
+   コールバック(1件のMRを同期的に処理する関数)を`ReviewWorkerPool`へ投入する。プールは
+   `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、
+   [ADR-0014](../adr/0014-parallel-review-execution.md))。投入自体は即座に戻るため、
+   `poller.run`のループはブロックされない
+4. 投入されたコールバックは、`execution_id_scope()`で新しい実行IDを振ってから
+   `execute_review(adapter, workspace, runner, store, config, review.project,
+   review.mr_iid, sha=review.commit_sha)`を呼ぶ(`review`サブコマンドと同じパイプライン
+   本体を再利用。`sha`にMR Pollerが検出・起票した時点のcommitを明示的に渡すことで、
+   `execute_review`が実行時点の最新commitを取得し直して別のcommitとして起票し直して
+   しまい、Pollerが起票した元のレコードが`RUNNING`/`FAILED`/`DONE`に一度も遷移せず
+   孤立する事態を防ぐ)
+5. 既知のパイプライン例外(`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/
    `ReviewError`/`StateStoreError`)はログ(`watch.review_failed`)に記録して次のMRの
    処理を続ける。State Storeは`execute_review`が既に`FAILED`へ更新済みのため、
    このレコードは以降のサイクルで「処理済み」としてMR Pollerがスキップする
-   (自動リトライはしない)
-5. 上記5種類に属さない想定外の例外は握りつぶさず、`run_watch_loop`の外(`run_watch`
-   → `cli.main`)へそのまま伝播させ、プロセスを終了させる([ADR-0009](../adr/0009-cli-watch-design.md)
-   「1件のレビュー失敗はログに記録して継続する。想定外の例外はプロセスを落とす」)
-6. `stop_event`がセットされると、実行中のサイクル(検出された全MRの処理)完了後に
-   ループを終了する
+   (自動リトライはしない)。この処理は`ReviewWorkerPool`から見れば1件のジョブが正常に
+   `return`しただけであり、他のMRの処理には一切影響しない(Issue #80の「失敗時の隔離」)
+6. 上記5種類に属さない想定外の例外は`ReviewWorkerPool`が捕まえ、`stop_event`をセットして
+   `run_watch_loop`の外(`run_watch`→`cli.main`)へそのまま伝播させ、プロセスを終了させる
+   ([ADR-0009](../adr/0009-cli-watch-design.md)「1件のレビュー失敗はログに記録して継続する。
+   想定外の例外はプロセスを落とす」を並列実行後も維持する設計、[ADR-0014](../adr/0014-parallel-review-execution.md)参照)。
+   このとき、既に実行が始まっている他のMRの処理は中断されず完了まで実行される
+7. `stop_event`がセットされると、`poller.run`は実行中のサイクル完了後にループを終了する。
+   `run_watch_loop`は`finally`節で`pool.shutdown_and_reraise()`を呼び、投入済みジョブの
+   完了を待ってから(未着手のジョブはキャンセルする)、手順6で保持していた例外があれば
+   再送出する
 
 ## 処理の流れ(`decompose`: `run_decompose`)
 
@@ -403,10 +439,20 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
     `execute_review`には検出時の`sha`(`DetectedReview.commit_sha`)がそのまま渡り、
     その`sha`に対してレビュー・保存が行われること(Pollerが起票したレコードが
     孤立しないこと)
-  - `run_watch_loop`: `MrPoller`が検出した複数の`DetectedReview`を順に処理すること
+  - `run_watch_loop`: `MrPoller`が検出した複数の`DetectedReview`が処理されること
+    (M2-1以降は並行実行のため、完了順序ではなく処理結果の集合で検証する)、
+    `config.max_parallel`を超えて同時実行されないこと・実際に複数MRが同時実行される
+    (単なる逐次実行ではない)ことを実行中の同時実行数を計測して検証すること、1件のMRの
+    想定外の例外が他のMRの処理を妨げず、State Storeが正しく更新されたうえで例外が
+    `run_watch_loop`の外へ伝播すること(Issue #80の「失敗時の隔離」)
   - `run_watch`: `ProcessLock`を取得・解放すること、ロック取得済みの状態で呼ぶと
     `AlreadyRunningError`を送出すること、`state_db_path`が`":memory:"`でもロックファイル名が
     不正にならず起動できること(`_lock_path_for`の`":memory:"`特別扱い)
+- `test_worker_pool.py`: `ReviewWorkerPool`を検証する。投入したジョブがバックグラウンド
+  スレッドで実行されること、同時実行数が`max_workers`を超えないこと、想定外の例外を
+  送出したジョブが`stop_event`をセットし`shutdown_and_reraise`で再送出されること、
+  1件のジョブの失敗が他のジョブの実行を妨げないこと(Issue #80の「失敗時の隔離」)を
+  検証する
 - `test_lock.py`: `ProcessLock`の取得・解放・多重取得時の`AlreadyRunningError`を検証する。
   Windows分岐(`msvcrt`)は開発機がmacOSのため実機検証はできず、`sys.platform`/
   `sys.modules["msvcrt"]`をテスト用のフェイクに差し替えてロジックのみ検証する
@@ -440,6 +486,8 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [ADR-0008: CLI 単発レビュー実行の設計](../adr/0008-cli-single-run-design.md)
 - [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md)
 - [ADR-0012: 要件→Issue分解ワークフロー(`decompose`)の対話型セッション設計](../adr/0012-decompose-interactive-session.md)
+- [ADR-0014: 並列レビュー実行の設計](../adr/0014-parallel-review-execution.md) —
+  `watch`の`ReviewWorkerPool`による並列実行の設計判断
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /
   [claude-code-runner.md](claude-code-runner.md) / [review-output.md](review-output.md) /
@@ -449,5 +497,5 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - `references/spike-S3-git-worktree-windows.md` §8.1 — GitLab認証(credential helper)の
   実機検証結果
 - ソースコード: `src/gitlab_ai_platform/cli/`
-  (`main.py` / `single_run.py` / `watch.py` / `decompose.py` / `lock.py` / `exit_codes.py` /
-  `__main__.py` / `__init__.py`)
+  (`main.py` / `single_run.py` / `watch.py` / `worker_pool.py` / `decompose.py` / `lock.py` /
+  `exit_codes.py` / `__main__.py` / `__init__.py`)

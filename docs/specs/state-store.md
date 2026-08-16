@@ -1,8 +1,10 @@
 # State Store
 
 - 実装場所: `src/gitlab_ai_platform/store/`
-- 対応Issue: [#32](https://github.com/AtsushiNi/gitlab-ai-platform/issues/32) (M1-4、スキーマ設計・SQLite実装)
-- 関連ADR: [ADR-0003](../adr/0003-state-store-interface.md)
+- 対応Issue: [#32](https://github.com/AtsushiNi/gitlab-ai-platform/issues/32) (M1-4、スキーマ設計・SQLite実装)、
+  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、並行アクセスの安全性)
+- 関連ADR: [ADR-0003](../adr/0003-state-store-interface.md)、
+  [ADR-0014](../adr/0014-parallel-review-execution.md)
 - ステータス: 実装済み(Protocol定義 + SQLite実装)
 
 ## 責務
@@ -18,6 +20,10 @@
     (`SqliteStateStore`)に直接依存しない
   - レビュー結果本体(JSON/Markdown)は`reviews/<project>/<mr_iid>/<sha>/`(`docs/architecture.md`)に
     別途保存される。State Storeはその保存先パス(`result_path`)のみを記録し、結果の中身は扱わない
+  - M2-1(#80)以降、`SqliteStateStore`の同一インスタンスは複数のワーカースレッドから同時に
+    呼ばれる(`ReviewWorkerPool`、`docs/specs/cli.md`)。`find`/`create`/`update_status`/`close`は
+    すべて内部で`threading.RLock`により直列化されており、呼び出し側は追加の排他制御なしに
+    同一インスタンスを複数スレッドで共有できる([ADR-0014](../adr/0014-parallel-review-execution.md)参照)
 - 非対象:
   - ビジネスロジック(レビューするか否かの判断、`レビュー待ち`ラベルの走査等)は持たない。
     それらはMR Poller(M1-5)の責務
@@ -134,10 +140,14 @@ CREATE TABLE review_records (
   - `update_status`が`status`/`reviewed_at`/`result_path`を永続化すること
   - 存在しないレコードへの`update_status`が`RecordNotFoundError`になること
   - `(project, mr_iid, commit_sha)`の組み合わせが異なればレコードが独立していること
+  - (M2-1) 多数のスレッドが同時に`create`/`update_status`を呼んでも例外を送出せず、
+    全レコードが正しく記録されること(`threading.RLock`による直列化の回帰テスト)
 
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のState Store行
 - [ADR-0003: State Store のインターフェースとスキーマ設計](../adr/0003-state-store-interface.md)
+- [ADR-0014: 並列レビュー実行の設計](../adr/0014-parallel-review-execution.md) —
+  `threading.RLock`による直列化の設計判断
 - ソースコード: `src/gitlab_ai_platform/store/`
   (`protocol.py` / `types.py` / `errors.py` / `sqlite.py` / `__init__.py`)

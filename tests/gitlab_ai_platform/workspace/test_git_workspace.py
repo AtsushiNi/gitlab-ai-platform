@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -184,6 +186,111 @@ def test_prepare_enforces_disk_budget_when_updating_existing_worktree(
 
     with pytest.raises(DiskLimitExceededError):
         tight_manager.prepare("group/project", 1, "feature-a")
+
+
+# -- 並列実行(M2-1、ADR-0014) -----------------------------------------------------
+
+
+def test_prepare_serializes_same_project_but_allows_different_projects_to_overlap(
+    tmp_path, origin_repo
+):
+    # 同一project(=同一bare repo)へのgit操作は、複数MRから同時に呼ばれても常に
+    # 直列化される(projectロック)。一方、異なるprojectへの操作は真に並行実行できる
+    # ことを、実際のgit呼び出しの重なりを計測して確認する
+    workspace_root = tmp_path / "workspace"
+    lock = threading.Lock()
+    active_by_cwd: dict[str, int] = {}
+    max_active_by_cwd: dict[str, int] = {}
+    global_active = 0
+    global_max_active = 0
+
+    def spy_run(command, *, cwd=None, **kwargs):
+        nonlocal global_active, global_max_active
+        key = str(cwd)
+        with lock:
+            active_by_cwd[key] = active_by_cwd.get(key, 0) + 1
+            max_active_by_cwd[key] = max(
+                max_active_by_cwd.get(key, 0), active_by_cwd[key]
+            )
+            global_active += 1
+            global_max_active = max(global_max_active, global_active)
+        time.sleep(0.02)  # 重なりを観測しやすくするための余白
+        try:
+            return subprocess.run(command, cwd=cwd, **kwargs)
+        finally:
+            with lock:
+                active_by_cwd[key] -= 1
+                global_active -= 1
+
+    manager = GitWorkspaceManager(
+        workspace_root,
+        clone_url_for=lambda project: str(origin_repo.path),
+        max_disk_bytes=10**9,
+        run=spy_run,
+    )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [
+            executor.submit(manager.prepare, "group/project-a", 1, "main"),
+            executor.submit(manager.prepare, "group/project-b", 1, "feature-a"),
+            executor.submit(manager.prepare, "group/project-a", 2, "feature-a"),
+        ]
+        handles = [f.result(timeout=30) for f in futures]
+
+    # group/project-a向けのbare repoに対する操作は、どの瞬間を見ても同時に1つまでしか
+    # 走らない(projectロックによる直列化。破損を防ぐ本Issueの核心)
+    bare_a = str(workspace_root / "repos" / "group%2Fproject-a.git")
+    assert max_active_by_cwd.get(bare_a, 1) <= 1
+    # 異なるproject同士のgit操作は実際に重なった(真に並行実行された)
+    assert global_max_active > 1
+    assert all(handle.path.exists() for handle in handles)
+    assert len({handle.path for handle in handles}) == 3
+
+
+def test_collect_garbage_skips_project_whose_lock_is_held_elsewhere(
+    tmp_path, origin_repo
+):
+    # GC(collect_garbage)は、他スレッドが操作中(ロック取得できない)projectを
+    # ブロッキング待ちせずスキップする設計(デッドロック回避、ADR-0014)。ロックを
+    # 保持したままの状態を模擬し、より古いworktreeでも操作中なら退避対象から外れ、
+    # 次点(操作中でない方)が退避されることを確認する。
+    # projectロックはRLock(同一スレッドからの再入を許す、同一project内の別MRを退避する
+    # 正当なケースのため)なので、「他スレッドが保持中」を別スレッドで再現する必要がある
+    # (同じテストスレッドでlock.acquire()するだけでは、collect_garbage呼び出し自体が
+    # 再入として通ってしまい、意図した「busyで退避不可」を再現できない)
+    manager = _manager(tmp_path, origin_repo, max_disk_bytes=10**9)
+    handle_a = manager.prepare("group/project-a", 1, "main")
+    handle_b = manager.prepare("group/project-b", 1, "main")
+    now = time.time()
+    os.utime(
+        handle_a.path, (now - 200, now - 200)
+    )  # aの方が古い(通常ならaが先に選ばれる)
+    os.utime(handle_b.path, (now - 100, now - 100))
+
+    # ロック取得中の状態をホワイトボックスに再現する(内部実装への直接アクセス)
+    lock_a = manager._project_lock("group/project-a")
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def _hold_lock_a() -> None:
+        lock_a.acquire()
+        acquired.set()
+        release.wait(timeout=10)
+        lock_a.release()
+
+    holder = threading.Thread(target=_hold_lock_a)
+    holder.start()
+    assert acquired.wait(timeout=5)
+    try:
+        manager._max_disk_bytes = 0  # 強制的に上限超過状態にする
+        removed = manager.collect_garbage()
+    finally:
+        release.set()
+        holder.join(timeout=5)
+
+    assert [r.project for r in removed] == ["group/project-b"]
+    assert handle_a.path.exists()
+    assert not handle_b.path.exists()
 
 
 # -- スラッグ変換(_slugify_project/_deslugify_project) -----------------------------
