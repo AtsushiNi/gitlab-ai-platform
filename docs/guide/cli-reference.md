@@ -21,7 +21,7 @@ python -m gitlab_ai_platform.cli review group/project-a 123
 
 ## コマンド全体の構文
 
-```
+```text
 gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] \
     review <project> <mr_iid> \
     [--timeout SECONDS] \
@@ -71,7 +71,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 
 指定した1つのproject/MRを1本レビューする。デバッグ・プロンプト改善用の主要導線。
 
-```
+```text
 gitlab-ai-platform review <project> <mr_iid> \
     [--timeout SECONDS] \
     [--allowed-tools TOOL [TOOL ...]] \
@@ -101,7 +101,7 @@ gitlab-ai-platform --log-level DEBUG --log-dir logs review group/project-a 123 -
 
 標準出力に、保存先パス・指摘件数のサマリを表示する(`cli/main.py`の`_print_summary`)。
 
-```
+```text
 レビュー完了: group/project-a !123 (abcdef012345)
   概要: <レビュー結果のsummary>
   指摘件数: critical=0 major=2 minor=1
@@ -117,7 +117,7 @@ gitlab-ai-platform --log-level DEBUG --log-dir logs review group/project-a 123 -
 
 対象プロジェクトを定期走査し、レビュー待ちMRを検出次第レビューし続ける常駐モード。
 
-```
+```text
 gitlab-ai-platform watch
 ```
 

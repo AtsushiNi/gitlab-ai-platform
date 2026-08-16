@@ -110,7 +110,7 @@
 ### 2.3 Claude Codeのタイムアウト・起動失敗 — 終了コード`13`
 
 **症状**: 標準エラー出力に`Claude Code Runnerエラー: <メッセージ>`と、`log_path`属性が
-あれば`  実行ログ: <path>`が続けて表示される([cli/main.py](../../src/gitlab_ai_platform/cli/main.py))。
+あれば`実行ログ: <path>`が続けて表示される([cli/main.py](../../src/gitlab_ai_platform/cli/main.py))。
 原因の例外は`ClaudeCodeTimeoutError`/`ClaudeCodeOutputError`/`ClaudeCodeNotFoundError`
 ([`runner/errors.py`](../../src/gitlab_ai_platform/runner/errors.py))で、いずれも
 `log_path`を持つ。
@@ -158,7 +158,7 @@
 
 - Claude Codeの実行自体が`is_error: true`で終了した(この場合`result_text`の中身は
   一切解釈せず即座に失敗させる。`is_error`が欠けている想定外の応答形式もエラー扱い)
-- 応答に```json ... ```フェンスが見つからない、またはフェンス内・応答全文のいずれも
+- 応答に ```` ```json ... ``` ```` フェンスが見つからない、またはフェンス内・応答全文のいずれも
   JSONとして解釈できない
 - JSONは取れたが結果スキーマを満たさない(`findings`が配列でない、`summary`が文字列でない、
   各`finding`の`severity`が`critical`/`major`/`minor`のいずれでもない、`file`/`rationale`/

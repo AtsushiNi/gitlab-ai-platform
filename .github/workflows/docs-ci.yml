@@ -1,0 +1,77 @@
+# このリポジトリ自体のドキュメント(docs/配下)の品質を担保するCI(D-12 #16)。
+# コードのCI(ci.yml、M0-4 #4)とはツールチェーン(Node.js中心)が異なるため別ワークフローに分離し、
+# docsに関係する変更のときだけ実行されるようpathsで絞る(役割分担の詳細はADR-0012参照)。
+name: Docs CI
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/**"
+      - "CLAUDE.md"
+      - ".markdownlint-cli2.jsonc"
+      - "lychee.toml"
+      - "scripts/check_mermaid_diagrams.py"
+      - ".github/workflows/docs-ci.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "CLAUDE.md"
+      - ".markdownlint-cli2.jsonc"
+      - "lychee.toml"
+      - "scripts/check_mermaid_diagrams.py"
+      - ".github/workflows/docs-ci.yml"
+
+jobs:
+  # リンク切れ検出: docs/配下のMarkdown間の相対リンク(アンカー含む)と外部URLをチェックする。
+  # 設定はlychee.tomlに集約(タイムアウト・リトライ・テンプレートファイルの除外)。
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check links (lychee)
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --config lychee.toml
+            --no-progress
+            'docs/**/*.md' 'CLAUDE.md'
+          fail: true
+          # tokenはgithub.tokenが既定値。github.com/.../issues/N へのリンクが多いため、
+          # 未認証時のレート制限を避ける目的でlychee側の--github-tokenとして使われる
+
+  # 書式チェック: 見出し構造・trailing whitespace等をmarkdownlintで機械的にチェックする。
+  # ルール選定は.markdownlint-cli2.jsoncに集約(既定ルールのうち行長・テーブル桁揃えのみ対象外)。
+  markdown-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Lint Markdown format (markdownlint-cli2)
+        run: npx --yes markdownlint-cli2
+
+  # 図の生成確認: docs/配下のmermaidコードブロックが構文的に正しく描画できることを、
+  # 実際に@mermaid-js/mermaid-cliでレンダリングして確認する。
+  mermaid-render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Render mermaid diagrams
+        run: python3 scripts/check_mermaid_diagrams.py

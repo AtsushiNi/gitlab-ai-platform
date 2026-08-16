@@ -72,7 +72,7 @@ def create_server(adapter: GitLabAdapter, *, name: str = "gitlab-adapter") -> MC
 起動用エントリポイント: `src/gitlab_ai_platform/adapter_mcp_server/main.py`の`main(argv=None) -> int`。
 `python -m gitlab_ai_platform.adapter_mcp_server`(`__main__.py`)で起動する。
 
-```
+```text
 python -m gitlab_ai_platform.adapter_mcp_server [--config CONFIG] [--env ENV] [--log-dir LOG_DIR]
 ```
 

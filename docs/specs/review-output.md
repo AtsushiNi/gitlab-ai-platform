@@ -120,7 +120,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 
 ### 保存レイアウト
 
-```
+```text
 <root>/<project>/<mr_iid>/<sha>/
     result.json    # {"summary": ..., "findings": [...]} (Findingのseverityは文字列化)
     result.md      # render_markdownの出力
