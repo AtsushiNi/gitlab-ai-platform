@@ -42,7 +42,7 @@
 
 `src/` レイアウトを採用する。
 
-```
+```text
 gitlab-ai-platform/
 ├── pyproject.toml
 ├── src/

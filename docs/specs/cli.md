@@ -40,7 +40,7 @@
 
 ### コマンド
 
-```
+```text
 gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] \
     review <project> <mr_iid> \
     [--timeout SECONDS] \

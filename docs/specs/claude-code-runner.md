@@ -97,7 +97,7 @@ import build_prompt`で参照できる。
 `instructions`(レビュー観点のプロンプト本文)と`context`は`build_prompt`で結合され、
 以下の形式のテキストとして`claude -p`の引数に渡される:
 
-```
+```text
 <instructions>
 
 ## Merge Request

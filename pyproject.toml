@@ -26,7 +26,9 @@ build-backend = "hatchling.build"
 packages = ["src/gitlab_ai_platform"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# "scripts" はD-12(#16)のdocs CI用ツール(scripts/check_mermaid_diagrams.py)を
+# tests/scripts/ からimportできるようにするため追加
+pythonpath = ["src", "scripts"]
 testpaths = ["tests"]
 
 [tool.ruff]

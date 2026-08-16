@@ -87,7 +87,7 @@ GitWorkspaceManager(
 
 ディレクトリ構成(`root`配下):
 
-```
+```text
 repos/<slug>.git             # プロジェクト単位のbare clone
 worktrees/<slug>/mr-<iid>/   # MR単位のworktree
 ```

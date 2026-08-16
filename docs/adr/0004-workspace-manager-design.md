@@ -32,7 +32,7 @@ Protocol型だけを見て実装し、git実装(`GitWorkspaceManager`)に直接�
 
 ディレクトリ構成:
 
-```
+```text
 <root>/repos/<slug>.git             # プロジェクト単位のbare clone
 <root>/worktrees/<slug>/mr-<iid>/   # MR単位のworktree
 ```

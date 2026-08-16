@@ -163,7 +163,7 @@ setx ANTHROPIC_DEFAULT_SONNET_MODEL <固定したいモデルのバージョン�
 リポジトリルートに`.env`を作成し、GitLab PATを書く(キー名は
 `config/loader.py`の`GITLAB_TOKEN_ENV_KEY`と一致させる必要がある):
 
-```
+```text
 GITLAB_AI_PLATFORM_GITLAB_TOKEN=<発行したPAT>
 ```
 
@@ -244,7 +244,7 @@ gitlab-ai-platform review group/project-a 123
 正常に完了すると、保存先パスと指摘件数のサマリが標準出力に表示される
 (`cli/main.py`の`_print_summary`):
 
-```
+```text
 レビュー完了: group/project-a !123 (<sha先頭12桁>)
   概要: <レビューの概要>
   指摘件数: critical=0 major=1 minor=2

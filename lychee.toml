@@ -1,0 +1,12 @@
+# D-12 (#16) ドキュメントCI用のリンクチェック設定(lychee)。
+# docs/ 配下のMarkdown間の相対リンク(アンカー含む)と外部URLの両方をチェックする。
+# 外部サイトの一時的な障害でCIが不安定にならないよう、タイムアウト・リトライを設定している。
+include_fragments = "full"
+timeout = 20
+retry_wait_time = 5
+max_retries = 3
+
+# docs/specs/template.md はADR/仕様ファイルの複製用テンプレートで、
+# `[ADR-XXXX](../adr/XXXX-xxx.md)` のような実在しないプレースホルダパスを
+# 意図的に含むため、リンクチェックの対象から除外する。
+exclude_path = ["docs/specs/template.md"]

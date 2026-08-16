@@ -6,8 +6,8 @@
   [#31](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31) (M1-3、書き込み許可リスト機構の強化)、
   [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47) (M2-10、Issue/MR操作の拡充)
 - 関連ADR: [ADR-0002](../adr/0002-gitlab-adapter-interface.md)
-- ステータス: 実装済み(インターフェース定義[M1-1] + REST実装[M1-2] + 許可リスト機構の強化[M1-3]
-  + Issue/MR操作の拡充[M2-10])
+- ステータス: 実装済み(インターフェース定義[M1-1] + REST実装[M1-2] +
+  許可リスト機構の強化[M1-3] + Issue/MR操作の拡充[M2-10])
 
 ## 責務
 
@@ -299,7 +299,7 @@ GitHub Issue未作成なので、Issue化した時点でこの節にリンクを
 | 書き込み操作の実行を事後に追跡できる | `rest.py`の`_record_write`(全7メソッドの成功/拒否/エラーを構造化ログに記録) | `test_rest.py`の監査ログ系テスト(上記テスト方針参照) |
 | PATスコープだけに頼らない設計であること | `typing.Protocol`による許可リスト方式そのもの(`references/spike-S2-gitlab-rest-api.md`でPATスコープの粒度不足を確認済み) | 上記2項目のテストが機構として担保 |
 
-**M1-3で見送った項目**(理由は[ADR-0002の追記](../adr/0002-gitlab-adapter-interface.md#追記m1-3-31)参照):
+**M1-3で見送った項目**(理由は[ADR-0002の追記](../adr/0002-gitlab-adapter-interface.md#追記m1-331)参照):
 
 - GitLabのprotected branchフラグに依存しない、config層でのbranch名パターンによる追加ガード。
   Runner/Poller側の設計が固まる時点(M2以降)で再検討する

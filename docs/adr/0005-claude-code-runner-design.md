@@ -46,6 +46,7 @@ Pythonの`subprocess.run(timeout=N)`は、タイムアウト発生時に内部�
 毎回ログもエラーも残らない「原因不明の強制終了」になってしまう。
 
 そのため`SubprocessClaudeCodeRunner`は`subprocess.Popen`を直接操作し、
+
 1. `communicate(timeout=timeout_seconds)`で通常のタイムアウトを待つ
 2. タイムアウトしたら`terminate()`(SIGTERM)を送り、`terminate_grace_seconds`
    (デフォルト10秒)だけ`communicate()`で正常終了を待つ
