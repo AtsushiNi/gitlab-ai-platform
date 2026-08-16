@@ -10,6 +10,14 @@ CLIエントリポイント(`main`関数)は`gitlab_ai_platform.cli.main`から�
 from __future__ import annotations
 
 from . import exit_codes
+from .decompose import ClaudeCommandNotFoundError, run_decompose
 from .single_run import SingleRunResult, execute_review, run_single_review
 
-__all__ = ["SingleRunResult", "execute_review", "exit_codes", "run_single_review"]
+__all__ = [
+    "ClaudeCommandNotFoundError",
+    "SingleRunResult",
+    "execute_review",
+    "exit_codes",
+    "run_decompose",
+    "run_single_review",
+]

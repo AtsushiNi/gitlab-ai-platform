@@ -11,6 +11,11 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)):
   M1-10の目的に合わせた設計)。
 - `EXIT_ALREADY_RUNNING`(16)は`watch`サブコマンド(M1-11)専用。多重起動防止の
   `ProcessLock`がロック取得に失敗した場合に返す。
+- `EXIT_CLAUDE_NOT_FOUND`(17)は`decompose`サブコマンド(M2-11 [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48))
+  専用。対話型`claude`プロセスの起動自体に失敗した場合に返す(`decompose.ClaudeCommandNotFoundError`)。
+  `decompose`はその他の場合、対話セッション終了時の`claude`プロセス自身の終了コードを
+  そのままCLIの終了コードとして返す(構造化された結果がなく、パイプライン各段階の
+  終了コードという概念自体が存在しないため)。
 """
 
 from __future__ import annotations
@@ -25,10 +30,12 @@ EXIT_RUNNER_ERROR = 13
 EXIT_REVIEW_ERROR = 14
 EXIT_STATE_STORE_ERROR = 15
 EXIT_ALREADY_RUNNING = 16
+EXIT_CLAUDE_NOT_FOUND = 17
 EXIT_INTERRUPTED = 130
 
 __all__ = [
     "EXIT_ALREADY_RUNNING",
+    "EXIT_CLAUDE_NOT_FOUND",
     "EXIT_CONFIG_ERROR",
     "EXIT_GITLAB_ADAPTER_ERROR",
     "EXIT_INTERRUPTED",

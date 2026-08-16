@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gitlab_ai_platform.cli import exit_codes
+from gitlab_ai_platform.cli.decompose import ClaudeCommandNotFoundError
 from gitlab_ai_platform.cli.lock import AlreadyRunningError
 from gitlab_ai_platform.cli.main import main
 from gitlab_ai_platform.cli.single_run import SingleRunResult
@@ -350,3 +351,94 @@ def test_watch_command_sets_stop_event_on_signal_and_restores_handler(
     assert observed["was_set_after_signal"] is True
     # ハンドラがmain終了後に元へ戻されていること(他のテスト・プロセス全体への影響防止)
     assert signal.getsignal(sig) == original_handler
+
+
+def _decompose_argv(tmp_path: Path, *extra: str) -> list[str]:
+    config_path, env_path = _write_config(tmp_path)
+    return [
+        "--config",
+        str(config_path),
+        "--env",
+        str(env_path),
+        "decompose",
+        "group/project",
+        *extra,
+    ]
+
+
+def test_decompose_command_returns_run_decompose_exit_code(tmp_path, monkeypatch):
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_decompose", lambda *a, **k: 0)
+
+    exit_code = main(_decompose_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_OK
+
+
+def test_decompose_command_propagates_claude_session_exit_code(tmp_path, monkeypatch):
+    # 対話セッション自体はheadlessな成否判定を持たないため、claudeプロセスの終了コードを
+    # そのままCLIの終了コードとして返す
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_decompose", lambda *a, **k: 7)
+
+    exit_code = main(_decompose_argv(tmp_path))
+
+    assert exit_code == 7
+
+
+def test_decompose_command_passes_project_and_options_through(tmp_path, monkeypatch):
+    captured = {}
+
+    def _fake_run_decompose(project, **kwargs):
+        captured["project"] = project
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.main.run_decompose", _fake_run_decompose
+    )
+
+    exit_code = main(_decompose_argv(tmp_path, "--permission-mode", "plan"))
+
+    assert exit_code == exit_codes.EXIT_OK
+    assert captured["project"] == "group/project"
+    assert captured["permission_mode"] == "plan"
+    assert captured["config_path"].name == "config.toml"
+    assert captured["env_path"].name == ".env"
+
+
+def test_decompose_command_returns_claude_not_found_exit_code(
+    tmp_path, monkeypatch, capsys
+):
+    def _raise(*args, **kwargs):
+        raise ClaudeCommandNotFoundError("claudeコマンドが見つかりません")
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_decompose", _raise)
+
+    exit_code = main(_decompose_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_CLAUDE_NOT_FOUND
+    assert "Claude Code起動エラー" in capsys.readouterr().err
+
+
+def test_decompose_command_returns_config_error_exit_code(tmp_path, capsys):
+    # projectsが空 → ConfigError(decomposeもreview/watchと同じconfig検証を通る)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[gitlab]\nurl = "https://gitlab.example.com"\nprojects = []\n',
+        encoding="utf-8",
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text(f"{GITLAB_TOKEN_ENV_KEY}=secret-token\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--env",
+            str(env_path),
+            "decompose",
+            "group/project",
+        ]
+    )
+
+    assert exit_code == exit_codes.EXIT_CONFIG_ERROR
+    assert "設定エラー" in capsys.readouterr().err

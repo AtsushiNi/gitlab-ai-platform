@@ -51,7 +51,8 @@
 - [specs/review-output.md](specs/review-output.md) — レビュー結果スキーマと保存レイアウト
   (M1-9)の仕様
 - [specs/poller.md](specs/poller.md) — MR Poller(M1-5)の仕様
-- [specs/cli.md](specs/cli.md) — CLI(M1-10)の仕様。単発レビュー実行(`review`サブコマンド)
+- [specs/cli.md](specs/cli.md) — CLI(M1-10)の仕様。単発レビュー実行(`review`サブコマンド)、
+  常駐実行(`watch`サブコマンド)、要件→Issue分解の対話型実行(`decompose`サブコマンド、M2-11)
 - [specs/adapter-mcp-server.md](specs/adapter-mcp-server.md) — GitLab Adapter MCP Server(M2-12)の仕様。
   対話型Claude CodeがGitLab Adapterの許可された操作をツールとして呼び出すための経路
 

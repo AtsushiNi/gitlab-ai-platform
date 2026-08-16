@@ -38,7 +38,7 @@ CLAUDE.mdの「次に着手すべきIssueはGitHub Projectsの着手順フィー
 | D  | ドキュメント | 体系だったドキュメント。人間とAIの両方が読める形で維持する | 進行中 (14/20) |
 | S  | Spike | 先に潰すべき技術的不確実性の検証 | 進行中 (3/4) |
 | M1 | レビュー自動化MVP | レビュー待ちMRを自動検出→AIレビュー→ローカル保存まで一気通貫 | 進行中 (11/12) |
-| M2 | 実運用強化 | 並列・再レビュー・人間のレビュー体験・GitLabへの選択投稿 | 進行中 (起票済み3件中2件完了、9件未起票) |
+| M2 | 実運用強化 | 並列・再レビュー・人間のレビュー体験・GitLabへの選択投稿 | 進行中 (起票済み3件中3件完了、9件未起票) |
 | M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 未起票 (0/8) |
 | M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 未起票 (0/10) |
 | X  | 横断 | セキュリティ・コスト・可観測性 | 未起票 (0/2) |
@@ -127,7 +127,7 @@ M2-10〜M2-12 のみ(M2-1〜M2-9 は未起票)。
 | — | M2-8 可観測性: 実行履歴とエラーの可視化 | 未起票 |
 | — | M2-9 レビュー完了通知 | 未起票 |
 | [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47) | M2-10 GitLab Adapter: Issue/MR操作の拡充(取得・作成・更新) | 完了 |
-| [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48) | M2-11 要件→Issue分解ワークフロー(CLI・対話型) | 未着手 |
+| [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48) | M2-11 要件→Issue分解ワークフロー(CLI・対話型) | 完了 |
 | [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62) | M2-12 Claude CodeからGitLab操作を呼び出すツールブリッジ | 完了 |
 
 M2-12 は完了後にフォローアップIssueが複数派生している(いずれも完了・クローズ済み):
