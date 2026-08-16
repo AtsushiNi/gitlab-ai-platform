@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from gitlab_ai_platform.workspace import DiskLimitExceededError, GitWorkspaceManager
-from gitlab_ai_platform.workspace.git_workspace import _deslugify_project, _slugify_project
+from gitlab_ai_platform.workspace.git_workspace import (
+    _deslugify_project,
+    _slugify_project,
+)
 
 from .conftest import OriginRepo, run_git
 
@@ -23,7 +26,9 @@ def _manager(
     )
 
 
-def test_prepare_creates_bare_clone_and_worktree_checked_out_at_ref(tmp_path, origin_repo):
+def test_prepare_creates_bare_clone_and_worktree_checked_out_at_ref(
+    tmp_path, origin_repo
+):
     manager = _manager(tmp_path, origin_repo)
 
     handle = manager.prepare("group/project", 1, "main")
@@ -34,7 +39,9 @@ def test_prepare_creates_bare_clone_and_worktree_checked_out_at_ref(tmp_path, or
     assert (tmp_path / "workspace" / "repos" / "group%2Fproject.git").exists()
 
 
-def test_prepare_checks_out_exact_commit_sha_even_if_not_branch_tip(tmp_path, origin_repo):
+def test_prepare_checks_out_exact_commit_sha_even_if_not_branch_tip(
+    tmp_path, origin_repo
+):
     # State Storeはcommit_sha単位でレビュー状態を追うため、Workspace Managerもbranchの
     # 最新ではなく指定commitそのものを再現できる必要がある
     manager = _manager(tmp_path, origin_repo)
@@ -45,7 +52,9 @@ def test_prepare_checks_out_exact_commit_sha_even_if_not_branch_tip(tmp_path, or
     assert (handle.path / "feature.txt").read_text() == "first\n"
 
 
-def test_prepare_reuses_existing_bare_clone_for_second_mr_of_same_project(tmp_path, origin_repo):
+def test_prepare_reuses_existing_bare_clone_for_second_mr_of_same_project(
+    tmp_path, origin_repo
+):
     manager = _manager(tmp_path, origin_repo)
 
     manager.prepare("group/project", 1, "main")
@@ -153,7 +162,9 @@ def test_collect_garbage_returns_empty_list_when_within_limit(tmp_path, origin_r
     assert manager.collect_garbage() == []
 
 
-def test_prepare_raises_disk_limit_exceeded_when_no_worktree_can_be_evicted(tmp_path, origin_repo):
+def test_prepare_raises_disk_limit_exceeded_when_no_worktree_can_be_evicted(
+    tmp_path, origin_repo
+):
     # 破棄できるworktreeが1つも無い状態でも上限を満たせない、意図的に不可能な上限設定
     manager = _manager(tmp_path, origin_repo, max_disk_bytes=-1)
 
@@ -161,7 +172,9 @@ def test_prepare_raises_disk_limit_exceeded_when_no_worktree_can_be_evicted(tmp_
         manager.prepare("group/project", 1, "main")
 
 
-def test_prepare_enforces_disk_budget_when_updating_existing_worktree(tmp_path, origin_repo):
+def test_prepare_enforces_disk_budget_when_updating_existing_worktree(
+    tmp_path, origin_repo
+):
     # 既存worktreeをreset --hardで更新するパスでも上限チェックが働くことの回帰テスト
     # (以前は新規worktree作成時のみチェックしており、更新パスは無条件で上限を無視していた)
     manager = _manager(tmp_path, origin_repo, max_disk_bytes=10**9)

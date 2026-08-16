@@ -44,8 +44,10 @@ def create_server(
     server = MCPServer(name)
     for method_name, factory in TOOL_FACTORIES.items():
         tool_fn = factory(adapter, default_project)
-        server.add_tool(tool_fn, name=method_name, description=TOOL_DESCRIPTIONS[method_name])
+        server.add_tool(
+            tool_fn, name=method_name, description=TOOL_DESCRIPTIONS[method_name]
+        )
     return server
 
 
-__all__ = ["create_server", "DEFAULT_SERVER_NAME", "ALLOWED_TOOL_NAMES"]
+__all__ = ["ALLOWED_TOOL_NAMES", "DEFAULT_SERVER_NAME", "create_server"]

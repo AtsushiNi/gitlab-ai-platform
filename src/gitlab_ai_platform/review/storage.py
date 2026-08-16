@@ -54,12 +54,14 @@ def save_review(
 
     result_json_path = dest_dir / _RESULT_JSON_NAME
     result_json_path.write_text(
-        json.dumps(_result_to_dict(result), ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(_result_to_dict(result), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
     result_md_path = dest_dir / _RESULT_MD_NAME
     result_md_path.write_text(
-        render_markdown(result, project=project, mr_iid=mr_iid, sha=sha), encoding="utf-8"
+        render_markdown(result, project=project, mr_iid=mr_iid, sha=sha),
+        encoding="utf-8",
     )
 
     input_path = dest_dir / _INPUT_NAME
@@ -124,7 +126,8 @@ def _result_to_dict(result: ReviewResult) -> dict:
     return {
         "summary": result.summary,
         "findings": [
-            {**asdict(finding), "severity": finding.severity.value} for finding in result.findings
+            {**asdict(finding), "severity": finding.severity.value}
+            for finding in result.findings
         ],
     }
 

@@ -3,4 +3,4 @@
 from .poller import MrPoller
 from .types import DetectedReview, PollError, PollResult
 
-__all__ = ["MrPoller", "DetectedReview", "PollError", "PollResult"]
+__all__ = ["DetectedReview", "MrPoller", "PollError", "PollResult"]

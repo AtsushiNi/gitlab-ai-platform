@@ -8,7 +8,11 @@ from gitlab_ai_platform.workspace import WorktreeHandle
 
 def test_worktree_handle_is_frozen():
     handle = WorktreeHandle(
-        project="group/project", mr_iid=1, path=Path("/tmp/x"), branch="mr-1", sha="abc123"
+        project="group/project",
+        mr_iid=1,
+        path=Path("/tmp/x"),
+        branch="mr-1",
+        sha="abc123",
     )
 
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -17,7 +21,11 @@ def test_worktree_handle_is_frozen():
 
 def test_worktree_handle_holds_fields():
     handle = WorktreeHandle(
-        project="group/project", mr_iid=1, path=Path("/tmp/x"), branch="mr-1", sha="abc123"
+        project="group/project",
+        mr_iid=1,
+        path=Path("/tmp/x"),
+        branch="mr-1",
+        sha="abc123",
     )
 
     assert handle.project == "group/project"

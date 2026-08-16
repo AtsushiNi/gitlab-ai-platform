@@ -17,19 +17,19 @@ from .types import (
 )
 
 __all__ = [
-    "GitLabAdapter",
-    "GitLabReader",
-    "GitLabWriter",
-    "GitLabRestAdapter",
-    "GitLabAdapterError",
-    "GitLabApiError",
-    "ProtectedBranchError",
     "Branch",
     "CommitAction",
     "CommitActionType",
     "Discussion",
+    "GitLabAdapter",
+    "GitLabAdapterError",
+    "GitLabApiError",
+    "GitLabReader",
+    "GitLabRestAdapter",
+    "GitLabWriter",
     "Issue",
     "MergeRequest",
     "MergeRequestDiff",
     "Note",
+    "ProtectedBranchError",
 ]

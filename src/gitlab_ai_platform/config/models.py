@@ -59,7 +59,7 @@ class Config:
         runner_timeout_seconds: object,
         reviews_root: object,
         state_db_path: object,
-    ) -> "Config":
+    ) -> Config:
         """未検証の生値からConfigを組み立てる。不正な値があれば ConfigError をまとめて送出する。"""
         errors: list[str] = []
 
@@ -67,7 +67,9 @@ class Config:
         if clean_url and not (
             clean_url.startswith("http://") or clean_url.startswith("https://")
         ):
-            errors.append("gitlab.url は http:// または https:// から始まる必要があります")
+            errors.append(
+                "gitlab.url は http:// または https:// から始まる必要があります"
+            )
 
         if not isinstance(gitlab_token, str) or not gitlab_token.strip():
             errors.append(
@@ -95,7 +97,9 @@ class Config:
             runner_timeout_seconds, "runner.timeout_seconds", errors
         )
         clean_reviews_root = _require_nonempty_str(reviews_root, "reviews.root", errors)
-        clean_state_db_path = _require_nonempty_str(state_db_path, "store.db_path", errors)
+        clean_state_db_path = _require_nonempty_str(
+            state_db_path, "store.db_path", errors
+        )
 
         if errors:
             raise ConfigError("; ".join(errors))
@@ -128,14 +132,18 @@ class Config:
         )
 
 
-def _require_nonempty_str(value: object, field_name: str, errors: list[str]) -> str | None:
+def _require_nonempty_str(
+    value: object, field_name: str, errors: list[str]
+) -> str | None:
     if not isinstance(value, str) or not value.strip():
         errors.append(f"{field_name} は空でない文字列である必要があります")
         return None
     return value.strip()
 
 
-def _require_positive_int(value: object, field_name: str, errors: list[str]) -> int | None:
+def _require_positive_int(
+    value: object, field_name: str, errors: list[str]
+) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         errors.append(f"{field_name} は正の整数である必要があります")
         return None

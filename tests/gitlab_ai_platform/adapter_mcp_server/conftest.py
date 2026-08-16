@@ -40,7 +40,9 @@ class FakeGitLabAdapter:
     def list_merge_requests(
         self, project: str, *, labels: Sequence[str] = (), state: str = "opened"
     ) -> list[MergeRequest]:
-        self._record("list_merge_requests", project=project, labels=tuple(labels), state=state)
+        self._record(
+            "list_merge_requests", project=project, labels=tuple(labels), state=state
+        )
         return [
             MergeRequest(
                 project=project,
@@ -71,7 +73,9 @@ class FakeGitLabAdapter:
             author="alice",
         )
 
-    def get_merge_request_diffs(self, project: str, mr_iid: int) -> list[MergeRequestDiff]:
+    def get_merge_request_diffs(
+        self, project: str, mr_iid: int
+    ) -> list[MergeRequestDiff]:
         self._record("get_merge_request_diffs", project=project, mr_iid=mr_iid)
         return [
             MergeRequestDiff(
@@ -84,12 +88,18 @@ class FakeGitLabAdapter:
             )
         ]
 
-    def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
+    def list_merge_request_discussions(
+        self, project: str, mr_iid: int
+    ) -> list[Discussion]:
         self._record("list_merge_request_discussions", project=project, mr_iid=mr_iid)
         return [
             Discussion(
                 id="d1",
-                notes=(Note(id=1, body="hi", author="bob", created_at="2026-01-01T00:00:00Z"),),
+                notes=(
+                    Note(
+                        id=1, body="hi", author="bob", created_at="2026-01-01T00:00:00Z"
+                    ),
+                ),
             )
         ]
 
@@ -171,9 +181,15 @@ class FakeGitLabAdapter:
             author="ai-bot",
         )
 
-    def create_merge_request_comment(self, project: str, mr_iid: int, body: str) -> Note:
-        self._record("create_merge_request_comment", project=project, mr_iid=mr_iid, body=body)
-        return Note(id=99, body=body, author="ai-bot", created_at="2026-01-01T00:00:00Z")
+    def create_merge_request_comment(
+        self, project: str, mr_iid: int, body: str
+    ) -> Note:
+        self._record(
+            "create_merge_request_comment", project=project, mr_iid=mr_iid, body=body
+        )
+        return Note(
+            id=99, body=body, author="ai-bot", created_at="2026-01-01T00:00:00Z"
+        )
 
     def update_merge_request(
         self,
@@ -184,7 +200,10 @@ class FakeGitLabAdapter:
         description: str | None = None,
     ) -> MergeRequest:
         self._record(
-            "update_merge_request", project=project, mr_iid=mr_iid, title=title,
+            "update_merge_request",
+            project=project,
+            mr_iid=mr_iid,
+            title=title,
             description=description,
         )
         return MergeRequest(
@@ -200,9 +219,15 @@ class FakeGitLabAdapter:
         )
 
     def create_issue(self, project: str, title: str, description: str = "") -> Issue:
-        self._record("create_issue", project=project, title=title, description=description)
+        self._record(
+            "create_issue", project=project, title=title, description=description
+        )
         return Issue(
-            project=project, iid=2, title=title, description=description, state="opened",
+            project=project,
+            iid=2,
+            title=title,
+            description=description,
+            state="opened",
             author="ai-bot",
         )
 
@@ -215,7 +240,10 @@ class FakeGitLabAdapter:
         description: str | None = None,
     ) -> Issue:
         self._record(
-            "update_issue", project=project, issue_iid=issue_iid, title=title,
+            "update_issue",
+            project=project,
+            issue_iid=issue_iid,
+            title=title,
             description=description,
         )
         return Issue(

@@ -12,8 +12,8 @@ from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from gitlab_ai_platform.gitlab_adapter import GitLabRestAdapter
 from gitlab_ai_platform.adapter_mcp_server import TOOL_DESCRIPTIONS, create_server
+from gitlab_ai_platform.gitlab_adapter import GitLabRestAdapter
 
 _SECRET_TOKEN = "glpat-super-secret-should-never-leak"
 _BASE_URL = "https://gitlab.example.com"
@@ -53,7 +53,9 @@ class _FakeSession:
 
 def _build_server(responses: Sequence[_FakeResponse]) -> tuple[Any, _FakeSession]:
     session = _FakeSession(responses)
-    adapter = GitLabRestAdapter(_BASE_URL, _SECRET_TOKEN, session=session, max_retries=0)
+    adapter = GitLabRestAdapter(
+        _BASE_URL, _SECRET_TOKEN, session=session, max_retries=0
+    )
     return create_server(adapter), session
 
 

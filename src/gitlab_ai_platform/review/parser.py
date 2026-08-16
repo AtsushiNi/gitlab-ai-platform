@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from ..logging_ import get_logger
@@ -151,11 +150,13 @@ def _build_finding(item: Any, *, raw_text: str) -> Finding:
         )
     if not isinstance(rationale, str) or not rationale:
         raise ReviewOutputParseError(
-            "`findings`の`rationale`が空でない文字列ではありませんでした", raw_text=raw_text
+            "`findings`の`rationale`が空でない文字列ではありませんでした",
+            raw_text=raw_text,
         )
     if not isinstance(suggestion, str) or not suggestion:
         raise ReviewOutputParseError(
-            "`findings`の`suggestion`が空でない文字列ではありませんでした", raw_text=raw_text
+            "`findings`の`suggestion`が空でない文字列ではありませんでした",
+            raw_text=raw_text,
         )
 
     line = item.get("line")
@@ -167,7 +168,11 @@ def _build_finding(item: Any, *, raw_text: str) -> Finding:
         )
 
     return Finding(
-        severity=severity, file=file_path, line=line, rationale=rationale, suggestion=suggestion
+        severity=severity,
+        file=file_path,
+        line=line,
+        rationale=rationale,
+        suggestion=suggestion,
     )
 
 

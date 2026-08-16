@@ -107,7 +107,10 @@ class MrPoller:
                 "poller.cycle_completed",
                 # extraのキーは`logging.LogRecord`の予約属性(`created`はタイムスタンプ)と
                 # 衝突するとKeyErrorで例外になるため、"created_count"を使う
-                extra={"created_count": len(result.created), "error_count": len(result.errors)},
+                extra={
+                    "created_count": len(result.created),
+                    "error_count": len(result.errors),
+                },
             )
             if on_detected is not None:
                 for review in result.created:

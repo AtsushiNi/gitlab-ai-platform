@@ -21,6 +21,7 @@ import os
 import sys
 from pathlib import Path
 from types import TracebackType
+from typing import IO
 
 
 class AlreadyRunningError(RuntimeError):
@@ -32,7 +33,9 @@ class ProcessLock:
 
     def __init__(self, lock_path: Path | str) -> None:
         self._lock_path = Path(lock_path)
-        self._file: object | None = None
+        # CI整備(#4)でmypy導入時に判明: `object`型ではclose()呼び出しがattr-definedエラーになる
+        # ため、実際にファイルオブジェクトであることを表す`IO[str]`に修正(挙動に変更なし)
+        self._file: IO[str] | None = None
 
     def acquire(self) -> None:
         """ロックを取得する。既に別プロセスが保持していれば`AlreadyRunningError`を送出する。"""
@@ -63,7 +66,7 @@ class ProcessLock:
         _unlock(file)
         file.close()
 
-    def __enter__(self) -> "ProcessLock":
+    def __enter__(self) -> ProcessLock:
         self.acquire()
         return self
 
@@ -106,4 +109,4 @@ def _unlock(file) -> None:
         fcntl.flock(file.fileno(), fcntl.LOCK_UN)
 
 
-__all__ = ["ProcessLock", "AlreadyRunningError"]
+__all__ = ["AlreadyRunningError", "ProcessLock"]

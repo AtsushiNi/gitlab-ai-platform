@@ -9,10 +9,10 @@ from .protocol import WorkspaceManager
 from .types import WorktreeHandle
 
 __all__ = [
-    "WorkspaceManager",
+    "DiskLimitExceededError",
+    "GitCommandError",
     "GitWorkspaceManager",
     "WorkspaceError",
-    "GitCommandError",
-    "DiskLimitExceededError",
+    "WorkspaceManager",
     "WorktreeHandle",
 ]

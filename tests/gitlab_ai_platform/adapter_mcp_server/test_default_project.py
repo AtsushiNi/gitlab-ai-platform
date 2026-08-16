@@ -9,7 +9,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from gitlab_ai_platform.adapter_mcp_server.default_project import resolve_default_project
+from gitlab_ai_platform.adapter_mcp_server.default_project import (
+    resolve_default_project,
+)
 
 
 def _init_repo(tmp_path: Path, *, remote_url: str | None = None) -> Path:
@@ -27,13 +29,17 @@ def _init_repo(tmp_path: Path, *, remote_url: str | None = None) -> Path:
 
 
 def test_resolves_project_from_scp_style_ssh_remote_url(tmp_path: Path) -> None:
-    repo_path = _init_repo(tmp_path, remote_url="git@gitlab.example.com:group/project.git")
+    repo_path = _init_repo(
+        tmp_path, remote_url="git@gitlab.example.com:group/project.git"
+    )
 
     assert resolve_default_project(cwd=repo_path) == "group/project"
 
 
 def test_resolves_project_from_https_remote_url(tmp_path: Path) -> None:
-    repo_path = _init_repo(tmp_path, remote_url="https://gitlab.example.com/group/project.git")
+    repo_path = _init_repo(
+        tmp_path, remote_url="https://gitlab.example.com/group/project.git"
+    )
 
     assert resolve_default_project(cwd=repo_path) == "group/project"
 
@@ -47,7 +53,9 @@ def test_resolves_nested_subgroup_path(tmp_path: Path) -> None:
 
 
 def test_resolves_remote_url_without_dot_git_suffix(tmp_path: Path) -> None:
-    repo_path = _init_repo(tmp_path, remote_url="https://gitlab.example.com/group/project")
+    repo_path = _init_repo(
+        tmp_path, remote_url="https://gitlab.example.com/group/project"
+    )
 
     assert resolve_default_project(cwd=repo_path) == "group/project"
 

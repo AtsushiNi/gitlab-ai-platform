@@ -81,11 +81,11 @@ def get_logger(name: str) -> logging.Logger:
 
 
 __all__ = [
-    "setup_logging",
-    "get_logger",
+    "JsonFormatter",
     "execution_id_scope",
     "get_execution_id",
-    "set_execution_id",
+    "get_logger",
     "new_execution_id",
-    "JsonFormatter",
+    "set_execution_id",
+    "setup_logging",
 ]

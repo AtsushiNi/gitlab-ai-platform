@@ -78,7 +78,9 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
         runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
         store = SqliteStateStore(config.state_db_path)
         try:
-            run_watch_loop(adapter, workspace, runner, store, config, stop_event=stop_event)
+            run_watch_loop(
+                adapter, workspace, runner, store, config, stop_event=stop_event
+            )
         finally:
             store.close()
 
@@ -161,4 +163,4 @@ def _lock_path_for(state_db_path: str) -> Path:
     return Path(state_db_path).with_suffix(".lock")
 
 
-__all__ = ["run_watch", "run_watch_loop", "build_on_detected"]
+__all__ = ["build_on_detected", "run_watch", "run_watch_loop"]

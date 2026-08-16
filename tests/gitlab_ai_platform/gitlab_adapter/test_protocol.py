@@ -3,7 +3,6 @@ from collections.abc import Sequence
 from gitlab_ai_platform.gitlab_adapter import (
     Branch,
     CommitAction,
-    CommitActionType,
     Discussion,
     GitLabAdapter,
     GitLabReader,
@@ -98,10 +97,14 @@ class _FakeFullAdapter:
             author="alice",
         )
 
-    def get_merge_request_diffs(self, project: str, mr_iid: int) -> list[MergeRequestDiff]:
+    def get_merge_request_diffs(
+        self, project: str, mr_iid: int
+    ) -> list[MergeRequestDiff]:
         return []
 
-    def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
+    def list_merge_request_discussions(
+        self, project: str, mr_iid: int
+    ) -> list[Discussion]:
         return []
 
     def list_issues(
@@ -141,7 +144,9 @@ class _FakeFullAdapter:
     ) -> MergeRequest:
         return self.get_merge_request(project, 1)
 
-    def create_merge_request_comment(self, project: str, mr_iid: int, body: str) -> Note:
+    def create_merge_request_comment(
+        self, project: str, mr_iid: int, body: str
+    ) -> Note:
         return Note(id=1, body=body, author="ai-bot", created_at="2026-08-13T00:00:00Z")
 
     def update_merge_request(
@@ -182,10 +187,14 @@ class _FakeReaderOnly:
     def get_merge_request(self, project: str, mr_iid: int) -> MergeRequest:
         raise NotImplementedError
 
-    def get_merge_request_diffs(self, project: str, mr_iid: int) -> list[MergeRequestDiff]:
+    def get_merge_request_diffs(
+        self, project: str, mr_iid: int
+    ) -> list[MergeRequestDiff]:
         return []
 
-    def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
+    def list_merge_request_discussions(
+        self, project: str, mr_iid: int
+    ) -> list[Discussion]:
         return []
 
     def list_issues(

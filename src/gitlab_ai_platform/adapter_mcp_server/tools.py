@@ -39,7 +39,9 @@ from .serialization import to_jsonable
 # 1メソッド=1ファクトリ関数、というマッピングテーブルの型。
 # `factory(adapter, default_project)`が、その`adapter`に束縛されたMCPツール本体
 # (呼び出し可能オブジェクト)を返す。`default_project`は省略可(デフォルト`None`)。
-ToolFactory = Callable[[GitLabAdapter], Callable[..., Any]]
+# (CI整備 #4でmypy導入時に判明: #69でdefault_project引数が追加された際にこの型エイリアスの
+#  更新が漏れていた。各`_make_xxx`の実際のシグネチャに合わせて修正。実行時の挙動に変更なし)
+ToolFactory = Callable[[GitLabAdapter, str | None], Callable[..., Any]]
 
 
 def _resolve_project(project: str | None, default_project: str | None) -> str:
@@ -149,7 +151,9 @@ def _make_list_merge_request_discussions(
         resolved_project = _resolve_project(project, default_project)
         return [
             to_jsonable(discussion)
-            for discussion in adapter.list_merge_request_discussions(resolved_project, mr_iid)
+            for discussion in adapter.list_merge_request_discussions(
+                resolved_project, mr_iid
+            )
         ]
 
     return list_merge_request_discussions
@@ -166,7 +170,9 @@ def _make_list_issues(
         """指定プロジェクトのIssue一覧を取得する。projectを省略した場合、MCPサーバー起動時の
         カレントディレクトリのgit remoteから自動検出したデフォルトプロジェクトを使う。"""
         resolved_project = _resolve_project(project, default_project)
-        result = adapter.list_issues(resolved_project, labels=tuple(labels or ()), state=state)
+        result = adapter.list_issues(
+            resolved_project, labels=tuple(labels or ()), state=state
+        )
         return [to_jsonable(issue) for issue in result]
 
     return list_issues
@@ -246,7 +252,11 @@ def _make_create_merge_request(
         resolved_project = _resolve_project(project, default_project)
         return to_jsonable(
             adapter.create_merge_request(
-                resolved_project, source_branch, target_branch, title, description=description
+                resolved_project,
+                source_branch,
+                target_branch,
+                title,
+                description=description,
             )
         )
 
@@ -262,7 +272,9 @@ def _make_create_merge_request_comment(
         """MRにコメントを投稿する。projectを省略した場合、MCPサーバー起動時のカレント
         ディレクトリのgit remoteから自動検出したデフォルトプロジェクトを使う。"""
         resolved_project = _resolve_project(project, default_project)
-        return to_jsonable(adapter.create_merge_request_comment(resolved_project, mr_iid, body))
+        return to_jsonable(
+            adapter.create_merge_request_comment(resolved_project, mr_iid, body)
+        )
 
     return create_merge_request_comment
 
@@ -300,7 +312,9 @@ def _make_create_issue(
         """Issueを作成する。projectを省略した場合、MCPサーバー起動時のカレントディレクトリの
         git remoteから自動検出したデフォルトプロジェクトを使う。"""
         resolved_project = _resolve_project(project, default_project)
-        return to_jsonable(adapter.create_issue(resolved_project, title, description=description))
+        return to_jsonable(
+            adapter.create_issue(resolved_project, title, description=description)
+        )
 
     return create_issue
 
@@ -387,4 +401,4 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-__all__ = ["ToolFactory", "TOOL_FACTORIES", "TOOL_DESCRIPTIONS"]
+__all__ = ["TOOL_DESCRIPTIONS", "TOOL_FACTORIES", "ToolFactory"]

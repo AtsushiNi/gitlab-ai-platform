@@ -4,7 +4,12 @@ import pytest
 
 from gitlab_ai_platform.gitlab_adapter import GitLabApiError, MergeRequest
 from gitlab_ai_platform.poller import DetectedReview, MrPoller, PollError
-from gitlab_ai_platform.store import DuplicateReviewError, ReviewRecord, ReviewStatus, StateStoreError
+from gitlab_ai_platform.store import (
+    DuplicateReviewError,
+    ReviewRecord,
+    ReviewStatus,
+    StateStoreError,
+)
 
 _LABEL = "レビュー待ち"
 
@@ -77,7 +82,10 @@ class _FakeStateStore:
         self.find_calls.append(key)
         if key in self._records:
             return ReviewRecord(
-                project=project, mr_iid=mr_iid, commit_sha=commit_sha, status=ReviewStatus.PENDING
+                project=project,
+                mr_iid=mr_iid,
+                commit_sha=commit_sha,
+                status=ReviewStatus.PENDING,
             )
         return None
 
@@ -94,7 +102,9 @@ class _FakeStateStore:
         if key in self._create_side_effects:
             raise self._create_side_effects[key]
         self._records.add(key)
-        return ReviewRecord(project=project, mr_iid=mr_iid, commit_sha=commit_sha, status=status)
+        return ReviewRecord(
+            project=project, mr_iid=mr_iid, commit_sha=commit_sha, status=status
+        )
 
     def update_status(self, *args, **kwargs) -> ReviewRecord:
         raise NotImplementedError
@@ -111,7 +121,9 @@ def test_poll_once_tickets_unprocessed_mrs_across_multiple_projects():
         }
     )
     store = _FakeStateStore()
-    poller = MrPoller(adapter, store, ["group/project-a", "group/project-b"], review_label=_LABEL)
+    poller = MrPoller(
+        adapter, store, ["group/project-a", "group/project-b"], review_label=_LABEL
+    )
 
     result = poller.poll_once()
 
@@ -120,7 +132,10 @@ def test_poll_once_tickets_unprocessed_mrs_across_multiple_projects():
         DetectedReview(project="group/project-b", mr_iid=5, commit_sha="sha-b5"),
     }
     assert result.errors == ()
-    assert set(store.create_calls) == {("group/project-a", 1, "sha-a1"), ("group/project-b", 5, "sha-b5")}
+    assert set(store.create_calls) == {
+        ("group/project-a", 1, "sha-a1"),
+        ("group/project-b", 5, "sha-b5"),
+    }
 
 
 def test_poll_once_passes_review_label_to_adapter():
@@ -152,21 +167,31 @@ def test_poll_once_tickets_new_commit_sha_as_separate_record():
 
     result = poller.poll_once()
 
-    assert result.created == (DetectedReview(project="group/project", mr_iid=1, commit_sha="sha-2"),)
+    assert result.created == (
+        DetectedReview(project="group/project", mr_iid=1, commit_sha="sha-2"),
+    )
 
 
 def test_poll_once_continues_after_one_project_scan_fails():
     adapter = _FakeGitLabReader(
         {"group/project-b": [_mr("group/project-b", 2, "sha-b2")]},
-        fail_projects={"group/project-a": GitLabApiError("接続エラー", status_code=500)},
+        fail_projects={
+            "group/project-a": GitLabApiError("接続エラー", status_code=500)
+        },
     )
     store = _FakeStateStore()
-    poller = MrPoller(adapter, store, ["group/project-a", "group/project-b"], review_label=_LABEL)
+    poller = MrPoller(
+        adapter, store, ["group/project-a", "group/project-b"], review_label=_LABEL
+    )
 
     result = poller.poll_once()
 
-    assert result.created == (DetectedReview(project="group/project-b", mr_iid=2, commit_sha="sha-b2"),)
-    assert result.errors == (PollError(project="group/project-a", mr_iid=None, message="接続エラー"),)
+    assert result.created == (
+        DetectedReview(project="group/project-b", mr_iid=2, commit_sha="sha-b2"),
+    )
+    assert result.errors == (
+        PollError(project="group/project-a", mr_iid=None, message="接続エラー"),
+    )
 
 
 def test_poll_once_ignores_duplicate_review_error_from_concurrent_ticketing():
@@ -194,13 +219,17 @@ def test_poll_once_records_state_store_failure_and_continues():
         }
     )
     store = _FakeStateStore(
-        create_side_effects={("group/project", 1, "sha-1"): StateStoreError("DBロック中")}
+        create_side_effects={
+            ("group/project", 1, "sha-1"): StateStoreError("DBロック中")
+        }
     )
     poller = MrPoller(adapter, store, ["group/project"], review_label=_LABEL)
 
     result = poller.poll_once()
 
-    assert result.created == (DetectedReview(project="group/project", mr_iid=2, commit_sha="sha-2"),)
+    assert result.created == (
+        DetectedReview(project="group/project", mr_iid=2, commit_sha="sha-2"),
+    )
     assert result.errors == (
         PollError(project="group/project", mr_iid=1, message="DBロック中"),
     )

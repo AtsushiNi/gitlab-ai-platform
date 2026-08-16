@@ -25,7 +25,11 @@ def _result() -> ReviewResult:
                 suggestion="提案",
             ),
             Finding(
-                severity=Severity.MINOR, file="src/util.py", line=None, rationale="r2", suggestion="s2"
+                severity=Severity.MINOR,
+                file="src/util.py",
+                line=None,
+                rationale="r2",
+                suggestion="s2",
             ),
         ),
     )
@@ -103,7 +107,12 @@ def test_save_review_writes_input_prompt_verbatim(tmp_path):
     log_source.write_text("{}", encoding="utf-8")
 
     paths = save_review(
-        root, "group/project", 1, "sha1", _result(), input_prompt="the full prompt text",
+        root,
+        "group/project",
+        1,
+        "sha1",
+        _result(),
+        input_prompt="the full prompt text",
         run_log_path=log_source,
     )
 
@@ -147,7 +156,13 @@ def test_save_review_defaults_reviewed_at_to_now(tmp_path):
     before = datetime.now(UTC)
 
     save_review(
-        root, "group/project", 1, "sha1", _result(), input_prompt="prompt", run_log_path=log_source
+        root,
+        "group/project",
+        1,
+        "sha1",
+        _result(),
+        input_prompt="prompt",
+        run_log_path=log_source,
     )
 
     after = datetime.now(UTC)

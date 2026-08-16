@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from gitlab_ai_platform.gitlab_adapter.types import Discussion, MergeRequest, MergeRequestDiff, Note
+from gitlab_ai_platform.gitlab_adapter.types import (
+    Discussion,
+    MergeRequest,
+    MergeRequestDiff,
+    Note,
+)
 from gitlab_ai_platform.runner import ReviewContext
 
 
@@ -37,7 +42,12 @@ def review_context(merge_request: MergeRequest) -> ReviewContext:
         Discussion(
             id="d1",
             notes=(
-                Note(id=1, body="please add a test", author="bob", created_at="2026-01-01"),
+                Note(
+                    id=1,
+                    body="please add a test",
+                    author="bob",
+                    created_at="2026-01-01",
+                ),
                 Note(
                     id=2,
                     body="changed target branch",
@@ -48,4 +58,6 @@ def review_context(merge_request: MergeRequest) -> ReviewContext:
             ),
         ),
     )
-    return ReviewContext(merge_request=merge_request, diffs=diffs, discussions=discussions)
+    return ReviewContext(
+        merge_request=merge_request, diffs=diffs, discussions=discussions
+    )

@@ -47,7 +47,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # 起動時のカレントディレクトリのgit remoteから、project引数省略時のデフォルトを解決する
     # (#69)。解決できなくてもエラーにはせず、project未指定のツール呼び出し時にのみ失敗させる。
     default_project = resolve_default_project()
-    server = create_server(adapter, name=DEFAULT_SERVER_NAME, default_project=default_project)
+    server = create_server(
+        adapter, name=DEFAULT_SERVER_NAME, default_project=default_project
+    )
 
     _logger.info(
         "adapter_mcp_server.start",
@@ -62,7 +64,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="gitlab_ai_platform.adapter_mcp_server",
         description="GitLab AdapterをラップしたMCPサーバー(stdio)を起動する。",
     )
-    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="config.tomlのパス")
+    parser.add_argument(
+        "--config", default=DEFAULT_CONFIG_PATH, help="config.tomlのパス"
+    )
     parser.add_argument("--env", default=DEFAULT_ENV_PATH, help=".envのパス")
     parser.add_argument("--log-dir", default=None, help="ログ出力先ディレクトリ")
     return parser

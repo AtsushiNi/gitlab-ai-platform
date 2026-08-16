@@ -1,4 +1,8 @@
-from gitlab_ai_platform.store import DuplicateReviewError, RecordNotFoundError, StateStoreError
+from gitlab_ai_platform.store import (
+    DuplicateReviewError,
+    RecordNotFoundError,
+    StateStoreError,
+)
 
 
 def test_duplicate_review_error_is_a_state_store_error():

@@ -34,7 +34,11 @@ from typing import Any
 from .._paths import slugify_project
 from ..gitlab_adapter.types import MergeRequest
 from ..logging_ import get_logger
-from .errors import ClaudeCodeNotFoundError, ClaudeCodeOutputError, ClaudeCodeTimeoutError
+from .errors import (
+    ClaudeCodeNotFoundError,
+    ClaudeCodeOutputError,
+    ClaudeCodeTimeoutError,
+)
 from .types import ReviewContext, RunResult
 
 _logger = get_logger(__name__)
@@ -189,7 +193,11 @@ class SubprocessClaudeCodeRunner:
         stdout: str,
         stderr: str,
     ) -> Path:
-        log_dir = self._log_dir / slugify_project(merge_request.project) / f"mr-{merge_request.iid}"
+        log_dir = (
+            self._log_dir
+            / slugify_project(merge_request.project)
+            / f"mr-{merge_request.iid}"
+        )
         log_dir.mkdir(parents=True, exist_ok=True)
         sha_prefix = (merge_request.sha or "unknown")[:12]
         timestamp = started_at.strftime("%Y%m%dT%H%M%S%fZ")
@@ -255,7 +263,10 @@ def build_prompt(instructions: str, context: ReviewContext) -> str:
         lines += ["", "Description:", mr.description]
 
     non_system_notes = [
-        note for discussion in context.discussions for note in discussion.notes if not note.system
+        note
+        for discussion in context.discussions
+        for note in discussion.notes
+        if not note.system
     ]
     if non_system_notes:
         lines += ["", "## Comments"]

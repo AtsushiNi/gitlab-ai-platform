@@ -18,7 +18,9 @@ _SEVERITY_LABELS = {
 }
 
 
-def render_markdown(result: ReviewResult, *, project: str, mr_iid: int, sha: str) -> str:
+def render_markdown(
+    result: ReviewResult, *, project: str, mr_iid: int, sha: str
+) -> str:
     """`result`を`reviews/<project>/<mr_iid>/<sha>/result.md`向けのMarkdown文字列に整形する。"""
     lines = [
         f"# レビュー結果: {project} !{mr_iid} ({sha[:12]})",
@@ -44,7 +46,9 @@ def render_markdown(result: ReviewResult, *, project: str, mr_iid: int, sha: str
 
 
 def _render_finding(finding: Finding) -> list[str]:
-    location = f"{finding.file}:{finding.line}" if finding.line is not None else finding.file
+    location = (
+        f"{finding.file}:{finding.line}" if finding.line is not None else finding.file
+    )
     return [
         f"### [{_SEVERITY_LABELS[finding.severity]}] {location}",
         "",

@@ -76,4 +76,4 @@ class IndexEntry:
     minor_count: int
 
 
-__all__ = ["Severity", "Finding", "ReviewResult", "ReviewPaths", "IndexEntry"]
+__all__ = ["Finding", "IndexEntry", "ReviewPaths", "ReviewResult", "Severity"]

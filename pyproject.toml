@@ -11,6 +11,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.16",
+    "mypy>=1.10",
 ]
 
 [project.scripts]
@@ -26,3 +28,30 @@ packages = ["src/gitlab_ai_platform"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+# フォーマッタのline-lengthはPythonエコシステムの標準的な既定値(88)のまま。
+target-version = "py311"
+
+[tool.ruff.lint]
+# M0-4(#4)でCI導入時に選定。ruffのフル既定ルール集合(400以上)は今の開発段階には過剰なため、
+# 実害の大きいバグ検出寄りのカテゴリに絞って有効化する。
+# E/W: pycodestyle, F: pyflakes(未使用importなど), I: isort(import整形),
+# UP: pyupgrade(現行Pythonバージョンへの書き方統一), B: flake8-bugbear(バグになりやすいパターン)
+select = ["E", "F", "I", "UP", "B"]
+# E501(行長超過)は無視する。CLAUDE.mdの規約でソースコメントは日本語必須であり、
+# 説明的な日本語コメント・docstring・プロンプトテンプレート文字列は88文字を自然に超える。
+# ruff format側がコード自体の折り返しは担うため、コメント・文字列の行長までlintで縛らない。
+#
+# UP042(`class X(str, Enum)` → `enum.StrEnum`)も無視する。`CommitActionType`/`Severity`/
+# `ReviewStatus`が該当するが、`StrEnum`は`__str__`の返り値やJSON変換時の型解決が
+# `(str, Enum)`と微妙に異なり、シリアライズ結果(`docs/specs/review-output.md`等が規定する
+# 出力フォーマット)に影響しうる。挙動を変えない範囲でのCI整備(#4)の対象外とし、
+# 移行するなら別Issueで専用テストとともに行う。
+ignore = ["E501", "UP042"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true

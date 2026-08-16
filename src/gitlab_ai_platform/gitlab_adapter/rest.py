@@ -100,13 +100,17 @@ class GitLabRestAdapter:
         )
         return _map_merge_request(project, data)
 
-    def get_merge_request_diffs(self, project: str, mr_iid: int) -> list[MergeRequestDiff]:
+    def get_merge_request_diffs(
+        self, project: str, mr_iid: int
+    ) -> list[MergeRequestDiff]:
         items = self._paginated_get(
             f"/projects/{_encode_project(project)}/merge_requests/{mr_iid}/diffs"
         )
         return [_map_diff(item) for item in items]
 
-    def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
+    def list_merge_request_discussions(
+        self, project: str, mr_iid: int
+    ) -> list[Discussion]:
         items = self._paginated_get(
             f"/projects/{_encode_project(project)}/merge_requests/{mr_iid}/discussions"
         )
@@ -150,12 +154,20 @@ class GitLabRestAdapter:
             branch = _map_branch(data)
         except GitLabApiError:
             self._record_write(
-                "create_branch", status="error", project=project, branch_name=branch_name, ref=ref
+                "create_branch",
+                status="error",
+                project=project,
+                branch_name=branch_name,
+                ref=ref,
             )
             raise
 
         self._record_write(
-            "create_branch", status="success", project=project, branch_name=branch_name, ref=ref
+            "create_branch",
+            status="success",
+            project=project,
+            branch_name=branch_name,
+            ref=ref,
         )
         return branch
 
@@ -170,7 +182,10 @@ class GitLabRestAdapter:
             self._reject_if_branch_protected(project, branch)
         except ProtectedBranchError:
             self._record_write(
-                "push_file_changes", status="rejected_protected_branch", project=project, branch=branch
+                "push_file_changes",
+                status="rejected_protected_branch",
+                project=project,
+                branch=branch,
             )
             raise
         except GitLabApiError:
@@ -269,7 +284,9 @@ class GitLabRestAdapter:
         )
         return mr
 
-    def create_merge_request_comment(self, project: str, mr_iid: int, body: str) -> Note:
+    def create_merge_request_comment(
+        self, project: str, mr_iid: int, body: str
+    ) -> Note:
         try:
             data = self._request_json(
                 "POST",
@@ -279,7 +296,10 @@ class GitLabRestAdapter:
             note = _map_note(data)
         except GitLabApiError:
             self._record_write(
-                "create_merge_request_comment", status="error", project=project, mr_iid=mr_iid
+                "create_merge_request_comment",
+                status="error",
+                project=project,
+                mr_iid=mr_iid,
             )
             raise
 
@@ -372,11 +392,16 @@ class GitLabRestAdapter:
         `extra`として乗せる。commit本文やコメント本文は含めず、対象を特定できる
         識別子のみを記録する。
         """
-        _logger.info("gitlab_adapter.write", extra={"operation": operation, "status": status, **fields})
+        _logger.info(
+            "gitlab_adapter.write",
+            extra={"operation": operation, "status": status, **fields},
+        )
 
     # -- 内部ヘルパー ----------------------------------------------------------
 
-    def _paginated_get(self, path: str, *, params: dict[str, Any] | None = None) -> list[Any]:
+    def _paginated_get(
+        self, path: str, *, params: dict[str, Any] | None = None
+    ) -> list[Any]:
         items: list[Any] = []
         page = 1
         # ページ間でリトライ予算を共有する(ページ数が多いほどリトライ回数が
@@ -438,11 +463,15 @@ class GitLabRestAdapter:
                 # 副作用のあるPOST等と同じ理由でリトライする(接続断がリクエスト送信後に
                 # 起きたのか送信前かは判別できず、非冪等操作の再送は重複実行の危険がある)
                 if method == "GET" and budget[0] > 0:
-                    self._sleep(_exponential_backoff_seconds(attempt, self._backoff_seconds))
+                    self._sleep(
+                        _exponential_backoff_seconds(attempt, self._backoff_seconds)
+                    )
                     budget[0] -= 1
                     attempt += 1
                     continue
-                raise GitLabApiError(f"GitLab APIへの接続に失敗しました: {exc}") from exc
+                raise GitLabApiError(
+                    f"GitLab APIへの接続に失敗しました: {exc}"
+                ) from exc
 
             if response.status_code < 400:
                 return response
@@ -455,7 +484,9 @@ class GitLabRestAdapter:
                 retryable = False
 
             if retryable and budget[0] > 0:
-                self._sleep(_retry_wait_seconds(response, attempt, self._backoff_seconds))
+                self._sleep(
+                    _retry_wait_seconds(response, attempt, self._backoff_seconds)
+                )
                 budget[0] -= 1
                 attempt += 1
                 continue
@@ -595,7 +626,10 @@ def _map_branch(data: dict[str, Any]) -> Branch:
 
 
 def _map_commit_action(action: CommitAction) -> dict[str, Any]:
-    data: dict[str, Any] = {"action": action.action.value, "file_path": action.file_path}
+    data: dict[str, Any] = {
+        "action": action.action.value,
+        "file_path": action.file_path,
+    }
     if action.content is not None:
         data["content"] = action.content
     return data

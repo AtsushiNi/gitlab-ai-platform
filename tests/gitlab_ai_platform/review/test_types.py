@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from gitlab_ai_platform.review import Finding, IndexEntry, ReviewPaths, ReviewResult, Severity
+from gitlab_ai_platform.review import (
+    Finding,
+    IndexEntry,
+    ReviewPaths,
+    ReviewResult,
+    Severity,
+)
 
 
 def test_severity_values():
@@ -15,7 +21,11 @@ def test_severity_values():
 
 def test_finding_is_frozen():
     finding = Finding(
-        severity=Severity.MAJOR, file="src/app.py", line=10, rationale="r", suggestion="s"
+        severity=Severity.MAJOR,
+        file="src/app.py",
+        line=10,
+        rationale="r",
+        suggestion="s",
     )
 
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -24,7 +34,11 @@ def test_finding_is_frozen():
 
 def test_finding_allows_line_none():
     finding = Finding(
-        severity=Severity.MINOR, file="src/app.py", line=None, rationale="r", suggestion="s"
+        severity=Severity.MINOR,
+        file="src/app.py",
+        line=None,
+        rationale="r",
+        suggestion="s",
     )
 
     assert finding.line is None

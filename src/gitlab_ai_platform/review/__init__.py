@@ -11,17 +11,17 @@ from .storage import save_review
 from .types import Finding, IndexEntry, ReviewPaths, ReviewResult, Severity
 
 __all__ = [
-    "build_review_instructions",
-    "parse_review_output",
-    "render_markdown",
-    "save_review",
-    "append_entry",
-    "read_index",
-    "Severity",
     "Finding",
-    "ReviewResult",
-    "ReviewPaths",
     "IndexEntry",
     "ReviewError",
     "ReviewOutputParseError",
+    "ReviewPaths",
+    "ReviewResult",
+    "Severity",
+    "append_entry",
+    "build_review_instructions",
+    "parse_review_output",
+    "read_index",
+    "render_markdown",
+    "save_review",
 ]

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from gitlab_ai_platform.gitlab_adapter.types import CommitActionType
 from gitlab_ai_platform.adapter_mcp_server.tools import TOOL_FACTORIES
+from gitlab_ai_platform.gitlab_adapter.types import CommitActionType
 
 from .conftest import FakeGitLabAdapter
 
@@ -42,13 +42,18 @@ def test_list_merge_requests_delegates_and_converts_result(
     assert result[0]["labels"] == ["bug"]  # tupleがJSON安全なlistに変換されている
 
 
-def test_list_merge_requests_defaults_labels_to_empty(fake_adapter: FakeGitLabAdapter) -> None:
+def test_list_merge_requests_defaults_labels_to_empty(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
     tool = TOOL_FACTORIES["list_merge_requests"](fake_adapter)
 
     tool(project="group/project")
 
     assert fake_adapter.calls == [
-        ("list_merge_requests", {"project": "group/project", "labels": (), "state": "opened"})
+        (
+            "list_merge_requests",
+            {"project": "group/project", "labels": (), "state": "opened"},
+        )
     ]
 
 
@@ -161,7 +166,10 @@ def test_create_merge_request_delegates_with_default_description(
     tool = TOOL_FACTORIES["create_merge_request"](fake_adapter)
 
     result = tool(
-        project="group/project", source_branch="feature/x", target_branch="main", title="t"
+        project="group/project",
+        source_branch="feature/x",
+        target_branch="main",
+        title="t",
     )
 
     assert fake_adapter.calls == [
@@ -179,7 +187,9 @@ def test_create_merge_request_delegates_with_default_description(
     assert result["title"] == "t"
 
 
-def test_create_merge_request_comment_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+def test_create_merge_request_comment_delegates(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
     tool = TOOL_FACTORIES["create_merge_request_comment"](fake_adapter)
 
     result = tool(project="group/project", mr_iid=5, body="LGTM")
@@ -199,13 +209,18 @@ def test_create_merge_request_comment_delegates(fake_adapter: FakeGitLabAdapter)
     }
 
 
-def test_list_issues_delegates_and_converts_result(fake_adapter: FakeGitLabAdapter) -> None:
+def test_list_issues_delegates_and_converts_result(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
     tool = TOOL_FACTORIES["list_issues"](fake_adapter)
 
     result = tool(project="group/project", labels=["bug"], state="opened")
 
     assert fake_adapter.calls == [
-        ("list_issues", {"project": "group/project", "labels": ("bug",), "state": "opened"})
+        (
+            "list_issues",
+            {"project": "group/project", "labels": ("bug",), "state": "opened"},
+        )
     ]
     assert result[0]["project"] == "group/project"
     assert result[0]["labels"] == ["bug"]
@@ -216,7 +231,9 @@ def test_get_issue_delegates(fake_adapter: FakeGitLabAdapter) -> None:
 
     result = tool(project="group/project", issue_iid=5)
 
-    assert fake_adapter.calls == [("get_issue", {"project": "group/project", "issue_iid": 5})]
+    assert fake_adapter.calls == [
+        ("get_issue", {"project": "group/project", "issue_iid": 5})
+    ]
     assert result["iid"] == 5
 
 
@@ -230,7 +247,12 @@ def test_update_merge_request_delegates_and_does_not_expose_state_event(
     assert fake_adapter.calls == [
         (
             "update_merge_request",
-            {"project": "group/project", "mr_iid": 9, "title": None, "description": "new desc"},
+            {
+                "project": "group/project",
+                "mr_iid": 9,
+                "title": None,
+                "description": "new desc",
+            },
         )
     ]
     assert result["description"] == "new desc"
@@ -262,7 +284,12 @@ def test_update_issue_delegates_and_does_not_expose_state_event(
     assert fake_adapter.calls == [
         (
             "update_issue",
-            {"project": "group/project", "issue_iid": 3, "title": "updated title", "description": None},
+            {
+                "project": "group/project",
+                "issue_iid": 3,
+                "title": "updated title",
+                "description": None,
+            },
         )
     ]
     assert result["title"] == "updated title"
@@ -315,7 +342,9 @@ def test_create_merge_request_falls_back_to_default_project_when_omitted(
     assert fake_adapter.calls[0][1]["project"] == "group/default-project"
 
 
-def test_get_version_ignores_default_project_argument(fake_adapter: FakeGitLabAdapter) -> None:
+def test_get_version_ignores_default_project_argument(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
     # get_versionはprojectを取らないが、他のファクトリと同じ`(adapter, default_project)`の
     # 呼び出し規約(server.pyのcreate_server)を満たせることを確認する
     tool = TOOL_FACTORIES["get_version"](fake_adapter, "group/default-project")

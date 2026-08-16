@@ -29,4 +29,4 @@ def deslugify_project(slug: str) -> str:
     return unquote(slug)
 
 
-__all__ = ["slugify_project", "deslugify_project"]
+__all__ = ["deslugify_project", "slugify_project"]

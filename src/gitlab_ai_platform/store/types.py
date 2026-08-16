@@ -33,4 +33,4 @@ class ReviewRecord:
     result_path: str | None = None
 
 
-__all__ = ["ReviewStatus", "ReviewRecord"]
+__all__ = ["ReviewRecord", "ReviewStatus"]

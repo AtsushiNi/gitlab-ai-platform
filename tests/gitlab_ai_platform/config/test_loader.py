@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from gitlab_ai_platform.config import ConfigError, GITLAB_TOKEN_ENV_KEY, load_config
+from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY, ConfigError, load_config
 from gitlab_ai_platform.config.loader import parse_env_file
 
 VALID_CONFIG_TOML = """
@@ -94,7 +94,9 @@ def test_load_config_prefers_real_env_var_over_dotenv_file(tmp_path, monkeypatch
     assert config.gitlab_token == "from-real-env"
 
 
-def test_load_config_applies_defaults_when_optional_sections_missing(tmp_path, monkeypatch):
+def test_load_config_applies_defaults_when_optional_sections_missing(
+    tmp_path, monkeypatch
+):
     config_path = _write(
         tmp_path / "config.toml",
         """
@@ -118,7 +120,9 @@ def test_load_config_applies_defaults_when_optional_sections_missing(tmp_path, m
     assert config.state_db_path == "state.db"
 
 
-def test_load_config_raises_without_leaking_token_when_other_fields_invalid(tmp_path, monkeypatch):
+def test_load_config_raises_without_leaking_token_when_other_fields_invalid(
+    tmp_path, monkeypatch
+):
     config_path = _write(
         tmp_path / "config.toml",
         """
@@ -148,5 +152,6 @@ def test_load_config_raises_when_config_file_missing(tmp_path, monkeypatch):
 
     with pytest.raises(ConfigError):
         load_config(
-            config_path=tmp_path / "missing-config.toml", env_path=tmp_path / "missing.env"
+            config_path=tmp_path / "missing-config.toml",
+            env_path=tmp_path / "missing.env",
         )

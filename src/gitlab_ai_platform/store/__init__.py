@@ -8,11 +8,11 @@ from .sqlite import SqliteStateStore
 from .types import ReviewRecord, ReviewStatus
 
 __all__ = [
-    "StateStore",
-    "SqliteStateStore",
-    "StateStoreError",
     "DuplicateReviewError",
     "RecordNotFoundError",
     "ReviewRecord",
     "ReviewStatus",
+    "SqliteStateStore",
+    "StateStore",
+    "StateStoreError",
 ]

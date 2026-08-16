@@ -66,7 +66,9 @@ class GitWorkspaceManager:
         self._clone_url_for = clone_url_for
         self._max_disk_bytes = max_disk_bytes
         self._git_config: tuple[tuple[str, str], ...] = tuple(
-            git_config.items() if isinstance(git_config, Mapping) else (git_config or ())
+            git_config.items()
+            if isinstance(git_config, Mapping)
+            else (git_config or ())
         )
         self._run = run
 
@@ -86,7 +88,9 @@ class GitWorkspaceManager:
 
         # 新規clone直後でも、clone完了からこの時点までにpushされた分を取りこぼさないよう
         # 常にfetchする。既存bare repoの場合も含め、常にrefs/remotes/origin/*のみを更新する
-        self._run_git(["fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], cwd=bare_path)
+        self._run_git(
+            ["fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], cwd=bare_path
+        )
         # クラッシュ等でworktreeディレクトリだけが消えた場合の自己復旧(Spike S-3 §5)。
         # 以降の worktree add で「既に登録済み」エラーになるのを防ぐ
         self._run_git(["worktree", "prune"], cwd=bare_path)
@@ -103,7 +107,14 @@ class GitWorkspaceManager:
             self._ensure_disk_budget()
             worktree_path.parent.mkdir(parents=True, exist_ok=True)
             self._run_git(
-                ["worktree", "add", "-B", branch_name, str(worktree_path), resolved_ref],
+                [
+                    "worktree",
+                    "add",
+                    "-B",
+                    branch_name,
+                    str(worktree_path),
+                    resolved_ref,
+                ],
                 cwd=bare_path,
             )
             # GCのLRU判定に使う最終利用時刻を更新する
@@ -111,7 +122,11 @@ class GitWorkspaceManager:
 
         sha = self._run_git(["rev-parse", "HEAD"], cwd=worktree_path).strip()
         return WorktreeHandle(
-            project=project, mr_iid=mr_iid, path=worktree_path, branch=branch_name, sha=sha
+            project=project,
+            mr_iid=mr_iid,
+            path=worktree_path,
+            branch=branch_name,
+            sha=sha,
         )
 
     def discard(self, project: str, mr_iid: int) -> None:
@@ -149,7 +164,9 @@ class GitWorkspaceManager:
 
         if path.exists():
             if bare_path.exists():
-                self._run_git(["worktree", "remove", "--force", str(path)], cwd=bare_path)
+                self._run_git(
+                    ["worktree", "remove", "--force", str(path)], cwd=bare_path
+                )
             else:
                 shutil.rmtree(path)
 
@@ -192,7 +209,14 @@ class GitWorkspaceManager:
         # このプローブだけ効かず、無関係な失敗を「refが存在しない」と誤解釈しないため)
         remote_ref = f"refs/remotes/origin/{ref}"
         probe = self._run(
-            ["git", *self._config_args(), "rev-parse", "--verify", "--quiet", remote_ref],
+            [
+                "git",
+                *self._config_args(),
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                remote_ref,
+            ],
             cwd=str(bare_path),
             capture_output=True,
             text=True,
@@ -215,9 +239,7 @@ class GitWorkspaceManager:
 
     def _run_git(self, args: list[str], *, cwd: Path) -> str:
         command = ["git", *self._config_args(), *args]
-        result = self._run(
-            command, cwd=str(cwd), capture_output=True, text=True
-        )
+        result = self._run(command, cwd=str(cwd), capture_output=True, text=True)
         if result.returncode != 0:
             raise GitCommandError(
                 f"gitコマンドが失敗しました: {' '.join(args)}",

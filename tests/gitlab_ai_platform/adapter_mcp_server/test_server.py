@@ -18,8 +18,8 @@ import asyncio
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from gitlab_ai_platform.gitlab_adapter import GitLabReader, GitLabWriter
 from gitlab_ai_platform.adapter_mcp_server import ALLOWED_TOOL_NAMES, create_server
+from gitlab_ai_platform.gitlab_adapter import GitLabReader, GitLabWriter
 
 from .conftest import FakeGitLabAdapter
 

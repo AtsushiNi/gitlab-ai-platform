@@ -56,7 +56,9 @@ _logger = get_logger(__name__)
 # (`references/spike-S3-git-worktree-windows.md` §8.1)。トークンの値そのものはこの文字列には
 # 含めず、環境変数名だけを埋め込む(実際の値は`build_workspace_manager`がsubprocessの
 # 環境変数として注入する)。`!`で始まる値はgitがシェル経由で実行する
-_CREDENTIAL_HELPER_TEMPLATE = '!f() {{ echo username=oauth2; echo "password=${var}"; }}; f'
+_CREDENTIAL_HELPER_TEMPLATE = (
+    '!f() {{ echo username=oauth2; echo "password=${var}"; }}; f'
+)
 
 
 @dataclass(frozen=True)
@@ -144,7 +146,9 @@ def execute_review(
     # 3つとも独立したGitLab REST呼び出しなので、CLIの主用途(デバッグ時に繰り返し実行する)
     # で毎回の待ち時間を減らすため並列に取得する(逐次だと3回分のネットワーク往復が積み上がる)
     with ThreadPoolExecutor(max_workers=3) as executor:
-        merge_request_future = executor.submit(adapter.get_merge_request, project, mr_iid)
+        merge_request_future = executor.submit(
+            adapter.get_merge_request, project, mr_iid
+        )
         diffs_future = executor.submit(adapter.get_merge_request_diffs, project, mr_iid)
         discussions_future = executor.submit(
             adapter.list_merge_request_discussions, project, mr_iid
@@ -164,7 +168,9 @@ def execute_review(
         )
         instructions = build_review_instructions()
         resolved_timeout = (
-            timeout_seconds if timeout_seconds is not None else config.runner_timeout_seconds
+            timeout_seconds
+            if timeout_seconds is not None
+            else config.runner_timeout_seconds
         )
 
         run_result = runner.run(
@@ -265,9 +271,17 @@ def build_workspace_manager(config: Config) -> GitWorkspaceManager:
         # あれば)を一旦クリアしてから、PAT供給用のものだけを設定する。gitは
         # credential.helperを複数個「追加」していく仕組みのため、クリアしないと
         # 既存の設定が先に応答してPATが使われない可能性がある
-        git_config=(("credential.helper", ""), ("credential.helper", _credential_helper())),
+        git_config=(
+            ("credential.helper", ""),
+            ("credential.helper", _credential_helper()),
+        ),
         run=run_with_token,
     )
 
 
-__all__ = ["SingleRunResult", "run_single_review", "execute_review", "build_workspace_manager"]
+__all__ = [
+    "SingleRunResult",
+    "build_workspace_manager",
+    "execute_review",
+    "run_single_review",
+]
