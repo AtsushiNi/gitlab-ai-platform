@@ -67,7 +67,7 @@ CLAUDE.mdの「次に着手すべきIssueはGitHub Projectsの着手順フィー
 | [#11](https://github.com/AtsushiNi/gitlab-ai-platform/issues/11) | D-7 セットアップ手順書 (`docs/operations/setup-windows.md`) | 完了 |
 | [#12](https://github.com/AtsushiNi/gitlab-ai-platform/issues/12) | D-8 設定リファレンス (`docs/operations/configuration.md`) | 完了 |
 | [#13](https://github.com/AtsushiNi/gitlab-ai-platform/issues/13) | D-9 セキュリティドキュメント (`docs/operations/security.md`) | 完了 |
-| [#14](https://github.com/AtsushiNi/gitlab-ai-platform/issues/14) | D-10 運用・トラブルシューティングガイド (`docs/operations/troubleshooting.md`) | 未着手 |
+| [#14](https://github.com/AtsushiNi/gitlab-ai-platform/issues/14) | D-10 運用・トラブルシューティングガイド (`docs/operations/troubleshooting.md`) | 完了 |
 | [#15](https://github.com/AtsushiNi/gitlab-ai-platform/issues/15) | D-11 ロードマップとIssue対応表の維持 (`docs/roadmap.md`、本ファイル) | 完了(本PRでクローズ) |
 | [#16](https://github.com/AtsushiNi/gitlab-ai-platform/issues/16) | D-12 ドキュメントのCI | 未着手 |
 
