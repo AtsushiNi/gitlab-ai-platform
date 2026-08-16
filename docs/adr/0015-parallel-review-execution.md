@@ -1,4 +1,4 @@
-# ADR-0014: 並列レビュー実行の設計
+# ADR-0015: 並列レビュー実行の設計
 
 - Issue: [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1)
 - 状態: 決定

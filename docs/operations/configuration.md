@@ -52,7 +52,7 @@
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
 | `interval_seconds` | `60` | int(正の整数) | 省略可 | `MrPoller.run(interval_seconds=...)`のポーリング間隔秒。**現時点では未配線(M1-11で使用予定)** |
-| `max_parallel` | `5` | int(正の整数) | 省略可 | `watch`サブコマンドが検出したMRを並行実行する際のワーカースレッド数の上限(M2-1、[specs/cli.md](../specs/cli.md)、[ADR-0014](../adr/0014-parallel-review-execution.md))。`review`単発実行では使われない |
+| `max_parallel` | `5` | int(正の整数) | 省略可 | `watch`サブコマンドが検出したMRを並行実行する際のワーカースレッド数の上限(M2-1、[specs/cli.md](../specs/cli.md)、[ADR-0015](../adr/0015-parallel-review-execution.md))。`review`単発実行では使われない |
 
 ### `[review]`
 

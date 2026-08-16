@@ -179,7 +179,7 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
   「Windows/Linuxの分担」により、M1〜M2は人間の端末(Windows)上で完結させる方針であり、
   プロセス分離が要る無人実行はM3以降のLinux/Docker移行後のスコープ。Workspace
   Manager・State Store・Reviewの索引書き込みは、project単位のロック・`RLock`・
-  モジュール内`Lock`でそれぞれ並行アクセスに対して安全にした([ADR-0014](adr/0014-parallel-review-execution.md)、
+  モジュール内`Lock`でそれぞれ並行アクセスに対して安全にした([ADR-0015](adr/0015-parallel-review-execution.md)、
   M2-1で正式化)
 
 ## 関連ドキュメント

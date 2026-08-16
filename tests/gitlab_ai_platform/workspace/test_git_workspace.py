@@ -188,7 +188,7 @@ def test_prepare_enforces_disk_budget_when_updating_existing_worktree(
         tight_manager.prepare("group/project", 1, "feature-a")
 
 
-# -- 並列実行(M2-1、ADR-0014) -----------------------------------------------------
+# -- 並列実行(M2-1、ADR-0015) -----------------------------------------------------
 
 
 def test_prepare_serializes_same_project_but_allows_different_projects_to_overlap(
@@ -251,7 +251,7 @@ def test_collect_garbage_skips_project_whose_lock_is_held_elsewhere(
     tmp_path, origin_repo
 ):
     # GC(collect_garbage)は、他スレッドが操作中(ロック取得できない)projectを
-    # ブロッキング待ちせずスキップする設計(デッドロック回避、ADR-0014)。ロックを
+    # ブロッキング待ちせずスキップする設計(デッドロック回避、ADR-0015)。ロックを
     # 保持したままの状態を模擬し、より古いworktreeでも操作中なら退避対象から外れ、
     # 次点(操作中でない方)が退避されることを確認する。
     # projectロックはRLock(同一スレッドからの再入を許す、同一project内の別MRを退避する

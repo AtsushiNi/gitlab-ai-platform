@@ -22,7 +22,7 @@
   `credential.helper`/`core.sshCommand`等を注入する(Spike S-3 §8)。
 
 並列レビュー実行(M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
-`docs/adr/0014-parallel-review-execution.md`)以降、`GitWorkspaceManager`は複数のワーカー
+`docs/adr/0015-parallel-review-execution.md`)以降、`GitWorkspaceManager`は複数のワーカー
 スレッドから同時に呼ばれる。project単位のロック(`_project_lock`)で以下を守る:
 
 - 同一project(=同一bare repo)への`clone`/`fetch`/`worktree prune`/`worktree add`/
@@ -35,7 +35,7 @@
 - GC(`collect_garbage`/`_ensure_disk_budget`)は退避対象のprojectロックを
   `acquire(blocking=False)`で試みる。他スレッドが操作中(ロック取得できない)候補は
   スキップして次に古いものを試す。ブロッキング待ちをしないのは、A→B, B→Aのような
-  ロック待ちの循環(デッドロック)を構造的に起こさないため(詳細はADR-0014参照)
+  ロック待ちの循環(デッドロック)を構造的に起こさないため(詳細はADR-0015参照)
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class GitWorkspaceManager:
         )
         self._run = run
         # project(bare repo)単位のロック。同一projectへのgit操作(clone/fetch/worktree
-        # add/reset等)が複数スレッドから同時に走るのを防ぐ(M2-1、ADR-0014)。ロック自体の
+        # add/reset等)が複数スレッドから同時に走るのを防ぐ(M2-1、ADR-0015)。ロック自体の
         # 生成をスレッドセーフにするための guard を別途持つ。
         # RLock(再入可能)にしているのは、prepare中のディスク上限チェック(GC)が同一project
         # 内の別MR(=同じロック)を退避する正当なケースを許すため(同一スレッドからの再入は
@@ -123,7 +123,7 @@ class GitWorkspaceManager:
             # ブロッキング待ちをしない: 他スレッドがこのprojectを操作中(prepare/discard
             # 実行中)なら安全のため退避をスキップし、次に古い候補を試す。ブロッキングで
             # 待つと「自分のprojectロックを保持したままGC中に他projectのロック待ちをする」
-            # 別スレッドと循環待ち(デッドロック)になりうるため(ADR-0014参照)
+            # 別スレッドと循環待ち(デッドロック)になりうるため(ADR-0015参照)
             if not lock.acquire(blocking=False):
                 continue
             try:

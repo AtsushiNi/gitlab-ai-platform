@@ -6,7 +6,7 @@
 壊れても直前までの行は読める)。
 
 並列レビュー実行(M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
-`docs/adr/0014-parallel-review-execution.md`)以降、複数のワーカースレッドが同じ`index.jsonl`に
+`docs/adr/0015-parallel-review-execution.md`)以降、複数のワーカースレッドが同じ`index.jsonl`に
 同時に`append_entry`しうる。OSの`O_APPEND`書き込みの原子性はプラットフォーム依存(特に
 Windowsでは複数ハンドルからの同時追記で行が混ざりうる)で当てにできないため、プロセス内の
 `threading.Lock`で明示的に直列化する(複数プロセスからの同時書き込みは`cli.lock.ProcessLock`が

@@ -1,7 +1,7 @@
 """検出された複数MRのレビューを並行実行するワーカープール。
 
 方針(M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
-`docs/adr/0014-parallel-review-execution.md`、`docs/architecture.md`「MR Poller」「Windows/Linuxの
+`docs/adr/0015-parallel-review-execution.md`、`docs/architecture.md`「MR Poller」「Windows/Linuxの
 分担」):
 
 - `concurrent.futures.ThreadPoolExecutor`を`max_workers`(=`config.max_parallel`)で構築し、

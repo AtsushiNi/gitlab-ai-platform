@@ -5,7 +5,7 @@
 - 対応Issue: [#37](https://github.com/AtsushiNi/gitlab-ai-platform/issues/37) (M1-9)、
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、索引書き込みの並行安全性)
 - 関連ADR: [ADR-0006](../adr/0006-review-output-schema.md)、
-  [ADR-0014](../adr/0014-parallel-review-execution.md)
+  [ADR-0015](../adr/0015-parallel-review-execution.md)
 - ステータス: 実装済み
 
 ## 責務
@@ -34,7 +34,7 @@ Runnerに渡した入力プロンプトと実行ログのコピーも同じデ�
     `RunResult.log_path`をそのまま使うことを想定する。
   - M2-1(#80)以降、`index.append_entry`は複数のワーカースレッドから同時に呼ばれうる
     (`ReviewWorkerPool`、`docs/specs/cli.md`)。モジュール内の`threading.Lock`で追記を
-    直列化しており、行が混ざって壊れることはない([ADR-0014](../adr/0014-parallel-review-execution.md)
+    直列化しており、行が混ざって壊れることはない([ADR-0015](../adr/0015-parallel-review-execution.md)
     参照)。複数プロセスからの同時書き込みはこのロックの対象外で、`ProcessLock`
     (`cli/lock.py`)が別途防ぐ
 - 非対象:
@@ -188,7 +188,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のReview行
 - [ADR-0006: レビュー結果スキーマと保存レイアウトの設計](../adr/0006-review-output-schema.md)
-- [ADR-0014: 並列レビュー実行の設計](../adr/0014-parallel-review-execution.md) —
+- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   `index.append_entry`の並行書き込み排他の設計判断
 - [prompts.md](prompts.md) — レビュープロンプト(M1-8)。「出力」セクションはこのモジュールの
   スキーマと1対1の契約

@@ -8,7 +8,7 @@
 - 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
   [ADR-0009](../adr/0009-cli-watch-design.md)、
   [ADR-0012](../adr/0012-decompose-interactive-session.md)、
-  [ADR-0014](../adr/0014-parallel-review-execution.md)
+  [ADR-0015](../adr/0015-parallel-review-execution.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
   要件→Issue分解の対話型`decompose`サブコマンド)
 
@@ -22,7 +22,7 @@
   (`docs/architecture.md`)として、結果の保存先パスと簡単なサマリを標準出力に表示する
 - `watch`: MR Poller(M1-5)で対象プロジェクトを定期走査し、検出したMRごとに`review`と
   同じレビュー実行パイプラインを呼び出し続ける常駐モード。検出した複数MRのレビューは
-  `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、[ADR-0014](../adr/0014-parallel-review-execution.md))。
+  `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、[ADR-0015](../adr/0015-parallel-review-execution.md))。
   Ctrl+C(SIGINT)/SIGTERMでgraceful shutdownし、同一設定に対する多重起動を防ぐ
 - `decompose`: 指定した1つのprojectに対し、GitLab Adapter MCP Server(M2-12、
   `adapter_mcp_server`)を`--mcp-config`で登録した**対話型**の`claude`セッションを起動する
@@ -158,7 +158,7 @@ def build_workspace_manager(config: Config) -> "GitWorkspaceManager":
 
 [ADR-0008](../adr/0008-cli-single-run-design.md)の`execute_review`/`run_single_review`
 分離パターンをそのまま踏襲する([ADR-0009](../adr/0009-cli-watch-design.md))。M2-1
-([ADR-0014](../adr/0014-parallel-review-execution.md))で検出済みMRの並列実行に対応した際も
+([ADR-0015](../adr/0015-parallel-review-execution.md))で検出済みMRの並列実行に対応した際も
 `build_on_detected`自体は変更せず、`run_watch_loop`が`ReviewWorkerPool`(`cli/worker_pool.py`)への
 投入に置き換える形で並列化した。
 
@@ -337,7 +337,7 @@ def run_decompose(
 3. 各サイクルで新たに起票された`DetectedReview`ごとに、`build_on_detected(...)`が組み立てた
    コールバック(1件のMRを同期的に処理する関数)を`ReviewWorkerPool`へ投入する。プールは
    `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、
-   [ADR-0014](../adr/0014-parallel-review-execution.md))。投入自体は即座に戻るため、
+   [ADR-0015](../adr/0015-parallel-review-execution.md))。投入自体は即座に戻るため、
    `poller.run`のループはブロックされない
 4. 投入されたコールバックは、`execution_id_scope()`で新しい実行IDを振ってから
    `execute_review(adapter, workspace, runner, store, config, review.project,
@@ -355,7 +355,7 @@ def run_decompose(
 6. 上記5種類に属さない想定外の例外は`ReviewWorkerPool`が捕まえ、`stop_event`をセットして
    `run_watch_loop`の外(`run_watch`→`cli.main`)へそのまま伝播させ、プロセスを終了させる
    ([ADR-0009](../adr/0009-cli-watch-design.md)「1件のレビュー失敗はログに記録して継続する。
-   想定外の例外はプロセスを落とす」を並列実行後も維持する設計、[ADR-0014](../adr/0014-parallel-review-execution.md)参照)。
+   想定外の例外はプロセスを落とす」を並列実行後も維持する設計、[ADR-0015](../adr/0015-parallel-review-execution.md)参照)。
    このとき、既に実行が始まっている他のMRの処理は中断されず完了まで実行される
 7. `stop_event`がセットされると、`poller.run`は実行中のサイクル完了後にループを終了する。
    `run_watch_loop`は`finally`節で`pool.shutdown_and_reraise()`を呼び、投入済みジョブの
@@ -486,7 +486,7 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [ADR-0008: CLI 単発レビュー実行の設計](../adr/0008-cli-single-run-design.md)
 - [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md)
 - [ADR-0012: 要件→Issue分解ワークフロー(`decompose`)の対話型セッション設計](../adr/0012-decompose-interactive-session.md)
-- [ADR-0014: 並列レビュー実行の設計](../adr/0014-parallel-review-execution.md) —
+- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   `watch`の`ReviewWorkerPool`による並列実行の設計判断
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /

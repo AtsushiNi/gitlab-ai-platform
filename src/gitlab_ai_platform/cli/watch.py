@@ -3,7 +3,7 @@
 方針(M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
 M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
 `docs/architecture.md`「CLI」、`docs/adr/0009-cli-watch-design.md`、
-`docs/adr/0014-parallel-review-execution.md`):
+`docs/adr/0015-parallel-review-execution.md`):
 
 - `MrPoller.run(interval_seconds, stop_event, on_detected)`で定期走査させ、`poll_once`が
   検出した`DetectedReview`ごとに単発実行パイプライン(`cli/single_run.py`の`execute_review`、
@@ -30,7 +30,7 @@ M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
   ログに埋もれさせるより目に見える形で落とす方を優先する、`docs/adr/0009`参照)。ワーカー
   スレッド内で発生した想定外の例外も`ReviewWorkerPool`が捕まえて`stop_event`をセットし、
   `run_watch_loop`が`pool.shutdown_and_reraise()`で同じ経路に乗せて再送出する
-  (`docs/adr/0014`参照)。
+  (`docs/adr/0015`参照)。
 - graceful shutdown: `stop_event`をセットする(通常はSIGINT/SIGTERM経由、ハンドラ登録自体は
   `cli/main.py`の責務)と、実行中のサイクルの完了後に停止する。
 - 多重起動防止: `ProcessLock`(`cli/lock.py`)で`state_db_path`に対応するロックファイルを

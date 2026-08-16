@@ -10,7 +10,7 @@
   変換して送出する。
 - `reviewed_at`はSQLite側にTEXT(ISO 8601文字列)で保存し、呼び出し側には`datetime`として返す。
 - 並列レビュー実行(M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
-  `docs/adr/0014-parallel-review-execution.md`)以降、複数のワーカースレッドが同じ`_conn`
+  `docs/adr/0015-parallel-review-execution.md`)以降、複数のワーカースレッドが同じ`_conn`
   (単一のコネクション)を共有して同時に呼び出す。SQLite自体がスレッドセーフにビルドされて
   いるかはプラットフォーム依存で当てにできないため、`threading.RLock`で全メソッドの本体を
   明示的に直列化する(`sqlite3.OperationalError: database is locked`のような非決定的な

@@ -4,7 +4,7 @@
 - 対応Issue: [#32](https://github.com/AtsushiNi/gitlab-ai-platform/issues/32) (M1-4、スキーマ設計・SQLite実装)、
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、並行アクセスの安全性)
 - 関連ADR: [ADR-0003](../adr/0003-state-store-interface.md)、
-  [ADR-0014](../adr/0014-parallel-review-execution.md)
+  [ADR-0015](../adr/0015-parallel-review-execution.md)
 - ステータス: 実装済み(Protocol定義 + SQLite実装)
 
 ## 責務
@@ -23,7 +23,7 @@
   - M2-1(#80)以降、`SqliteStateStore`の同一インスタンスは複数のワーカースレッドから同時に
     呼ばれる(`ReviewWorkerPool`、`docs/specs/cli.md`)。`find`/`create`/`update_status`/`close`は
     すべて内部で`threading.RLock`により直列化されており、呼び出し側は追加の排他制御なしに
-    同一インスタンスを複数スレッドで共有できる([ADR-0014](../adr/0014-parallel-review-execution.md)参照)
+    同一インスタンスを複数スレッドで共有できる([ADR-0015](../adr/0015-parallel-review-execution.md)参照)
 - 非対象:
   - ビジネスロジック(レビューするか否かの判断、`レビュー待ち`ラベルの走査等)は持たない。
     それらはMR Poller(M1-5)の責務
@@ -147,7 +147,7 @@ CREATE TABLE review_records (
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のState Store行
 - [ADR-0003: State Store のインターフェースとスキーマ設計](../adr/0003-state-store-interface.md)
-- [ADR-0014: 並列レビュー実行の設計](../adr/0014-parallel-review-execution.md) —
+- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   `threading.RLock`による直列化の設計判断
 - ソースコード: `src/gitlab_ai_platform/store/`
   (`protocol.py` / `types.py` / `errors.py` / `sqlite.py` / `__init__.py`)

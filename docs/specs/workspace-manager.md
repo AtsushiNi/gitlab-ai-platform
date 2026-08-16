@@ -4,7 +4,7 @@
 - 対応Issue: [#34](https://github.com/AtsushiNi/gitlab-ai-platform/issues/34) (M1-6)、
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、並列アクセスの排他制御)
 - 関連ADR: [ADR-0004](../adr/0004-workspace-manager-design.md)、
-  [ADR-0014](../adr/0014-parallel-review-execution.md)
+  [ADR-0015](../adr/0015-parallel-review-execution.md)
 - ステータス: 実装済み(Protocol定義 + git実装)
 
 ## 責務
@@ -37,7 +37,7 @@
     安全性のみ。複数プロセスの同時起動自体は`ProcessLock`(`cli/lock.py`、
     [ADR-0009](../adr/0009-cli-watch-design.md))が別途防ぐ
 
-## 並行アクセスの安全性(M2-1、ADR-0014)
+## 並行アクセスの安全性(M2-1、ADR-0015)
 
 `GitWorkspaceManager`はproject名をキーにした`threading.RLock`の辞書(`_project_locks`)を持ち、
 `prepare`/`discard`は該当projectのロックを取得してから内部のgit操作を行う。
@@ -51,7 +51,7 @@
 - `collect_garbage`(GC)は退避対象のprojectロックを`acquire(blocking=False)`で試み、
   取得できない(他スレッドが操作中の)候補はスキップして次に古いものを試す。ブロッキング
   待ちにしないのは、GC実行中のスレッドと`prepare`実行中の別スレッドが互いのロックを
-  待ち合う循環待ち(デッドロック)を構造的に起こさないため(詳細は[ADR-0014](../adr/0014-parallel-review-execution.md)参照)
+  待ち合う循環待ち(デッドロック)を構造的に起こさないため(詳細は[ADR-0015](../adr/0015-parallel-review-execution.md)参照)
 
 ## 公開インターフェース
 
@@ -174,7 +174,7 @@ worktreeのローカルbranch名は`mr-<iid>`
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のWorkspace Manager行
 - [ADR-0004: Workspace Manager の設計](../adr/0004-workspace-manager-design.md)
-- [ADR-0014: 並列レビュー実行の設計](../adr/0014-parallel-review-execution.md) —
+- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   project単位ロックの設計判断・却下した選択肢
 - `references/spike-S3-git-worktree-windows.md` — fetch戦略・パス長制限に関する検証結果
 - ソースコード: `src/gitlab_ai_platform/workspace/`
