@@ -30,7 +30,7 @@ MR Pollerが検出するのは `レビュー待ち` ラベル(`config.toml` の 
 変更可能)が付いたMRだけなので、ラベルを付けなければ検出されない。ただしMR
 Pollerを配線するwatchモード(M1-11)は本ドキュメント作成時点でまだ未実装で、
 現状動くのは指定した1件のMRを都度手動で実行する `review` サブコマンドのみ
-([cli-reference.md](cli-reference.md)、ステータス: 未着手)。既にラベルを付けてしまった
+([cli-reference.md](cli-reference.md)参照)。既にラベルを付けてしまった
 MRを除外する運用フローは [review-workflow.md](review-workflow.md)(ステータス: 未着手)を参照。
 
 ### 対象外にしたいプロジェクトはどうするか?
@@ -70,4 +70,4 @@ worktreeに変更が残っていたとしても、GitLabへは伝播しない(�
 State Store)を標準エラー出力と終了コードで示す。詳しい切り分け方は
 [operations/troubleshooting.md](../operations/troubleshooting.md)
 (ステータス: 未着手の場合はスコープ外)、コマンドの全オプションは
-[cli-reference.md](cli-reference.md)(ステータス: 未着手)を参照。
+[cli-reference.md](cli-reference.md)を参照。
