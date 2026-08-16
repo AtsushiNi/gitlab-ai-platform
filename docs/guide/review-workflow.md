@@ -15,7 +15,6 @@
 - 保存されたレビュー結果ファイルの読み方・指摘の採用/棄却の考え方は
   [reading-results.md](reading-results.md)
 - CLIの全オプション・終了コードは [cli-reference.md](cli-reference.md)
-  (ステータス: 未着手。当面は各サブコマンドの`--help`または[specs/cli.md](../specs/cli.md)を参照)
 - `config.toml`の各項目は [operations/configuration.md](../operations/configuration.md)
 
 ## 全体の流れ
