@@ -6,7 +6,8 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
 `docs/adr/0009-cli-watch-design.md`):
 
 - `review`サブコマンドで単発レビュー実行(デバッグ・プロンプト改善用)、`watch`サブコマンドで
-  常駐モード(M1-11)を提供する。
+  常駐モード(M1-11)、`decompose`サブコマンドで要件→Issue分解の対話型セッション(M2-11
+  [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48))を提供する。
 - パイプライン(`single_run.run_single_review`)が送出する各段階の例外
   (`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)を捕まえ、`exit_codes`の対応する終了コードとエラーメッセージ
@@ -42,6 +43,7 @@ from ..runner.errors import RunnerError
 from ..store.errors import StateStoreError
 from ..workspace.errors import WorkspaceError
 from . import exit_codes
+from .decompose import ClaudeCommandNotFoundError, run_decompose
 from .lock import AlreadyRunningError
 from .single_run import SingleRunResult, run_single_review
 from .watch import run_watch
@@ -69,6 +71,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_review_command(config, args)
         if args.command == "watch":
             return _run_watch_command(config)
+        if args.command == "decompose":
+            return _run_decompose_command(args)
 
         parser.error(f"不明なコマンドです: {args.command!r}")
         return (
@@ -172,6 +176,29 @@ def _run_watch_command(config: Config) -> int:
         restore_handlers()
 
     return exit_codes.EXIT_OK
+
+
+def _run_decompose_command(args: argparse.Namespace) -> int:
+    # ConfigError(GitLab認証等の設定不備)はここに来る前に`main`が既に検証・変換済み。
+    # decompose自身はConfigの値を読まず、検証済みの--config/--envパスをそのまま
+    # GitLab Adapter MCP Serverの起動コマンドへ引き継ぐだけ(decompose.pyのdocstring参照)。
+    with execution_id_scope():
+        try:
+            returncode = run_decompose(
+                args.project,
+                config_path=args.config,
+                env_path=args.env,
+                log_dir=args.log_dir,
+                permission_mode=args.permission_mode,
+            )
+        except ClaudeCommandNotFoundError as exc:
+            _logger.error("cli.decompose_failed", extra={"error": str(exc)})
+            print(f"Claude Code起動エラー: {exc}", file=sys.stderr)
+            return exit_codes.EXIT_CLAUDE_NOT_FOUND
+
+    # 対話セッション自体は人間が直接操作するため、成否のサマリ表示は行わない
+    # (構造化された結果が存在しない。`claude`プロセス自身の終了コードをそのまま返す)。
+    return returncode
 
 
 def _install_shutdown_handler(stop_event: threading.Event) -> Callable[[], None]:
@@ -284,6 +311,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "対象プロジェクトを定期走査し、レビュー待ちMRを検出次第レビューし続ける"
             "(常駐モード。Ctrl+C/SIGTERMで終了)"
         ),
+    )
+
+    decompose_parser = subparsers.add_parser(
+        "decompose",
+        help=(
+            "新しい開発要件を人間との対話でGitLab Issueへ分解する"
+            "(対話型。ターミナルをそのままClaude Codeとの対話に使う)"
+        ),
+    )
+    decompose_parser.add_argument(
+        "project", help="GitLabのプロジェクトパス(例: group/project)"
+    )
+    decompose_parser.add_argument(
+        "--permission-mode",
+        default=None,
+        help="Claude Codeの--permission-modeに対応する値",
     )
 
     return parser
