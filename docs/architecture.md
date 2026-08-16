@@ -181,6 +181,11 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
   Manager・State Store・Reviewの索引書き込みは、project単位のロック・`RLock`・
   モジュール内`Lock`でそれぞれ並行アクセスに対して安全にした([ADR-0015](adr/0015-parallel-review-execution.md)、
   M2-1で正式化)
+- **Job抽象はState Storeを置き換えず、別コンポーネントとして併存させる**: State Storeは
+  レビューの二重実行防止に責務を絞ったまま残し、Job層はレビューに限らないタスク種別を横断的に
+  管理する新規リポジトリとして追加する。`JobType`(`review`/`issue-analysis`/`design`/`implement`)は
+  実装完了を待たず先に列挙し、後からの互換性問題を避ける
+  ([ADR-0016](adr/0016-job-abstraction.md)、M3-1で正式化)
 
 ## 関連ドキュメント
 
