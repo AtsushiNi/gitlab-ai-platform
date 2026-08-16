@@ -12,6 +12,7 @@ from gitlab_ai_platform.cli.single_run import (
     _find_previous_review_result,
     build_workspace_manager,
     execute_review,
+    execute_review_job,
 )
 from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY, Config
 from gitlab_ai_platform.gitlab_adapter import GitLabApiError
@@ -21,6 +22,7 @@ from gitlab_ai_platform.gitlab_adapter.types import (
     MergeRequestDiff,
     Note,
 )
+from gitlab_ai_platform.job import JobStatus, JobType, SqliteJobRepository
 from gitlab_ai_platform.review import ReviewResult, save_review
 from gitlab_ai_platform.review.errors import ReviewOutputParseError
 from gitlab_ai_platform.runner import RunResult
@@ -49,6 +51,7 @@ def _config(tmp_path: Path, **overrides) -> Config:
         runner_timeout_seconds=1800,
         reviews_root=str(tmp_path / "reviews"),
         state_db_path=":memory:",
+        job_db_path=":memory:",
     )
     kwargs.update(overrides)
     return Config.from_raw(**kwargs)
@@ -455,6 +458,96 @@ def test_execute_review_first_review_has_no_comparison(tmp_path):
         data = json.loads(result.review_paths.result_json.read_text(encoding="utf-8"))
         assert data["comparison"] is None
     finally:
+        store.close()
+
+
+def test_execute_review_job_happy_path_marks_job_done_with_result(tmp_path):
+    # M3-1(#91): execute_review_jobはreview Jobを起票し、execute_review成功時に
+    # DONEへ更新する(execute_review自体の挙動はexecute_reviewのテストで別途保証済み)
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(_merge_request())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(_run_result(tmp_path))
+    store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
+
+    try:
+        result = execute_review_job(
+            job_repo, adapter, workspace, runner, store, config, _PROJECT, _MR_IID
+        )
+
+        assert result.sha == _SHA
+        jobs = job_repo.list_by_status(JobStatus.DONE)
+        assert len(jobs) == 1
+        assert jobs[0].job_type == JobType.REVIEW
+        assert jobs[0].payload == {"project": _PROJECT, "mr_iid": _MR_IID}
+        assert jobs[0].result == {
+            "project": _PROJECT,
+            "mr_iid": _MR_IID,
+            "sha": _SHA,
+            "result_path": str(result.review_paths.dir),
+        }
+    finally:
+        job_repo.close()
+        store.close()
+
+
+def test_execute_review_job_marks_job_failed_and_reraises_on_pipeline_error(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(_merge_request())
+    workspace = _FakeWorkspaceManager(
+        tmp_path / "worktree",
+        fail=GitCommandError("boom", command=["git"], returncode=1, stderr=""),
+    )
+    runner = _FakeClaudeCodeRunner()
+    store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
+
+    try:
+        with pytest.raises(GitCommandError):
+            execute_review_job(
+                job_repo, adapter, workspace, runner, store, config, _PROJECT, _MR_IID
+            )
+
+        jobs = job_repo.list_by_status(JobStatus.FAILED)
+        assert len(jobs) == 1
+        assert "boom" in jobs[0].error
+    finally:
+        job_repo.close()
+        store.close()
+
+
+def test_execute_review_job_passes_sha_through_to_execute_review(tmp_path):
+    # watchモード(cli/watch.py)は起票済みのcommit_shaを明示的に渡す。payload経由で
+    # 取り回してもexecute_reviewへ正しく伝わることを確認する
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(_merge_request())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(_run_result(tmp_path))
+    store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
+
+    try:
+        result = execute_review_job(
+            job_repo,
+            adapter,
+            workspace,
+            runner,
+            store,
+            config,
+            _PROJECT,
+            _MR_IID,
+            sha=_SHA,
+        )
+
+        assert workspace.prepare_calls == [(_PROJECT, _MR_IID, _SHA)]
+        assert result.sha == _SHA
+    finally:
+        job_repo.close()
         store.close()
 
 

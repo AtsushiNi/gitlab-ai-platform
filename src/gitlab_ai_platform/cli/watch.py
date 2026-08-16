@@ -6,21 +6,26 @@ M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
 `docs/adr/0015-parallel-review-execution.md`):
 
 - `MrPoller.run(interval_seconds, stop_event, on_detected)`で定期走査させ、`poll_once`が
-  検出した`DetectedReview`ごとに単発実行パイプライン(`cli/single_run.py`の`execute_review`、
-  M1-10)を呼び出して実際にレビューを実行する。パイプライン本体の結線・エラー処理
-  (State Storeの`RUNNING`/`FAILED`/`DONE`遷移等)は`execute_review`にすべて委ね、この
-  モジュールは「いつ・どのMRに対して呼ぶか」だけを担う(オーケストレーションはしない、
-  `docs/architecture.md`のCLIの境界)。
-- `run_watch_loop`(パイプライン本体)は`execute_review`と同じくGitLab Adapter/Workspace
-  Manager/Claude Code Runner/State StoreをすべてProtocol型の引数として受け取り、`run_watch`
-  (合成ルート)がそれらの具象実装(REST/git/subprocess/SQLite)を`config`から組み立てて
-  委譲する(`ADR-0008`が確立した「パイプライン本体と合成ルートを分離する」パターンをそのまま
-  踏襲。テストは手書きフェイクを注入して行い、実サービスには繋がない)。
+  検出した`DetectedReview`ごとに単発実行パイプライン(`cli/single_run.py`の
+  `execute_review_job`、M1-10・M3-1)を呼び出して実際にレビューを実行する。パイプライン本体の
+  結線・エラー処理(State Storeの`RUNNING`/`FAILED`/`DONE`遷移等)は`execute_review_job`が
+  委ねる`execute_review`にすべて委ね、このモジュールは「いつ・どのMRに対して呼ぶか」だけを
+  担う(オーケストレーションはしない、`docs/architecture.md`のCLIの境界)。
+- `run_watch_loop`(パイプライン本体)は`execute_review_job`と同じくGitLab Adapter/Workspace
+  Manager/Claude Code Runner/State Store/Job RepositoryをすべてProtocol型の引数として受け取り、
+  `run_watch`(合成ルート)がそれらの具象実装(REST/git/subprocess/SQLite)を`config`から
+  組み立てて委譲する(`ADR-0008`が確立した「パイプライン本体と合成ルートを分離する」パターンを
+  そのまま踏襲。テストは手書きフェイクを注入して行い、実サービスには繋がない)。
 - M2-1: 検出された各MRのレビューは`ReviewWorkerPool`(`cli/worker_pool.py`)経由で
   `config.max_parallel`個までのワーカースレッドが並行実行する。`build_on_detected`が組み立てる
   コールバック自体は従来通り1件を同期的に処理する関数のままで(単体テストは変更不要)、
   `run_watch_loop`がその呼び出しをプールへの`submit`に置き換えることで並列化する
   (`MrPoller.run`のループ自体・`build_on_detected`の中身は変更しない)。
+- Job抽象(M3-1 [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91)、
+  `docs/adr/0016-job-abstraction.md`): `build_on_detected`は`execute_review`を直接
+  同期呼び出しするのではなく、`cli/single_run.py`の`execute_review_job`(review Jobとして
+  ラップした`execute_review`)を呼ぶ。Job Repositoryの具象実装(SQLite)の組み立てと
+  `close`は`run_watch`(合成ルート)の責務。
 - 1件のレビュー失敗(`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/`ReviewError`/
   `StateStoreError`)はログに記録してプロセス全体は止めず、次のMR・次のサイクルの処理を
   続ける。State Store側は既に`execute_review`が`FAILED`へ更新済みのため、再度自動リトライは
@@ -48,6 +53,8 @@ from ..config import Config
 from ..gitlab_adapter import GitLabRestAdapter
 from ..gitlab_adapter.errors import GitLabAdapterError
 from ..gitlab_adapter.protocol import GitLabReader
+from ..job import SqliteJobRepository
+from ..job.protocol import JobRepository
 from ..logging_ import execution_id_scope, get_logger
 from ..poller import DetectedReview, MrPoller
 from ..review.errors import ReviewError
@@ -60,7 +67,7 @@ from ..store.protocol import StateStore
 from ..workspace.errors import WorkspaceError
 from ..workspace.protocol import WorkspaceManager
 from .lock import ProcessLock
-from .single_run import build_workspace_manager, execute_review
+from .single_run import build_workspace_manager, execute_review_job
 from .worker_pool import ReviewWorkerPool
 
 _logger = get_logger(__name__)
@@ -79,9 +86,9 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
 
     `stop_event`がセットされるまでブロックする(省略時は呼び出し側が別途プロセスを
     止める手段を用意する必要がある)。`config`からGitLab Adapter・Workspace Manager・
-    Claude Code Runner・State Storeの具象実装(REST/git/subprocess/SQLite)を組み立て、
-    `run_watch_loop`に委譲する。同一`state_db_path`に対する多重起動は`ProcessLock.acquire`が
-    `AlreadyRunningError`を送出することで防ぐ。
+    Claude Code Runner・State Store・Job Repositoryの具象実装(REST/git/subprocess/SQLite)を
+    組み立て、`run_watch_loop`に委譲する。同一`state_db_path`に対する多重起動は
+    `ProcessLock.acquire`が`AlreadyRunningError`を送出することで防ぐ。
     """
     lock_path = _lock_path_for(config.state_db_path)
     with ProcessLock(lock_path):
@@ -89,11 +96,19 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
         workspace = build_workspace_manager(config)
         runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
         store = SqliteStateStore(config.state_db_path)
+        job_repo = SqliteJobRepository(config.job_db_path)
         try:
             run_watch_loop(
-                adapter, workspace, runner, store, config, stop_event=stop_event
+                adapter,
+                workspace,
+                runner,
+                store,
+                job_repo,
+                config,
+                stop_event=stop_event,
             )
         finally:
+            job_repo.close()
             store.close()
 
 
@@ -102,15 +117,16 @@ def run_watch_loop(
     workspace: WorkspaceManager,
     runner: ClaudeCodeRunner,
     store: StateStore,
+    job_repo: JobRepository,
     config: Config,
     *,
     stop_event: threading.Event | None = None,
 ) -> None:
-    """`MrPoller`と`execute_review`を結線するパイプライン本体(Protocol型のみに依存)。
+    """`MrPoller`と`execute_review_job`を結線するパイプライン本体(Protocol型のみに依存)。
 
-    `adapter`/`workspace`/`runner`/`store`は`execute_review`(`cli/single_run.py`)と同じ
-    Protocol型の引数として受け取り、具象実装には依存しない。テスト時は手書きフェイクを
-    注入できる。
+    `adapter`/`workspace`/`runner`/`store`/`job_repo`は`execute_review_job`
+    (`cli/single_run.py`)と同じProtocol型の引数として受け取り、具象実装には依存しない。
+    テスト時は手書きフェイクを注入できる。
 
     検出された各MRの処理(`build_on_detected`が組み立てるコールバック1回分)は
     `ReviewWorkerPool`(`config.max_parallel`個までのワーカースレッド、M2-1)へ投入し、
@@ -121,7 +137,7 @@ def run_watch_loop(
     """
     effective_stop_event = stop_event if stop_event is not None else threading.Event()
     poller = MrPoller(adapter, store, config.projects, review_label=config.review_label)
-    review_job = build_on_detected(adapter, workspace, runner, store, config)
+    review_job = build_on_detected(adapter, workspace, runner, store, job_repo, config)
     pool = ReviewWorkerPool(config.max_parallel, effective_stop_event)
     try:
         poller.run(
@@ -142,9 +158,10 @@ def build_on_detected(
     workspace: WorkspaceManager,
     runner: ClaudeCodeRunner,
     store: StateStore,
+    job_repo: JobRepository,
     config: Config,
 ) -> Callable[[DetectedReview], None]:
-    """`DetectedReview`ごとに`execute_review`を呼ぶコールバックを組み立てる。
+    """`DetectedReview`ごとに`execute_review_job`を呼ぶコールバックを組み立てる。
 
     既知のパイプライン例外(`_PIPELINE_ERROR_TYPES`)はログに記録して握りつぶし、
     呼び出し元(`MrPoller.run`のループ)を止めない。それ以外の想定外の例外は
@@ -156,7 +173,8 @@ def build_on_detected(
         # 複数MRを順次処理しても、ログを実行単位で追跡できるようにするため)
         with execution_id_scope():
             try:
-                execute_review(
+                execute_review_job(
+                    job_repo,
                     adapter,
                     workspace,
                     runner,

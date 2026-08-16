@@ -30,6 +30,9 @@ root = "custom-reviews"
 
 [store]
 db_path = "custom-state.db"
+
+[job]
+db_path = "custom-job.db"
 """
 
 
@@ -82,6 +85,7 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
     assert config.runner_timeout_seconds == 900
     assert config.reviews_root == "custom-reviews"
     assert config.state_db_path == "custom-state.db"
+    assert config.job_db_path == "custom-job.db"
 
 
 def test_load_config_prefers_real_env_var_over_dotenv_file(tmp_path, monkeypatch):
@@ -118,6 +122,7 @@ def test_load_config_applies_defaults_when_optional_sections_missing(
     assert config.runner_timeout_seconds == 1800
     assert config.reviews_root == "reviews"
     assert config.state_db_path == "state.db"
+    assert config.job_db_path == "job.db"
 
 
 def test_load_config_raises_without_leaking_token_when_other_fields_invalid(

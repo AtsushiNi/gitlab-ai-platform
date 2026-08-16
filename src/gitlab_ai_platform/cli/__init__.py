@@ -11,12 +11,18 @@ from __future__ import annotations
 
 from . import exit_codes
 from .decompose import ClaudeCommandNotFoundError, run_decompose
-from .single_run import SingleRunResult, execute_review, run_single_review
+from .single_run import (
+    SingleRunResult,
+    execute_review,
+    execute_review_job,
+    run_single_review,
+)
 
 __all__ = [
     "ClaudeCommandNotFoundError",
     "SingleRunResult",
     "execute_review",
+    "execute_review_job",
     "exit_codes",
     "run_decompose",
     "run_single_review",

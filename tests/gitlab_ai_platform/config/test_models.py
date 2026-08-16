@@ -17,6 +17,7 @@ def _valid_kwargs(**overrides):
         runner_timeout_seconds=1800,
         reviews_root="reviews",
         state_db_path="state.db",
+        job_db_path="job.db",
     )
     kwargs.update(overrides)
     return kwargs
@@ -37,6 +38,7 @@ def test_from_raw_builds_config_with_valid_values():
     assert config.runner_timeout_seconds == 1800
     assert config.reviews_root == "reviews"
     assert config.state_db_path == "state.db"
+    assert config.job_db_path == "job.db"
 
 
 def test_from_raw_strips_trailing_slash_from_url():
@@ -78,6 +80,7 @@ def test_from_raw_strips_whitespace_from_projects():
         {"runner_timeout_seconds": True},
         {"reviews_root": ""},
         {"state_db_path": ""},
+        {"job_db_path": ""},
     ],
 )
 def test_from_raw_rejects_invalid_values(overrides):

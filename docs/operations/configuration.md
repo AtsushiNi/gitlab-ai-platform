@@ -86,6 +86,12 @@
 |---|---|---|---|---|
 | `db_path` | `"state.db"` | str | 省略可 | `SqliteStateStore`のDBファイルパス。レビュー実行状態(`RUNNING`/`DONE`/`FAILED`)を保持し、同一commitへの二重起票防止にも使う([specs/state-store.md](../specs/state-store.md)) |
 
+### `[job]`
+
+| キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
+|---|---|---|---|---|
+| `db_path` | `"job.db"` | str | 省略可 | `SqliteJobRepository`のDBファイルパス(M3-1)。`review`種別のJobのライフサイクル(`PENDING`/`RUNNING`/`WAITING_HUMAN`/`DONE`/`FAILED`)を保持する。State Store(`[store]`)とは別のDBファイル([specs/job-model.md](../specs/job-model.md)) |
+
 ## `config.toml`の例
 
 ```toml
@@ -113,6 +119,9 @@ root = "reviews"
 
 [store]
 db_path = "state.db"
+
+[job]
+db_path = "job.db"
 ```
 
 上記はすべて既定値と同じ値のため、実運用では`[gitlab]`の`url`/`projects`(既定値が無く必須)

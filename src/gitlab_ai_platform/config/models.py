@@ -26,6 +26,7 @@ class Config:
     runner_timeout_seconds: int
     reviews_root: str
     state_db_path: str
+    job_db_path: str
 
     def __repr__(self) -> str:
         # gitlab_tokenが誤ってログ・例外メッセージに出力されるのを防ぐため、reprでマスクする
@@ -40,7 +41,8 @@ class Config:
             f"runner_log_dir={self.runner_log_dir!r}, "
             f"runner_timeout_seconds={self.runner_timeout_seconds!r}, "
             f"reviews_root={self.reviews_root!r}, "
-            f"state_db_path={self.state_db_path!r})"
+            f"state_db_path={self.state_db_path!r}, "
+            f"job_db_path={self.job_db_path!r})"
         )
 
     @classmethod
@@ -59,6 +61,7 @@ class Config:
         runner_timeout_seconds: object,
         reviews_root: object,
         state_db_path: object,
+        job_db_path: object,
     ) -> Config:
         """未検証の生値からConfigを組み立てる。不正な値があれば ConfigError をまとめて送出する。"""
         errors: list[str] = []
@@ -100,6 +103,7 @@ class Config:
         clean_state_db_path = _require_nonempty_str(
             state_db_path, "store.db_path", errors
         )
+        clean_job_db_path = _require_nonempty_str(job_db_path, "job.db_path", errors)
 
         if errors:
             raise ConfigError("; ".join(errors))
@@ -115,6 +119,7 @@ class Config:
         assert clean_runner_timeout_seconds is not None
         assert clean_reviews_root is not None
         assert clean_state_db_path is not None
+        assert clean_job_db_path is not None
 
         return cls(
             gitlab_url=clean_url.rstrip("/"),
@@ -129,6 +134,7 @@ class Config:
             runner_timeout_seconds=clean_runner_timeout_seconds,
             reviews_root=clean_reviews_root,
             state_db_path=clean_state_db_path,
+            job_db_path=clean_job_db_path,
         )
 
 

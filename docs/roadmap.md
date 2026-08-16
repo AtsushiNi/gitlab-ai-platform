@@ -144,7 +144,7 @@ M2-12 は完了後にフォローアップIssueが複数派生している(い�
 
 | Issue | タスク | 状態 |
 |-------|--------|------|
-| [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) | M3-1 Job 抽象の導入 | 未着手 |
+| [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) | M3-1 Job 抽象の導入 | 完了 |
 | [#92](https://github.com/AtsushiNi/gitlab-ai-platform/issues/92) | M3-2 Job Queue の実装 | 未着手 |
 | [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) | M3-3 Runner のプロセス分離 | 未着手 |
 | [#94](https://github.com/AtsushiNi/gitlab-ai-platform/issues/94) | M3-4 Linux/Docker 実行環境の構築 | 未着手 |

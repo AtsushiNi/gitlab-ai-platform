@@ -17,6 +17,15 @@
   終了コード・エラーメッセージへ変換する(このモジュール自身はCLI表示に関与しない)。
 - `build_workspace_manager`(GitLab認証込みの`GitWorkspaceManager`組み立て)は常駐(watch)
   モード(M1-11、`cli/watch.py`)からも再利用する前提で公開している。
+- Job抽象(M3-1 [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91)、
+  `docs/adr/0016-job-abstraction.md`): `execute_review_job`が`execute_review`を
+  `review`種別のJob(`JobRepository`)としてラップする。`JobRepository.enqueue`で
+  `PENDING`のJobを起票し、`RUNNING`へ更新してから`execute_review`を呼び出し、成功時は
+  `DONE`、`execute_review`が送出する例外発生時は`FAILED`へ更新してから元の例外を
+  そのまま再送出する(呼び出し側=`build_on_detected`/CLIのエラーハンドリングは変えない)。
+  `execute_review`本体(GitLab Adapter→Workspace Manager→Claude Code Runner→Review→
+  State Storeの結線)自体はADR-0016の決定通り変更しない(二重レビュー防止は引き続き
+  State Storeが担い、JobはState Storeとは別に「実行1回分のライフサイクル」を管理する)。
 - 再レビュー(M2-2 [#81](https://github.com/AtsushiNi/gitlab-ai-platform/issues/81)):
   MR Pollerは`(project, mr_iid, commit_sha)`が未処理であれば新規pushも起票する
   (`docs/specs/poller.md`)ため、新規push自体の検出はこのモジュールの変更を必要としない。
@@ -39,15 +48,21 @@ from pathlib import Path
 from ..config import GITLAB_TOKEN_ENV_KEY, Config
 from ..gitlab_adapter import GitLabRestAdapter
 from ..gitlab_adapter.protocol import GitLabReader
+from ..job import SqliteJobRepository
+from ..job.protocol import JobRepository, JobStatus
 from ..logging_ import get_logger
 from ..review import (
+    REVIEW_JOB_TYPE,
     ReviewPaths,
     ReviewResult,
     build_review_instructions,
+    build_review_job_payload,
+    build_review_job_result,
     compare_findings,
     load_review_result,
     parse_review_output,
     read_index,
+    review_job_payload_to_args,
     save_review,
 )
 from ..runner import ReviewContext, RunResult, SubprocessClaudeCodeRunner, build_prompt
@@ -95,15 +110,18 @@ def run_single_review(
 ) -> SingleRunResult:
     """指定した`project`/`mr_iid`を1本レビューする(合成ルート)。
 
-    `config`からGitLab Adapter・Workspace Manager・Claude Code Runner・State Storeの
-    具象実装(REST/git/subprocess/SQLite)を組み立て、`execute_review`に委譲する。
+    `config`からGitLab Adapter・Workspace Manager・Claude Code Runner・State Store・
+    Job Repositoryの具象実装(REST/git/subprocess/SQLite)を組み立て、
+    `execute_review_job`(review Jobとしてラップした`execute_review`、M3-1)に委譲する。
     """
     adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
     workspace = build_workspace_manager(config)
     runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
     store = SqliteStateStore(config.state_db_path)
+    job_repo = SqliteJobRepository(config.job_db_path)
     try:
-        return execute_review(
+        return execute_review_job(
+            job_repo,
             adapter,
             workspace,
             runner,
@@ -117,6 +135,7 @@ def run_single_review(
             permission_mode=permission_mode,
         )
     finally:
+        job_repo.close()
         store.close()
 
 
@@ -258,6 +277,72 @@ def execute_review(
     )
 
 
+def execute_review_job(
+    job_repo: JobRepository,
+    adapter: GitLabReader,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    store: StateStore,
+    config: Config,
+    project: str,
+    mr_iid: int,
+    *,
+    sha: str | None = None,
+    timeout_seconds: int | None = None,
+    allowed_tools: Sequence[str] = (),
+    disallowed_tools: Sequence[str] = (),
+    permission_mode: str | None = None,
+) -> SingleRunResult:
+    """`execute_review`を`review`種別のJob(M3-1 [#91], ADR-0016)としてラップして実行する。
+
+    `job_repo.enqueue`で`PENDING`のJobを起票し、`RUNNING`へ更新してから`execute_review`
+    (GitLab Adapter→Workspace Manager→Claude Code Runner→Review→State Storeの結線本体、
+    変更しない)を呼び出す。成功時はJobを`DONE`へ、`execute_review`が送出する例外
+    (`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/`ReviewError`/`StateStoreError`等)
+    発生時はJobを`FAILED`へ更新してから、元の例外をそのまま再送出する
+    (呼び出し側=`build_on_detected`/CLIのエラーハンドリングは変えない)。
+
+    二重レビュー防止は引き続きState Store(`execute_review`内)が担う。Jobは
+    State Storeとは別に「実行1回分のライフサイクル」だけを管理する(ADR-0016「JobとState
+    Storeは別のコンポーネントとして併存させる」)。
+    """
+    job = job_repo.enqueue(
+        REVIEW_JOB_TYPE, build_review_job_payload(project, mr_iid, sha=sha)
+    )
+    job = job_repo.update_status(job.id, JobStatus.RUNNING)
+    # payloadを経由して引数を取り出すことで、将来Job Queue(M3-2)がJobレコードだけから
+    # 実行できる形(payloadが実行に必要な情報の唯一の正)になっていることを保証する
+    job_project, job_mr_iid, job_sha = review_job_payload_to_args(job.payload)
+
+    try:
+        result = execute_review(
+            adapter,
+            workspace,
+            runner,
+            store,
+            config,
+            job_project,
+            job_mr_iid,
+            sha=job_sha,
+            timeout_seconds=timeout_seconds,
+            allowed_tools=allowed_tools,
+            disallowed_tools=disallowed_tools,
+            permission_mode=permission_mode,
+        )
+    except Exception as exc:
+        job_repo.update_status(job.id, JobStatus.FAILED, error=str(exc))
+        raise
+
+    job_repo.update_status(
+        job.id,
+        JobStatus.DONE,
+        result=build_review_job_result(
+            result.project, result.mr_iid, result.sha, str(result.review_paths.dir)
+        ),
+    )
+    return result
+
+
 def _find_previous_review_result(
     reviews_root: str, project: str, mr_iid: int, *, exclude_sha: str
 ) -> ReviewResult | None:
@@ -344,5 +429,6 @@ __all__ = [
     "SingleRunResult",
     "build_workspace_manager",
     "execute_review",
+    "execute_review_job",
     "run_single_review",
 ]
