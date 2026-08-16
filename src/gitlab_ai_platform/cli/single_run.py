@@ -17,6 +17,12 @@
   終了コード・エラーメッセージへ変換する(このモジュール自身はCLI表示に関与しない)。
 - `build_workspace_manager`(GitLab認証込みの`GitWorkspaceManager`組み立て)は常駐(watch)
   モード(M1-11、`cli/watch.py`)からも再利用する前提で公開している。
+- 再レビュー(M2-2 [#81](https://github.com/AtsushiNi/gitlab-ai-platform/issues/81)):
+  MR Pollerは`(project, mr_iid, commit_sha)`が未処理であれば新規pushも起票する
+  (`docs/specs/poller.md`)ため、新規push自体の検出はこのモジュールの変更を必要としない。
+  `execute_review`側の変更は「前回レビュー結果を索引(`review.read_index`)から探し、
+  今回の指摘と突き合わせる」ことのみ。突き合わせ方式は
+  [ADR-0014](../../../docs/adr/0014-re-review-finding-matching.md)参照。
 """
 
 from __future__ import annotations
@@ -38,7 +44,10 @@ from ..review import (
     ReviewPaths,
     ReviewResult,
     build_review_instructions,
+    compare_findings,
+    load_review_result,
     parse_review_output,
+    read_index,
     save_review,
 )
 from ..runner import ReviewContext, RunResult, SubprocessClaudeCodeRunner, build_prompt
@@ -142,6 +151,11 @@ def execute_review(
     これを省略して常に最新shaを使うと、Pollerが起票した`(project, mr_iid, 起票時のsha)`
     レコードがRUNNING/DONE/FAILEDへ一度も遷移しないまま孤立してしまう
     (`execute_review`が別の新しいshaで起票し直すため)。
+
+    同一MRに対する過去のレビュー(今回とは異なるcommit)が索引に存在する場合、その最新のものを
+    「前回レビュー」として今回の指摘と突き合わせ、`ReviewComparison`(修正済み/未対応/新規)を
+    `save_review`に渡す(M2-2, #81。`_find_previous_review_result`参照)。前回が存在しない
+    (初回レビュー)場合は比較を行わない。
     """
     # 3つとも独立したGitLab REST呼び出しなので、CLIの主用途(デバッグ時に繰り返し実行する)
     # で毎回の待ち時間を減らすため並列に取得する(逐次だと3回分のネットワーク往復が積み上がる)
@@ -157,6 +171,12 @@ def execute_review(
         diffs = tuple(diffs_future.result())
         discussions = tuple(discussions_future.result())
     sha = sha if sha is not None else merge_request.sha
+
+    # 再レビュー(M2-2, #81): 同一MRの過去レビュー(今回とは異なるcommit)のうち最新のものを
+    # 「前回レビュー」として突き合わせに使う。前回が存在しなければNoneのまま(初回レビュー)
+    previous_review_result = _find_previous_review_result(
+        config.reviews_root, project, mr_iid, exclude_sha=sha
+    )
 
     _ticket_running(store, project, mr_iid, sha)
 
@@ -183,6 +203,7 @@ def execute_review(
             permission_mode=permission_mode,
         )
         review_result = parse_review_output(run_result)
+        comparison = compare_findings(previous_review_result, review_result)
 
         input_prompt = build_prompt(instructions, context)
         review_paths = save_review(
@@ -193,6 +214,7 @@ def execute_review(
             review_result,
             input_prompt=input_prompt,
             run_log_path=run_result.log_path,
+            comparison=comparison,
         )
 
         # DONEへの更新も同じtry内に含める。ここが失敗した場合もFAILEDへの更新を
@@ -234,6 +256,45 @@ def execute_review(
         review_paths=review_paths,
         run_result=run_result,
     )
+
+
+def _find_previous_review_result(
+    reviews_root: str, project: str, mr_iid: int, *, exclude_sha: str
+) -> ReviewResult | None:
+    """再レビュー(M2-2, #81)時に突き合わせる「前回レビュー」を索引から探す。
+
+    同一`(project, mr_iid)`の過去レビューのうち、`exclude_sha`(今回のcommit)とは異なる
+    commitで最も新しいもの(`reviewed_at`が最大のもの)を前回とする。索引の絞り込みは
+    `review/index.py`自身の責務ではなくCLI側の責務(`docs/specs/review-output.md`「非対象」)
+    のため、ここで行う。該当が無ければ(初回レビュー、または`sha`を変えない再実行のみ)`None`。
+    """
+    candidates = [
+        entry
+        for entry in read_index(reviews_root)
+        if entry.project == project
+        and entry.mr_iid == mr_iid
+        and entry.sha != exclude_sha
+    ]
+    if not candidates:
+        return None
+
+    latest = max(candidates, key=lambda entry: entry.reviewed_at)
+    try:
+        return load_review_result(reviews_root, project, mr_iid, latest.sha)
+    except (OSError, ValueError, KeyError) as exc:
+        # 索引にはあるが結果ファイルが読めない(壊れている/消えている)場合、再レビューの
+        # 比較機能だけを諦め、レビュー自体は通常通り継続する(index.pyが壊れた行をスキップして
+        # 全体の読み込みを止めないのと同じ耐性の考え方)
+        _logger.warning(
+            "single_run.previous_review_load_failed",
+            extra={
+                "project": project,
+                "mr_iid": mr_iid,
+                "sha": latest.sha,
+                "error": str(exc),
+            },
+        )
+        return None
 
 
 def _ticket_running(store: StateStore, project: str, mr_iid: int, sha: str) -> None:

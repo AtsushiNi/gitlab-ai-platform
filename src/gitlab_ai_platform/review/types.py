@@ -62,6 +62,25 @@ class ReviewPaths:
 
 
 @dataclass(frozen=True)
+class ReviewComparison:
+    """前回レビューとの突き合わせ結果(M2-2, #81)。
+
+    `comparison.py`の`compare_findings`が組み立てる。前回レビューが存在しない
+    (初回レビューの)場合は`ReviewComparison`自体を作らず`None`で表す(呼び出し側は
+    `is None`で「比較対象が無い」ことを判定する)。
+    """
+
+    new: tuple[Finding, ...]
+    """今回のfindingsのうち、前回に対応する指摘が見つからなかったもの(新規)。"""
+
+    unresolved: tuple[Finding, ...]
+    """今回のfindingsのうち、前回にも対応する指摘があったもの(未対応)。"""
+
+    resolved: tuple[Finding, ...]
+    """前回のfindingsのうち、今回は対応する指摘が見つからなかったもの(修正済み)。"""
+
+
+@dataclass(frozen=True)
 class IndexEntry:
     """複数レビューを横断する索引(`index.jsonl`)の1行分。"""
 
@@ -76,4 +95,11 @@ class IndexEntry:
     minor_count: int
 
 
-__all__ = ["Finding", "IndexEntry", "ReviewPaths", "ReviewResult", "Severity"]
+__all__ = [
+    "Finding",
+    "IndexEntry",
+    "ReviewComparison",
+    "ReviewPaths",
+    "ReviewResult",
+    "Severity",
+]

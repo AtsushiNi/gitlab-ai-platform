@@ -5,9 +5,11 @@ import pytest
 
 from gitlab_ai_platform.review import (
     Finding,
+    ReviewComparison,
     ReviewError,
     ReviewResult,
     Severity,
+    load_review_result,
     read_index,
     save_review,
 )
@@ -207,3 +209,113 @@ def test_save_review_rejects_sha_containing_path_traversal(tmp_path):
         )
 
     assert not (tmp_path / "escape").exists()
+
+
+def test_save_review_writes_null_comparison_when_not_given(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "runner-log.json"
+    log_source.write_text("{}", encoding="utf-8")
+
+    paths = save_review(
+        root,
+        "group/project",
+        1,
+        "sha1",
+        _result(),
+        input_prompt="prompt",
+        run_log_path=log_source,
+    )
+
+    data = json.loads(paths.result_json.read_text(encoding="utf-8"))
+    assert data["comparison"] is None
+
+
+def test_save_review_writes_comparison_buckets_to_result_json(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "runner-log.json"
+    log_source.write_text("{}", encoding="utf-8")
+    result = _result()
+    comparison = ReviewComparison(
+        new=(result.findings[0],), unresolved=(result.findings[1],), resolved=()
+    )
+
+    paths = save_review(
+        root,
+        "group/project",
+        1,
+        "sha1",
+        result,
+        input_prompt="prompt",
+        run_log_path=log_source,
+        comparison=comparison,
+    )
+
+    data = json.loads(paths.result_json.read_text(encoding="utf-8"))
+    assert len(data["comparison"]["new"]) == 1
+    assert data["comparison"]["new"][0]["file"] == result.findings[0].file
+    assert len(data["comparison"]["unresolved"]) == 1
+    assert data["comparison"]["resolved"] == []
+
+
+def test_save_review_includes_comparison_badges_in_markdown(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "runner-log.json"
+    log_source.write_text("{}", encoding="utf-8")
+    result = _result()
+    resolved_finding = Finding(
+        severity=Severity.MAJOR,
+        file="src/old.py",
+        line=1,
+        rationale="前回だけの指摘",
+        suggestion="対応してください",
+    )
+    comparison = ReviewComparison(
+        new=(result.findings[0],),
+        unresolved=(result.findings[1],),
+        resolved=(resolved_finding,),
+    )
+
+    paths = save_review(
+        root,
+        "group/project",
+        1,
+        "sha1",
+        result,
+        input_prompt="prompt",
+        run_log_path=log_source,
+        comparison=comparison,
+    )
+
+    md = paths.result_md.read_text(encoding="utf-8")
+    assert "[新規]" in md
+    assert "[未対応]" in md
+    assert "前回だけの指摘" in md
+    assert "修正済み" in md
+
+
+def test_load_review_result_round_trips_saved_result(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "runner-log.json"
+    log_source.write_text("{}", encoding="utf-8")
+    result = _result()
+
+    save_review(
+        root,
+        "group/project",
+        1,
+        "sha1",
+        result,
+        input_prompt="prompt",
+        run_log_path=log_source,
+    )
+
+    loaded = load_review_result(root, "group/project", 1, "sha1")
+
+    assert loaded == result
+
+
+def test_load_review_result_raises_when_missing(tmp_path):
+    root = tmp_path / "reviews"
+
+    with pytest.raises(OSError):
+        load_review_result(root, "group/project", 1, "does-not-exist")
