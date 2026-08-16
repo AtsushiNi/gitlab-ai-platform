@@ -8,7 +8,7 @@ D-12(#16、ドキュメントのCI)向け。`@mermaid-js/mermaid-cli`(mmdc)をnp
 このリポジトリは外部依存を増やしすぎない方針(docs/adr/0001-repository-structure.md)だが、
 それはWindows側(オフライン制約のあるレビューツール本体)向けの制約であり、
 このリポジトリ自体の開発用CI(GitHub Actions, ubuntu-latest)には適用されない
-(docs/adr/0012-docs-ci.md参照)。
+(docs/adr/0013-docs-ci.md参照)。
 """
 
 from __future__ import annotations

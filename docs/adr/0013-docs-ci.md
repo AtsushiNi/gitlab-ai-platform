@@ -1,4 +1,4 @@
-# ADR-0012: ドキュメントCIのツール構成
+# ADR-0013: ドキュメントCIのツール構成
 
 - Issue: [#16](https://github.com/AtsushiNi/gitlab-ai-platform/issues/16) (D-12)
 - 状態: 決定
