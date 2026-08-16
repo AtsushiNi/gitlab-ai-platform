@@ -1,10 +1,13 @@
 # レビュー結果スキーマと保存レイアウト
 
 - 実装場所: `src/gitlab_ai_platform/review/`(`types.py` / `errors.py` / `parser.py` /
-  `markdown.py` / `storage.py` / `index.py`)
+  `markdown.py` / `storage.py` / `index.py` / `comparison.py`)
 - 対応Issue: [#37](https://github.com/AtsushiNi/gitlab-ai-platform/issues/37) (M1-9)、
-  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、索引書き込みの並行安全性)
+  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、索引書き込みの並行安全性)、
+  [#81](https://github.com/AtsushiNi/gitlab-ai-platform/issues/81) (M2-2、再レビュー時の
+  「修正済み/未対応/新規」の突き合わせを追加)
 - 関連ADR: [ADR-0006](../adr/0006-review-output-schema.md)、
+  [ADR-0014](../adr/0014-re-review-finding-matching.md)(再レビュー時のマッチング方式)、
   [ADR-0015](../adr/0015-parallel-review-execution.md)
 - ステータス: 実装済み
 
@@ -16,6 +19,10 @@ Claude Codeの応答(`runner.RunResult.result_text`)から指摘一覧(重要度
 Runnerに渡した入力プロンプトと実行ログのコピーも同じディレクトリに保存し、複数レビューを
 横断できる索引(`index.jsonl`)を管理する(`index.py`)。`docs/architecture.md`のReviewの責務のうち、
 プロンプト設計(M1-8)と対になる「結果スキーマ」側を担当する。
+
+再レビュー時(M2-2, #81)は、前回レビューの`ReviewResult`と今回の`ReviewResult`を突き合わせ、
+指摘ごとに「修正済み(前回のみ)/未対応(両方)/新規(今回のみ)」を判定する
+(`comparison.py`の`compare_findings`)。突き合わせ結果は`save_review`経由で結果ファイルに反映される。
 
 ## 前提と非対象
 
@@ -37,14 +44,21 @@ Runnerに渡した入力プロンプトと実行ログのコピーも同じデ�
     直列化しており、行が混ざって壊れることはない([ADR-0015](../adr/0015-parallel-review-execution.md)
     参照)。複数プロセスからの同時書き込みはこのロックの対象外で、`ProcessLock`
     (`cli/lock.py`)が別途防ぐ
+  - `comparison.compare_findings`は`ReviewResult`同士(前回・今回)を比較するだけで、
+    「前回レビュー」をどう特定するか(索引からの検索・絞り込み)は関知しない。この判断は
+    非対象節の通りCLI側(`cli/single_run.py`の`_find_previous_review_result`)の責務。
 - 非対象:
   - GitLabへの自動投稿はしない(`docs/architecture.md`のReviewの境界。最終判断は人間)。
   - パース失敗時に何を保存するか・State Storeをどう更新するかは呼び出し側の責務
     (`ReviewOutputParseError`を送出するところまでがこのモジュールの責務。「エラー時の振る舞い」
     節参照)。
   - 索引(`index.jsonl`)の検索・フィルタ・表示は行わない(`read_index`で全件を返すのみ。
-    絞り込みや表示はCLI, M1-10/11の責務)。
+    絞り込みや表示はCLI, M1-10/11の責務)。これは再レビュー時に「前回はどのcommitか」を
+    索引から探す処理(`_find_previous_review_result`)も同様で、`review/`側には持たせない。
   - レビューするか否かの判断、二重レビューの防止(State Store, `store/`の責務)。
+  - 新規pushの検出そのものは行わない。MR Poller(`poller/`)が`(project, mr_iid, commit_sha)`の
+    未処理チェックで既に検出しており(`docs/specs/poller.md`)、`review/`はその結果として
+    渡された`ReviewResult`同士を突き合わせるだけ。
 
 ## 公開インターフェース
 
@@ -61,9 +75,18 @@ def parse_review_output(run_result: RunResult) -> ReviewResult:
 
 
 def render_markdown(
-    result: ReviewResult, *, project: str, mr_iid: int, sha: str
+    result: ReviewResult,
+    *,
+    project: str,
+    mr_iid: int,
+    sha: str,
+    comparison: ReviewComparison | None = None,
 ) -> str:
-    """`result`を人間可読なMarkdown文字列に整形する。"""
+    """`result`を人間可読なMarkdown文字列に整形する。
+
+    `comparison`を渡すと、各指摘に「新規」「未対応」バッジを付け、末尾に前回から
+    解消された指摘の一覧を追加する(M2-2, #81)。省略時は従来通りの出力(後方互換)。
+    """
 
 
 def save_review(
@@ -76,8 +99,32 @@ def save_review(
     input_prompt: str,
     run_log_path: Path,
     reviewed_at: datetime | None = None,
+    comparison: ReviewComparison | None = None,
 ) -> ReviewPaths:
-    """`result`を`<root>/<project>/<mr_iid>/<sha>/`へ保存し、索引に1行追記する。"""
+    """`result`を`<root>/<project>/<mr_iid>/<sha>/`へ保存し、索引に1行追記する。
+
+    `comparison`を渡すと`result.json`の`comparison`フィールド・`result.md`の
+    バッジ/セクションに反映される(M2-2, #81)。省略時は`comparison: null`。
+    """
+
+
+def load_review_result(
+    root: Path | str, project: str, mr_iid: int, sha: str
+) -> ReviewResult:
+    """`<root>/<project>/<mr_iid>/<sha>/result.json`を`ReviewResult`に復元する(`save_review`の逆操作)。
+
+    再レビュー時に前回の指摘一覧を読み直すために使う(M2-2, #81)。
+    """
+
+
+def compare_findings(
+    previous: ReviewResult | None, current: ReviewResult
+) -> ReviewComparison | None:
+    """`previous`(前回)と`current`(今回)のfindingsを突き合わせる(M2-2, #81)。
+
+    `previous`が`None`(前回レビューが無い、初回レビュー)の場合は`None`を返す。
+    マッチング方式は[ADR-0014](../adr/0014-re-review-finding-matching.md)参照。
+    """
 
 
 def append_entry(root: Path | str, entry: IndexEntry) -> None:
@@ -89,6 +136,8 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 ```
 
 レビュープロンプト本体(`build_review_instructions`)は`docs/specs/prompts.md`(M1-8)を参照。
+再レビュー時もプロンプト自体は変更しない([ADR-0014](../adr/0014-re-review-finding-matching.md)
+「決定」節)。
 
 ## 入出力スキーマ
 
@@ -100,7 +149,8 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 | `Finding` (frozen dataclass) | `severity: Severity`, `file: str`, `line: int \| None`, `rationale: str`, `suggestion: str` | 指摘1件。`line`は特定の行に紐づかない指摘では`None` |
 | `ReviewResult` (frozen dataclass) | `summary: str`, `findings: tuple[Finding, ...]` | `parse_review_output`の戻り値。識別情報(project等)は持たない |
 | `ReviewPaths` (frozen dataclass) | `dir: Path`, `result_json: Path`, `result_md: Path`, `input_path: Path`, `log_path: Path` | `save_review`の戻り値 |
-| `IndexEntry` (frozen dataclass) | `project: str`, `mr_iid: int`, `sha: str`, `reviewed_at: datetime`, `result_dir: str`, `summary: str`, `critical_count: int`, `major_count: int`, `minor_count: int` | 索引1行分 |
+| `IndexEntry` (frozen dataclass) | `project: str`, `mr_iid: int`, `sha: str`, `reviewed_at: datetime`, `result_dir: str`, `summary: str`, `critical_count: int`, `major_count: int`, `minor_count: int` | 索引1行分。M2-2の再レビュー結果(新規/未対応/修正済みの件数)は含めない(ADR-0014「却下した選択肢」) |
+| `ReviewComparison` (frozen dataclass) | `new: tuple[Finding, ...]`, `unresolved: tuple[Finding, ...]`, `resolved: tuple[Finding, ...]` | `compare_findings`の戻り値(M2-2, #81)。前回レビューが無ければ生成されない(`None`) |
 
 ### Claude Codeに要求するJSON出力スキーマ
 
@@ -129,7 +179,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 
 ```text
 <root>/<project>/<mr_iid>/<sha>/
-    result.json    # {"summary": ..., "findings": [...]} (Findingのseverityは文字列化)
+    result.json    # {"summary": ..., "findings": [...], "comparison": {...} | null}
     result.md      # render_markdownの出力
     input.md        # Runnerに渡した完成後のプロンプト全文
     run_log.json    # RunResult.log_pathのコピー(Runnerの実行ログ)
@@ -138,6 +188,26 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 
 `project`はGitLabの`group/subgroup/project`をエンコードせずそのままディレクトリ階層にする
 (`workspace`/`runner`の`slugify_project`とは異なる方針。理由は[ADR-0006](../adr/0006-review-output-schema.md)参照)。
+
+`result.json`の`comparison`フィールド(M2-2, #81)は、前回レビューが存在した場合のみ
+オブジェクトになり、無ければ`null`になる。
+
+```json
+{
+  "summary": "...",
+  "findings": [ /* Findingの配列 */ ],
+  "comparison": {
+    "new": [ /* 今回のみのFinding */ ],
+    "unresolved": [ /* 前回にも対応するFindingがあった、今回のFinding */ ],
+    "resolved": [ /* 前回のみのFinding(今回は解消) */ ]
+  }
+}
+```
+
+`result.md`では、`comparison`があれば各指摘の見出しに`[新規]`/`[未対応]`のバッジを付け、
+末尾に`## 前回から修正された指摘 (n件)`セクションで`resolved`を列挙する(`resolved`が
+空の場合はセクション自体を出さない)。マッチング方式(同一ファイル + `rationale`/`suggestion`の
+テキスト類似度)は[ADR-0014](../adr/0014-re-review-finding-matching.md)参照。
 
 ## エラー時の振る舞い
 
@@ -151,8 +221,11 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
   `parse_review_output`が送出する。`raw_text`属性に元の`result_text`をそのまま保持しており、
   呼び出し側はこれを使って人間が読める形で内容を確認できる(State Storeを`FAILED`に遷移させる
   等の具体的な対応は呼び出し側の責務、[ADR-0006](../adr/0006-review-output-schema.md)参照)。
-- `save_review`・`append_entry`・`read_index`はこのモジュール独自の例外を送出しない
-  (ファイルI/Oの失敗は標準の`OSError`系がそのまま伝播する)。
+- `save_review`・`append_entry`・`read_index`・`load_review_result`はこのモジュール独自の
+  例外を送出しない(ファイルI/Oの失敗は標準の`OSError`系、JSON破損は`json.JSONDecodeError`
+  ・`KeyError`がそのまま伝播する)。`compare_findings`は純粋関数で例外を送出しない。
+  `load_review_result`の失敗をどう扱うか(前回データが読めない場合に比較自体を諦めるか等)は
+  呼び出し側(`cli/single_run.py`の`_find_previous_review_result`)の責務。
 
 ## テスト方針
 
@@ -179,7 +252,16 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
   期待するパスに書き出されること、`result.json`が`Finding`と往復可能なこと、`run_log_path`の
   内容がそのままコピーされること、`reviewed_at`省略時に現在時刻が使われること、索引への
   追記(重要度ごとの件数)が正しいことを検証する。実DB・実Runnerには接続しない
-  (`tmp_path`上のファイルI/Oのみ、CLAUDE.mdのテスト方針)。
+  (`tmp_path`上のファイルI/Oのみ、CLAUDE.mdのテスト方針)。加えて(M2-2, #81)、`comparison`を
+  渡さない場合は`result.json`の`comparison`が`null`になること、渡した場合は`new`/`unresolved`/
+  `resolved`がそれぞれ`result.json`・`result.md`(バッジ・修正済みセクション)に反映されること、
+  `load_review_result`が`save_review`で書いた`result.json`を`ReviewResult`として往復できること、
+  存在しないcommitに対しては`OSError`を送出することを検証する。
+- `test_comparison.py`(M2-2, #81): 前回レビューが無ければ`None`を返すこと、同一文面/類似文面の
+  指摘は「未対応」に分類されること、文面が大きく異なる指摘は「新規」に分類されること、
+  ファイルが異なる指摘は同一視しないこと、前回のみに存在した指摘が「修正済み」になること、
+  類似度の異なる複数候補がある場合はスコアの高い組み合わせが優先されることを検証する。
+  実LLM呼び出しは行わない(`ReviewResult`/`Finding`を手組みして直接`compare_findings`に渡す)。
 - `test_prompts.py`(`docs/specs/prompts.md`と共有): 「出力」セクションが```json ブロックと
   `Finding`のフィールド名(`summary`/`findings`/`severity`/`critical`/`major`/`minor`/`file`/
   `line`/`rationale`/`suggestion`)を含むことを検証する回帰テストを追加した。
@@ -190,10 +272,14 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 - [ADR-0006: レビュー結果スキーマと保存レイアウトの設計](../adr/0006-review-output-schema.md)
 - [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   `index.append_entry`の並行書き込み排他の設計判断
+- [ADR-0014: 再レビュー時の指摘マッチング方式](../adr/0014-re-review-finding-matching.md)(M2-2, #81)
 - [prompts.md](prompts.md) — レビュープロンプト(M1-8)。「出力」セクションはこのモジュールの
-  スキーマと1対1の契約
+  スキーマと1対1の契約。再レビュー時も変更しない([ADR-0014](../adr/0014-re-review-finding-matching.md))
 - [claude-code-runner.md](claude-code-runner.md) — `RunResult.result_text`/`log_path`の由来
+- [poller.md](poller.md) — 新規push(再レビュー対象)の検出はMR Poller側の既存の
+  `(project, mr_iid, commit_sha)`未処理チェックが担う
 - [docs/guide/reading-results.md](../guide/reading-results.md)(D-15) — 重要度の判断基準・
   指摘の読み方(このスキーマと対で維持する)
 - ソースコード: `src/gitlab_ai_platform/review/`
-  (`types.py` / `errors.py` / `parser.py` / `markdown.py` / `storage.py` / `index.py` / `__init__.py`)
+  (`types.py` / `errors.py` / `parser.py` / `markdown.py` / `storage.py` / `index.py` /
+  `comparison.py` / `__init__.py`)

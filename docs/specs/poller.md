@@ -12,6 +12,14 @@
 `(project, mr_iid, commit_sha)`が未処理なものを検出し、State Storeにレコードを
 作成することで「起票」する。
 
+**再レビュー(M2-2, [#81](https://github.com/AtsushiNi/gitlab-ai-platform/issues/81))の
+「新規push検出」は、この`(project, mr_iid, commit_sha)`単位の未処理チェックがそのまま担う。**
+同一MRに新しいcommitがpushされると`commit_sha`が変わるため、既存のロジックのまま
+別レコードとして起票される(下記テスト方針「同一MRでも新しい`commit_sha`(再push)は
+別レコードとして起票されること」参照)。Poller自体には再レビュー用の追加実装はない。
+前回レビューとの指摘の突き合わせ(修正済み/未対応/新規の判定)は
+[review-output.md](review-output.md)・[ADR-0014](../adr/0014-re-review-finding-matching.md)を参照。
+
 ## 前提と非対象
 
 - 前提:
@@ -158,4 +166,7 @@ Poller構築前に検知する。
 - [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md) — `on_detected`
   を使ってレビュー実行パイプラインを結線するCLI側の設計
 - [cli.md](cli.md) — `on_detected`経由でこのPollerを結線するCLI(`watch`サブコマンド)の仕様
+- [review-output.md](review-output.md) — 再レビュー時の指摘突き合わせ(修正済み/未対応/新規、
+  M2-2, #81)。新規push自体の検出はこのPollerの既存ロジックが担う
+- [ADR-0014: 再レビュー時の指摘マッチング方式](../adr/0014-re-review-finding-matching.md)
 - ソースコード: `src/gitlab_ai_platform/poller/`(`poller.py` / `types.py` / `__init__.py`)

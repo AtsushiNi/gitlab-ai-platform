@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from gitlab_ai_platform.cli.single_run import (
     _clone_url_for,
     _credential_helper,
+    _find_previous_review_result,
     build_workspace_manager,
     execute_review,
 )
@@ -19,6 +21,7 @@ from gitlab_ai_platform.gitlab_adapter.types import (
     MergeRequestDiff,
     Note,
 )
+from gitlab_ai_platform.review import ReviewResult, save_review
 from gitlab_ai_platform.review.errors import ReviewOutputParseError
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.runner.errors import ClaudeCodeTimeoutError
@@ -374,6 +377,178 @@ def test_execute_review_rerun_on_same_commit_does_not_raise_duplicate_error(tmp_
         assert record.status == ReviewStatus.DONE
     finally:
         store.close()
+
+
+def test_execute_review_computes_comparison_against_previous_sha(tmp_path):
+    """再レビュー(M2-2, #81): 前回とcommitが異なる2回目の実行で、修正済み/未対応/新規が
+    正しく分類され、result.jsonのcomparisonフィールドに反映されることの回帰テスト。"""
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(_merge_request())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    store = SqliteStateStore(":memory:")
+
+    carried_over_finding = {
+        "severity": "major",
+        "file": "src/app.py",
+        "line": 10,
+        "rationale": "Nullチェックが不足しているため例外が発生する可能性があります",
+        "suggestion": "Nullチェックを追加してください",
+    }
+    resolved_only_finding = {
+        "severity": "minor",
+        "file": "src/util.py",
+        "line": 5,
+        "rationale": "変数名がわかりにくいです",
+        "suggestion": "より説明的な名前にしてください",
+    }
+    new_finding = {
+        "severity": "critical",
+        "file": "src/other.py",
+        "line": 1,
+        "rationale": "APIキーがログに平文で出力されています",
+        "suggestion": "ログ出力からAPIキーを除去してください",
+    }
+
+    try:
+        runner1 = _FakeClaudeCodeRunner(
+            _run_result(
+                tmp_path, findings=[carried_over_finding, resolved_only_finding]
+            )
+        )
+        execute_review(
+            adapter, workspace, runner1, store, config, _PROJECT, _MR_IID, sha="sha1"
+        )
+
+        runner2 = _FakeClaudeCodeRunner(
+            _run_result(tmp_path, findings=[carried_over_finding, new_finding])
+        )
+        result2 = execute_review(
+            adapter, workspace, runner2, store, config, _PROJECT, _MR_IID, sha="sha2"
+        )
+
+        data = json.loads(result2.review_paths.result_json.read_text(encoding="utf-8"))
+        comparison = data["comparison"]
+        assert comparison is not None
+        assert [f["file"] for f in comparison["unresolved"]] == ["src/app.py"]
+        assert [f["file"] for f in comparison["new"]] == ["src/other.py"]
+        assert [f["file"] for f in comparison["resolved"]] == ["src/util.py"]
+    finally:
+        store.close()
+
+
+def test_execute_review_first_review_has_no_comparison(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(_merge_request())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(_run_result(tmp_path))
+    store = SqliteStateStore(":memory:")
+
+    try:
+        result = execute_review(
+            adapter, workspace, runner, store, config, _PROJECT, _MR_IID
+        )
+
+        data = json.loads(result.review_paths.result_json.read_text(encoding="utf-8"))
+        assert data["comparison"] is None
+    finally:
+        store.close()
+
+
+def test_find_previous_review_result_returns_none_without_prior_reviews(tmp_path):
+    root = tmp_path / "reviews"
+
+    result = _find_previous_review_result(
+        str(root), _PROJECT, _MR_IID, exclude_sha="sha2"
+    )
+
+    assert result is None
+
+
+def test_find_previous_review_result_excludes_current_sha(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "log.json"
+    log_source.write_text("{}", encoding="utf-8")
+    save_review(
+        root,
+        _PROJECT,
+        _MR_IID,
+        "sha1",
+        ReviewResult(summary="s", findings=()),
+        input_prompt="p",
+        run_log_path=log_source,
+    )
+
+    # 索引に唯一存在するレビューが、今まさに保存しようとしているcommit自身と同じ場合は
+    # 「前回」として扱わない(単発実行の同一commit再実行と混同しないため)
+    result = _find_previous_review_result(
+        str(root), _PROJECT, _MR_IID, exclude_sha="sha1"
+    )
+
+    assert result is None
+
+
+def test_find_previous_review_result_returns_latest_excluding_current_sha(tmp_path):
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "log.json"
+    log_source.write_text("{}", encoding="utf-8")
+    older = ReviewResult(summary="old", findings=())
+    newer = ReviewResult(summary="new", findings=())
+
+    save_review(
+        root,
+        _PROJECT,
+        _MR_IID,
+        "sha1",
+        older,
+        input_prompt="p",
+        run_log_path=log_source,
+        reviewed_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    save_review(
+        root,
+        _PROJECT,
+        _MR_IID,
+        "sha2",
+        newer,
+        input_prompt="p",
+        run_log_path=log_source,
+        reviewed_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+
+    result = _find_previous_review_result(
+        str(root), _PROJECT, _MR_IID, exclude_sha="sha3"
+    )
+
+    assert result == newer
+
+
+def test_find_previous_review_result_returns_none_when_result_file_missing(tmp_path):
+    """索引にはあるが結果ファイルが後から消えている(壊れている)場合、比較機能だけを
+    諦め、例外を送出せずNoneを返すことの回帰テスト(single_run.pyのモジュールdocstring参照)。
+    """
+    root = tmp_path / "reviews"
+    log_source = tmp_path / "log.json"
+    log_source.write_text("{}", encoding="utf-8")
+    paths = save_review(
+        root,
+        _PROJECT,
+        _MR_IID,
+        "sha1",
+        ReviewResult(summary="s", findings=()),
+        input_prompt="p",
+        run_log_path=log_source,
+    )
+    paths.result_json.unlink()
+
+    result = _find_previous_review_result(
+        str(root), _PROJECT, _MR_IID, exclude_sha="sha2"
+    )
+
+    assert result is None
 
 
 def test_clone_url_for_builds_https_git_url():

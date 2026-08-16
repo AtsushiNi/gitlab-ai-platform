@@ -2,11 +2,13 @@
 
 - 実装場所: `src/gitlab_ai_platform/review/`
 - 対応Issue: [#36](https://github.com/AtsushiNi/gitlab-ai-platform/issues/36) (M1-8)
-- 関連ADR: なし。プロンプトの合成方式(`instructions`にRunnerがMRの実データを後から追記する形)
+- 関連ADR: プロンプトの合成方式(`instructions`にRunnerがMRの実データを後から追記する形)
   自体は[ADR-0005](../adr/0005-claude-code-runner-design.md)(M1-7)で確定済みで、本Issueは
   その`instructions`引数の中身(レビュー観点の言語化)を決めるものであり、複数の技術的選択肢を
   比較するような設計判断は発生していない。「出力」セクションのJSON出力形式に関する設計判断は
-  [ADR-0006](../adr/0006-review-output-schema.md)(M1-9)に記録した
+  [ADR-0006](../adr/0006-review-output-schema.md)(M1-9)に記録した。再レビュー(M2-2, #81)でも
+  このプロンプトを変更しないという判断は[ADR-0014](../adr/0014-re-review-finding-matching.md)
+  に記録した
 - ステータス: 実装済み(プロンプト設計 + 結果スキーマに対応した出力形式の指示。
   結果スキーマ自体の定義・保存は[review-output.md](review-output.md)、M1-9)
 
@@ -43,6 +45,10 @@ MRレビュー用のプロンプト(`instructions`文字列)を設計し、`buil
     `reviews/<project>/<mr_iid>/<sha>/`への保存)は[review-output.md](review-output.md)(M1-9)
   - GitLabへの自動投稿の可否判断(`docs/architecture.md`のReviewの境界。最終判断は人間)
   - レビュー対象を絞り込むかどうかの判断(MR Poller、`poller/`の責務)
+  - 再レビュー時に前回の指摘一覧をプロンプトへ含めることはしない。前回・今回の指摘の突き合わせ
+    (修正済み/未対応/新規の判定)はレビュー実行後にプログラム的に行う
+    ([review-output.md](review-output.md)の`comparison.compare_findings`、M2-2 #81、
+    [ADR-0014](../adr/0014-re-review-finding-matching.md)「却下した選択肢」参照)
 
 ## 公開インターフェース
 

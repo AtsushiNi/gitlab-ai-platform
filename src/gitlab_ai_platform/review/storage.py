@@ -8,6 +8,11 @@
 既に`"reviews/group/project/1/abc123"`のような素のprojectパスを想定していること(既存の
 `tests/gitlab_ai_platform/store/test_sqlite.py`参照)から、可読性を優先した
 (`docs/adr/0006-review-output-schema.md`)。
+
+`load_review_result`は`save_review`の逆操作で、再レビュー(M2-2, #81)時に前回の`result.json`を
+読み直すために使う。索引(`index.jsonl`)からどのcommitを「前回」とするかを決める処理自体は
+CLI側の責務(`docs/specs/review-output.md`「非対象」)であり、ここでは`sha`が既知の場合に
+1件を読み戻すことだけを担当する。
 """
 
 from __future__ import annotations
@@ -22,7 +27,14 @@ from ..logging_ import get_logger
 from .errors import ReviewError
 from .index import append_entry
 from .markdown import render_markdown
-from .types import IndexEntry, ReviewPaths, ReviewResult, Severity
+from .types import (
+    Finding,
+    IndexEntry,
+    ReviewComparison,
+    ReviewPaths,
+    ReviewResult,
+    Severity,
+)
 
 _logger = get_logger(__name__)
 
@@ -42,25 +54,36 @@ def save_review(
     input_prompt: str,
     run_log_path: Path,
     reviewed_at: datetime | None = None,
+    comparison: ReviewComparison | None = None,
 ) -> ReviewPaths:
     """`result`を`<root>/<project>/<mr_iid>/<sha>/`へ保存し、索引に1行追記する。
 
     `input_prompt`はRunnerに渡した完成後のプロンプト全文(`runner.build_prompt`
     の戻り値)を想定する。`run_log_path`はRunnerが書き出した実行ログ(`RunResult.log_path`)を指し、
     このディレクトリ内にコピーして、レビュー結果と同じ場所から実行ログもたどれるようにする。
+    `comparison`は再レビュー(M2-2, #81)時に前回レビューとの突き合わせ結果
+    (`comparison.compare_findings`の戻り値)を渡すと、`result.json`の`comparison`フィールドと
+    `result.md`の「修正済み/未対応/新規」表示に反映される。初回レビュー等で前回が無い場合は
+    省略してよい(`result.json`の`comparison`は`null`になる)。
     """
     dest_dir = _resolve_dest_dir(root, project, mr_iid, sha)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     result_json_path = dest_dir / _RESULT_JSON_NAME
     result_json_path.write_text(
-        json.dumps(_result_to_dict(result), ensure_ascii=False, indent=2),
+        json.dumps(
+            {**_result_to_dict(result), "comparison": _comparison_to_dict(comparison)},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
     result_md_path = dest_dir / _RESULT_MD_NAME
     result_md_path.write_text(
-        render_markdown(result, project=project, mr_iid=mr_iid, sha=sha),
+        render_markdown(
+            result, project=project, mr_iid=mr_iid, sha=sha, comparison=comparison
+        ),
         encoding="utf-8",
     )
 
@@ -122,13 +145,50 @@ def _resolve_dest_dir(root: Path | str, project: str, mr_iid: int, sha: str) -> 
     return dest_dir
 
 
+def load_review_result(
+    root: Path | str, project: str, mr_iid: int, sha: str
+) -> ReviewResult:
+    """`<root>/<project>/<mr_iid>/<sha>/result.json`を読み込み`ReviewResult`に復元する。
+
+    `save_review`の逆操作。ファイルが無い・JSONとして壊れている場合はそのまま
+    `OSError`/`json.JSONDecodeError`/`KeyError`を伝播させる(`index.py`の`read_index`のように
+    ここで握りつぶさない。「前回データが無い」と「前回データが壊れている」を呼び出し側が
+    区別できるようにするため)。
+    """
+    dest_dir = _resolve_dest_dir(root, project, mr_iid, sha)
+    data = json.loads((dest_dir / _RESULT_JSON_NAME).read_text(encoding="utf-8"))
+    findings = tuple(_finding_from_dict(item) for item in data["findings"])
+    return ReviewResult(summary=data["summary"], findings=findings)
+
+
+def _finding_to_dict(finding: Finding) -> dict:
+    return {**asdict(finding), "severity": finding.severity.value}
+
+
+def _finding_from_dict(data: dict) -> Finding:
+    return Finding(
+        severity=Severity(data["severity"]),
+        file=data["file"],
+        line=data["line"],
+        rationale=data["rationale"],
+        suggestion=data["suggestion"],
+    )
+
+
 def _result_to_dict(result: ReviewResult) -> dict:
     return {
         "summary": result.summary,
-        "findings": [
-            {**asdict(finding), "severity": finding.severity.value}
-            for finding in result.findings
-        ],
+        "findings": [_finding_to_dict(finding) for finding in result.findings],
+    }
+
+
+def _comparison_to_dict(comparison: ReviewComparison | None) -> dict | None:
+    if comparison is None:
+        return None
+    return {
+        "new": [_finding_to_dict(f) for f in comparison.new],
+        "unresolved": [_finding_to_dict(f) for f in comparison.unresolved],
+        "resolved": [_finding_to_dict(f) for f in comparison.resolved],
     }
 
 
@@ -159,4 +219,4 @@ def _build_index_entry(
     )
 
 
-__all__ = ["save_review"]
+__all__ = ["load_review_result", "save_review"]

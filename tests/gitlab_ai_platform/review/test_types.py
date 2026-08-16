@@ -7,6 +7,7 @@ import pytest
 from gitlab_ai_platform.review import (
     Finding,
     IndexEntry,
+    ReviewComparison,
     ReviewPaths,
     ReviewResult,
     Severity,
@@ -86,3 +87,26 @@ def test_index_entry_holds_counts_and_metadata():
     assert entry.critical_count == 0
     assert entry.major_count == 1
     assert entry.minor_count == 2
+
+
+def test_review_comparison_is_frozen_and_holds_three_buckets():
+    new_finding = Finding(
+        severity=Severity.MAJOR, file="a.py", line=1, rationale="r1", suggestion="s1"
+    )
+    unresolved_finding = Finding(
+        severity=Severity.MINOR, file="b.py", line=2, rationale="r2", suggestion="s2"
+    )
+    resolved_finding = Finding(
+        severity=Severity.CRITICAL, file="c.py", line=3, rationale="r3", suggestion="s3"
+    )
+    comparison = ReviewComparison(
+        new=(new_finding,),
+        unresolved=(unresolved_finding,),
+        resolved=(resolved_finding,),
+    )
+
+    assert comparison.new == (new_finding,)
+    assert comparison.unresolved == (unresolved_finding,)
+    assert comparison.resolved == (resolved_finding,)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        comparison.new = ()
