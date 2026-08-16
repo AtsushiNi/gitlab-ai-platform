@@ -34,7 +34,9 @@ class _FakePopen:
     `(stdout, stderr)`のタプル(その内容を返す)。
     """
 
-    def __init__(self, command: list[str], *, outcomes: list, returncode: int = 0, **kwargs) -> None:
+    def __init__(
+        self, command: list[str], *, outcomes: list, returncode: int = 0, **kwargs
+    ) -> None:
         self.args = command
         self.kwargs = kwargs
         self._outcomes = list(outcomes)
@@ -55,7 +57,9 @@ class _FakePopen:
         self.kill_called = True
 
 
-def _popen_factory(outcomes: list, *, returncode: int = 0, recorded_calls: list | None = None):
+def _popen_factory(
+    outcomes: list, *, returncode: int = 0, recorded_calls: list | None = None
+):
     def factory(command: list[str], **kwargs) -> _FakePopen:
         if recorded_calls is not None:
             recorded_calls.append((command, kwargs))
@@ -64,7 +68,9 @@ def _popen_factory(outcomes: list, *, returncode: int = 0, recorded_calls: list 
     return factory
 
 
-def test_run_executes_claude_and_parses_json_result(tmp_path: Path, review_context: ReviewContext):
+def test_run_executes_claude_and_parses_json_result(
+    tmp_path: Path, review_context: ReviewContext
+):
     calls: list = []
     runner = SubprocessClaudeCodeRunner(
         tmp_path / "logs",
@@ -96,11 +102,15 @@ def test_run_includes_instructions_and_context_in_prompt(
 ):
     calls: list = []
     runner = SubprocessClaudeCodeRunner(
-        tmp_path / "logs", popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls)
+        tmp_path / "logs",
+        popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls),
     )
 
     runner.run(
-        tmp_path / "worktree", "Review this MR carefully.", review_context, timeout_seconds=60
+        tmp_path / "worktree",
+        "Review this MR carefully.",
+        review_context,
+        timeout_seconds=60,
     )
 
     prompt = calls[0][0][2]
@@ -116,7 +126,8 @@ def test_run_includes_instructions_and_context_in_prompt(
 def test_run_builds_permission_flags(tmp_path: Path, review_context: ReviewContext):
     calls: list = []
     runner = SubprocessClaudeCodeRunner(
-        tmp_path / "logs", popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls)
+        tmp_path / "logs",
+        popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls),
     )
 
     runner.run(
@@ -149,7 +160,9 @@ def test_run_raises_claude_code_not_found_error_when_binary_missing(
     runner = SubprocessClaudeCodeRunner(tmp_path / "logs", popen=factory)
 
     with pytest.raises(ClaudeCodeNotFoundError):
-        runner.run(tmp_path / "worktree", "instructions", review_context, timeout_seconds=60)
+        runner.run(
+            tmp_path / "worktree", "instructions", review_context, timeout_seconds=60
+        )
 
 
 def test_claude_code_not_found_error_holds_log_path_and_saves_log(
@@ -163,7 +176,9 @@ def test_claude_code_not_found_error_holds_log_path_and_saves_log(
     runner = SubprocessClaudeCodeRunner(tmp_path / "logs", popen=factory)
 
     with pytest.raises(ClaudeCodeNotFoundError) as excinfo:
-        runner.run(tmp_path / "worktree", "instructions", review_context, timeout_seconds=60)
+        runner.run(
+            tmp_path / "worktree", "instructions", review_context, timeout_seconds=60
+        )
 
     assert excinfo.value.log_path.exists()
     saved = json.loads(excinfo.value.log_path.read_text())
@@ -222,20 +237,26 @@ def test_run_kills_process_when_it_does_not_respond_to_terminate(
     )
 
     with pytest.raises(ClaudeCodeTimeoutError) as exc_info:
-        runner.run(tmp_path / "worktree", "instructions", review_context, timeout_seconds=5)
+        runner.run(
+            tmp_path / "worktree", "instructions", review_context, timeout_seconds=5
+        )
 
     assert captured_popen[0].terminate_called is True
     assert captured_popen[0].kill_called is True
     assert exc_info.value.log_path.exists()
 
 
-def test_run_raises_output_error_for_invalid_json(tmp_path: Path, review_context: ReviewContext):
+def test_run_raises_output_error_for_invalid_json(
+    tmp_path: Path, review_context: ReviewContext
+):
     runner = SubprocessClaudeCodeRunner(
         tmp_path / "logs", popen=_popen_factory([("not json", "some stderr")])
     )
 
     with pytest.raises(ClaudeCodeOutputError) as exc_info:
-        runner.run(tmp_path / "worktree", "instructions", review_context, timeout_seconds=60)
+        runner.run(
+            tmp_path / "worktree", "instructions", review_context, timeout_seconds=60
+        )
 
     assert exc_info.value.log_path.exists()
     assert exc_info.value.stdout == "not json"
@@ -269,7 +290,7 @@ def test_run_truncates_prompt_when_diff_exceeds_max_arg_size(
 ):
     # 大きなdiffでも単一のCLI引数の上限(MAX_ARG_STRLEN)を超えないよう切り詰められ、
     # Popenへの引数構築自体は例外を送出せず完了することの回帰テスト
-    from gitlab_ai_platform.gitlab_adapter.types import Discussion, MergeRequestDiff
+    from gitlab_ai_platform.gitlab_adapter.types import MergeRequestDiff
 
     huge_diff = MergeRequestDiff(
         old_path="huge.py",
@@ -286,7 +307,8 @@ def test_run_truncates_prompt_when_diff_exceeds_max_arg_size(
     )
     calls: list = []
     runner = SubprocessClaudeCodeRunner(
-        tmp_path / "logs", popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls)
+        tmp_path / "logs",
+        popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls),
     )
 
     runner.run(tmp_path / "worktree", "instructions", huge_context, timeout_seconds=60)

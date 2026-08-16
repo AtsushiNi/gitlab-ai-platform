@@ -40,8 +40,7 @@ def test_setup_logging_omits_console_handler_when_disabled(tmp_path: Path) -> No
 
     handlers = logging.getLogger().handlers
     assert not any(
-        isinstance(h, logging.StreamHandler)
-        and not isinstance(h, logging.FileHandler)
+        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
         for h in handlers
     )
 

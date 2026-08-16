@@ -57,7 +57,12 @@ def _adapter(
 ) -> tuple[GitLabRestAdapter, _FakeSession]:
     session = _FakeSession(responses)
     adapter = GitLabRestAdapter(
-        _BASE_URL, _TOKEN, session=session, max_retries=3, backoff_seconds=0.0, sleep=sleep
+        _BASE_URL,
+        _TOKEN,
+        session=session,
+        max_retries=3,
+        backoff_seconds=0.0,
+        sleep=sleep,
     )
     return adapter, session
 
@@ -94,7 +99,9 @@ _ALLOWED_PUBLIC_OPERATIONS = {
 
 
 def test_rest_adapter_exposes_only_allow_listed_operations():
-    public_methods = {name for name in dir(GitLabRestAdapter) if not name.startswith("_")}
+    public_methods = {
+        name for name in dir(GitLabRestAdapter) if not name.startswith("_")
+    }
 
     assert public_methods == _ALLOWED_PUBLIC_OPERATIONS
 
@@ -144,7 +151,9 @@ def test_list_merge_requests_paginates_using_x_next_page_header():
         ]
     )
 
-    result = adapter.list_merge_requests("group/project", labels=["レビュー待ち"], state="opened")
+    result = adapter.list_merge_requests(
+        "group/project", labels=["レビュー待ち"], state="opened"
+    )
 
     assert [mr.iid for mr in result] == [1, 2]
     assert result[0].labels == ("レビュー待ち",)
@@ -287,16 +296,22 @@ def test_push_file_changes_returns_new_sha():
     )
 
     actions = [
-        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="print(1)")
+        CommitAction(
+            action=CommitActionType.UPDATE, file_path="a.py", content="print(1)"
+        )
     ]
-    new_sha = adapter.push_file_changes("group/project", "feature/x", "fix bug", actions)
+    new_sha = adapter.push_file_changes(
+        "group/project", "feature/x", "fix bug", actions
+    )
 
     assert new_sha == "new-sha"
     assert session.calls[0]["method"] == "GET"
     body = session.calls[1]["json"]
     assert body["branch"] == "feature/x"
     assert body["commit_message"] == "fix bug"
-    assert body["actions"] == [{"action": "update", "file_path": "a.py", "content": "print(1)"}]
+    assert body["actions"] == [
+        {"action": "update", "file_path": "a.py", "content": "print(1)"}
+    ]
 
 
 def test_push_file_changes_omits_content_for_delete_action():
@@ -316,7 +331,9 @@ def test_push_file_changes_rejects_protected_branch_without_calling_commits_api(
         [_FakeResponse(json_data={"name": "main", "protected": True})]
     )
 
-    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    actions = [
+        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")
+    ]
     with pytest.raises(ProtectedBranchError):
         adapter.push_file_changes("group/project", "main", "oops", actions)
 
@@ -560,7 +577,9 @@ def test_429_retries_using_retry_after_header_then_succeeds():
     sleeps: list[float] = []
     adapter, session = _adapter(
         [
-            _FakeResponse(status_code=429, headers={"Retry-After": "2"}, text="rate limited"),
+            _FakeResponse(
+                status_code=429, headers={"Retry-After": "2"}, text="rate limited"
+            ),
             _FakeResponse(json_data={"version": "17.0.0"}),
         ],
         sleep=sleeps.append,
@@ -622,7 +641,9 @@ def test_5xx_on_non_get_request_is_not_retried_to_avoid_duplicate_writes():
         ],
     )
 
-    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    actions = [
+        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")
+    ]
     with pytest.raises(GitLabApiError) as excinfo:
         adapter.push_file_changes("group/project", "feature/x", "msg", actions)
 
@@ -667,7 +688,9 @@ def test_push_file_changes_records_success_audit_log(caplog: pytest.LogCaptureFi
     adapter, _ = _adapter(
         [_unprotected_branch_response(), _FakeResponse(json_data={"id": "new-sha"})]
     )
-    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    actions = [
+        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")
+    ]
 
     adapter.push_file_changes("group/project", "feature/x", "fix", actions)
 
@@ -683,8 +706,12 @@ def test_push_file_changes_records_rejected_audit_log_for_protected_branch(
     caplog: pytest.LogCaptureFixture,
 ):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
-    adapter, _ = _adapter([_FakeResponse(json_data={"name": "main", "protected": True})])
-    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    adapter, _ = _adapter(
+        [_FakeResponse(json_data={"name": "main", "protected": True})]
+    )
+    actions = [
+        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")
+    ]
 
     with pytest.raises(ProtectedBranchError):
         adapter.push_file_changes("group/project", "main", "oops", actions)
@@ -701,9 +728,14 @@ def test_push_file_changes_records_error_audit_log_on_api_failure(
 ):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
     adapter, _ = _adapter(
-        [_unprotected_branch_response(), _FakeResponse(status_code=503, text="unavailable")]
+        [
+            _unprotected_branch_response(),
+            _FakeResponse(status_code=503, text="unavailable"),
+        ]
     )
-    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    actions = [
+        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")
+    ]
 
     with pytest.raises(GitLabApiError):
         adapter.push_file_changes("group/project", "feature/x", "oops", actions)
@@ -713,7 +745,9 @@ def test_push_file_changes_records_error_audit_log_on_api_failure(
     assert records[0].status == "error"
 
 
-def test_create_merge_request_records_success_audit_log(caplog: pytest.LogCaptureFixture):
+def test_create_merge_request_records_success_audit_log(
+    caplog: pytest.LogCaptureFixture,
+):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
     adapter, _ = _adapter(
         [
@@ -768,7 +802,9 @@ def test_create_merge_request_comment_records_success_audit_log_without_body(
     assert not hasattr(records[0], "body")
 
 
-def test_update_merge_request_records_success_audit_log(caplog: pytest.LogCaptureFixture):
+def test_update_merge_request_records_success_audit_log(
+    caplog: pytest.LogCaptureFixture,
+):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
     adapter, _ = _adapter(
         [
@@ -853,7 +889,9 @@ def test_update_merge_request_records_error_audit_log_on_api_failure(
     caplog: pytest.LogCaptureFixture,
 ):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
-    adapter, _ = _adapter([_FakeResponse(status_code=404, json_data={"message": "not found"})])
+    adapter, _ = _adapter(
+        [_FakeResponse(status_code=404, json_data={"message": "not found"})]
+    )
 
     with pytest.raises(GitLabApiError):
         adapter.update_merge_request("group/project", 9, title="x")
@@ -883,7 +921,9 @@ def test_update_issue_records_error_audit_log_on_api_failure(
     caplog: pytest.LogCaptureFixture,
 ):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
-    adapter, _ = _adapter([_FakeResponse(status_code=404, json_data={"message": "not found"})])
+    adapter, _ = _adapter(
+        [_FakeResponse(status_code=404, json_data={"message": "not found"})]
+    )
 
     with pytest.raises(GitLabApiError):
         adapter.update_issue("group/project", 3, title="x")
@@ -902,7 +942,9 @@ def test_create_branch_records_error_audit_log_on_malformed_response(
     caplog: pytest.LogCaptureFixture,
 ):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
-    adapter, _ = _adapter([_FakeResponse(json_data={"name": "feature/x"})])  # commit欠落
+    adapter, _ = _adapter(
+        [_FakeResponse(json_data={"name": "feature/x"})]
+    )  # commit欠落
 
     with pytest.raises(GitLabApiError):
         adapter.create_branch("group/project", "feature/x", "main")
@@ -917,7 +959,9 @@ def test_push_file_changes_records_error_audit_log_on_malformed_response(
 ):
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
     adapter, _ = _adapter([_unprotected_branch_response(), _FakeResponse(json_data={})])
-    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    actions = [
+        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")
+    ]
 
     with pytest.raises(GitLabApiError):
         adapter.push_file_changes("group/project", "feature/x", "fix", actions)
@@ -932,8 +976,12 @@ def test_push_file_changes_records_error_audit_log_when_protected_check_fails(
 ):
     """protected branch確認用のGET自体がエラーになった場合も監査ログに残ること。"""
     caplog.set_level(logging.INFO, logger="gitlab_ai_platform.gitlab_adapter.rest")
-    adapter, _ = _adapter([_FakeResponse(status_code=404, json_data={"message": "not found"})])
-    actions = [CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")]
+    adapter, _ = _adapter(
+        [_FakeResponse(status_code=404, json_data={"message": "not found"})]
+    )
+    actions = [
+        CommitAction(action=CommitActionType.UPDATE, file_path="a.py", content="x")
+    ]
 
     with pytest.raises(GitLabApiError):
         adapter.push_file_changes("group/project", "no-such-branch", "fix", actions)
@@ -975,7 +1023,9 @@ def test_connection_error_is_wrapped_as_gitlab_api_error_after_retries_exhausted
     # requestsの生の例外がそのまま伝播すると、呼び出し側(Poller等)がGitLabAdapterError
     # だけをcatchする契約をすり抜けてしまう回帰テスト。GETはリトライ対象なので、
     # 予算(max_retries=3、_adapterのデフォルト)を使い切るだけの回数を用意する
-    adapter, session = _adapter([requests.exceptions.ConnectionError("connection refused")] * 4)
+    adapter, session = _adapter(
+        [requests.exceptions.ConnectionError("connection refused")] * 4
+    )
 
     with pytest.raises(GitLabApiError):
         adapter.get_version()

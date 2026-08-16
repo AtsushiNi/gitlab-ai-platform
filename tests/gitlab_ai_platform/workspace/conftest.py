@@ -8,7 +8,9 @@ import pytest
 
 
 def run_git(*args: str, cwd: Path) -> subprocess.CompletedProcess:
-    result = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+    result = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True
+    )
     assert result.returncode == 0, result.stderr
     return result
 

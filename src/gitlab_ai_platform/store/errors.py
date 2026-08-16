@@ -23,4 +23,4 @@ class RecordNotFoundError(StateStoreError):
     """指定した`(project, mr_iid, commit_sha)`のレコードが存在しないことを表す。"""
 
 
-__all__ = ["StateStoreError", "DuplicateReviewError", "RecordNotFoundError"]
+__all__ = ["DuplicateReviewError", "RecordNotFoundError", "StateStoreError"]

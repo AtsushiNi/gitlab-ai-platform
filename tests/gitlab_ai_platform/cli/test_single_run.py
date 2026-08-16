@@ -6,17 +6,22 @@ from pathlib import Path
 import pytest
 
 from gitlab_ai_platform.cli.single_run import (
-    build_workspace_manager,
     _clone_url_for,
     _credential_helper,
+    build_workspace_manager,
     execute_review,
 )
 from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY, Config
 from gitlab_ai_platform.gitlab_adapter import GitLabApiError
-from gitlab_ai_platform.gitlab_adapter.types import Discussion, MergeRequest, MergeRequestDiff, Note
+from gitlab_ai_platform.gitlab_adapter.types import (
+    Discussion,
+    MergeRequest,
+    MergeRequestDiff,
+    Note,
+)
+from gitlab_ai_platform.review.errors import ReviewOutputParseError
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.runner.errors import ClaudeCodeTimeoutError
-from gitlab_ai_platform.review.errors import ReviewOutputParseError
 from gitlab_ai_platform.store import ReviewStatus, SqliteStateStore
 from gitlab_ai_platform.store.errors import StateStoreError
 from gitlab_ai_platform.workspace import WorktreeHandle
@@ -61,7 +66,9 @@ def _merge_request() -> MergeRequest:
 
 
 class _FakeGitLabReader:
-    def __init__(self, merge_request: MergeRequest, *, fail: Exception | None = None) -> None:
+    def __init__(
+        self, merge_request: MergeRequest, *, fail: Exception | None = None
+    ) -> None:
         self._merge_request = merge_request
         self._fail = fail
         self.get_merge_request_calls: list[tuple[str, int]] = []
@@ -78,20 +85,33 @@ class _FakeGitLabReader:
             raise self._fail
         return self._merge_request
 
-    def get_merge_request_diffs(self, project: str, mr_iid: int) -> list[MergeRequestDiff]:
+    def get_merge_request_diffs(
+        self, project: str, mr_iid: int
+    ) -> list[MergeRequestDiff]:
         return [
             MergeRequestDiff(
-                old_path="a.py", new_path="a.py", diff="-old\n+new", new_file=False,
-                renamed_file=False, deleted_file=False,
+                old_path="a.py",
+                new_path="a.py",
+                diff="-old\n+new",
+                new_file=False,
+                renamed_file=False,
+                deleted_file=False,
             )
         ]
 
-    def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
+    def list_merge_request_discussions(
+        self, project: str, mr_iid: int
+    ) -> list[Discussion]:
         return [
             Discussion(
                 id="1",
                 notes=(
-                    Note(id=1, body="LGTM", author="bob", created_at="2024-01-01T00:00:00Z"),
+                    Note(
+                        id=1,
+                        body="LGTM",
+                        author="bob",
+                        created_at="2024-01-01T00:00:00Z",
+                    ),
                 ),
             )
         ]
@@ -108,7 +128,11 @@ class _FakeWorkspaceManager:
         if self._fail is not None:
             raise self._fail
         return WorktreeHandle(
-            project=project, mr_iid=mr_iid, path=self._worktree_path, branch=f"mr-{mr_iid}", sha=ref
+            project=project,
+            mr_iid=mr_iid,
+            path=self._worktree_path,
+            branch=f"mr-{mr_iid}",
+            sha=ref,
         )
 
     def discard(self, project: str, mr_iid: int) -> None:
@@ -119,7 +143,9 @@ class _FakeWorkspaceManager:
 
 
 class _FakeClaudeCodeRunner:
-    def __init__(self, run_result: RunResult | None = None, *, fail: Exception | None = None) -> None:
+    def __init__(
+        self, run_result: RunResult | None = None, *, fail: Exception | None = None
+    ) -> None:
         self._run_result = run_result
         self._fail = fail
         self.run_calls: list[dict] = []
@@ -152,11 +178,16 @@ class _FakeClaudeCodeRunner:
         return self._run_result
 
 
-def _run_result(tmp_path: Path, *, is_error: bool = False, findings: list | None = None) -> RunResult:
+def _run_result(
+    tmp_path: Path, *, is_error: bool = False, findings: list | None = None
+) -> RunResult:
     log_path = tmp_path / "run_log.json"
     log_path.write_text(json.dumps({"command": ["claude"]}), encoding="utf-8")
 
-    payload = {"summary": "特に指摘なし" if not findings else "指摘あり", "findings": findings or []}
+    payload = {
+        "summary": "特に指摘なし" if not findings else "指摘あり",
+        "findings": findings or [],
+    }
     result_text = "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
 
     return RunResult(
@@ -184,7 +215,9 @@ def test_execute_review_happy_path_saves_review_and_marks_done(tmp_path):
     store = SqliteStateStore(":memory:")
 
     try:
-        result = execute_review(adapter, workspace, runner, store, config, _PROJECT, _MR_IID)
+        result = execute_review(
+            adapter, workspace, runner, store, config, _PROJECT, _MR_IID
+        )
 
         assert result.project == _PROJECT
         assert result.mr_iid == _MR_IID
@@ -262,7 +295,8 @@ def test_execute_review_marks_failed_on_workspace_error(tmp_path):
     config = _config(tmp_path)
     adapter = _FakeGitLabReader(_merge_request())
     workspace = _FakeWorkspaceManager(
-        tmp_path / "worktree", fail=GitCommandError("boom", command=["git"], returncode=1, stderr="")
+        tmp_path / "worktree",
+        fail=GitCommandError("boom", command=["git"], returncode=1, stderr=""),
     )
     runner = _FakeClaudeCodeRunner()
     store = SqliteStateStore(":memory:")
@@ -331,7 +365,9 @@ def test_execute_review_rerun_on_same_commit_does_not_raise_duplicate_error(tmp_
     try:
         for _ in range(2):
             runner = _FakeClaudeCodeRunner(_run_result(tmp_path))
-            result = execute_review(adapter, workspace, runner, store, config, _PROJECT, _MR_IID)
+            result = execute_review(
+                adapter, workspace, runner, store, config, _PROJECT, _MR_IID
+            )
             assert result.sha == _SHA
 
         record = store.find(_PROJECT, _MR_IID, _SHA)
@@ -343,7 +379,10 @@ def test_execute_review_rerun_on_same_commit_does_not_raise_duplicate_error(tmp_
 def test_clone_url_for_builds_https_git_url():
     build = _clone_url_for("https://gitlab.example.com")
 
-    assert build("group/subgroup/project") == "https://gitlab.example.com/group/subgroup/project.git"
+    assert (
+        build("group/subgroup/project")
+        == "https://gitlab.example.com/group/subgroup/project.git"
+    )
 
 
 def test_credential_helper_references_token_env_var_without_leaking_value():
@@ -357,7 +396,9 @@ def test_credential_helper_references_token_env_var_without_leaking_value():
 class _FlakyStore:
     """SqliteStateStoreをラップし、update_statusの呼び出しを指定回数だけ失敗させるフェイク。"""
 
-    def __init__(self, inner: SqliteStateStore, *, fail_update_status_times: int = 0) -> None:
+    def __init__(
+        self, inner: SqliteStateStore, *, fail_update_status_times: int = 0
+    ) -> None:
         self._inner = inner
         self._fail_update_status_times = fail_update_status_times
         self.update_status_calls: list[ReviewStatus] = []
@@ -379,7 +420,9 @@ class _FlakyStore:
         self._inner.close()
 
 
-def test_execute_review_preserves_original_exception_when_failed_status_update_also_fails(tmp_path):
+def test_execute_review_preserves_original_exception_when_failed_status_update_also_fails(
+    tmp_path,
+):
     # FAILEDへの更新自体が失敗しても、元の例外(ここではClaudeCodeTimeoutError)が
     # StateStoreErrorにすり替わらず、そのまま伝播することの回帰テスト
     config = _config(tmp_path)
@@ -427,18 +470,21 @@ def test_execute_review_marks_failed_when_done_update_itself_fails(tmp_path):
         inner_store.close()
 
 
-def test_build_workspace_manager_clears_existing_credential_helper_before_setting_own(tmp_path):
+def test_build_workspace_manager_clears_existing_credential_helper_before_setting_own(
+    tmp_path,
+):
     # gitはcredential.helperを複数個「追加」していく仕組みのため、既存の設定
     # (実行環境の~/.gitconfig等)を空値でクリアしてから独自のものを設定する必要がある
     config = _config(tmp_path)
 
     manager = build_workspace_manager(config)
 
-    config_args = manager._config_args()  # noqa: SLF001
+    config_args = manager._config_args()
     helper_values = [
         config_args[i + 1].removeprefix("credential.helper=")
         for i in range(len(config_args) - 1)
-        if config_args[i] == "-c" and config_args[i + 1].startswith("credential.helper=")
+        if config_args[i] == "-c"
+        and config_args[i + 1].startswith("credential.helper=")
     ]
     assert helper_values[0] == ""
     assert helper_values[1] != ""

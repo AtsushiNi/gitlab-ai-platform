@@ -46,9 +46,8 @@ def test_lock_can_be_reacquired_after_release(tmp_path: Path):
 def test_context_manager_releases_lock_on_exit(tmp_path: Path):
     lock_path = tmp_path / "watch.lock"
 
-    with ProcessLock(lock_path):
-        with pytest.raises(AlreadyRunningError):
-            ProcessLock(lock_path).acquire()
+    with ProcessLock(lock_path), pytest.raises(AlreadyRunningError):
+        ProcessLock(lock_path).acquire()
 
     # withブロックを抜けた時点で解放されているので再取得できる
     other = ProcessLock(lock_path)

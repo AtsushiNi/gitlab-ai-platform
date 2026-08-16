@@ -102,12 +102,12 @@ class Discussion:
 
 
 __all__ = [
-    "CommitActionType",
-    "CommitAction",
     "Branch",
+    "CommitAction",
+    "CommitActionType",
+    "Discussion",
     "Issue",
     "MergeRequest",
     "MergeRequestDiff",
     "Note",
-    "Discussion",
 ]

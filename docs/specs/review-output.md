@@ -52,8 +52,12 @@ def parse_review_output(run_result: RunResult) -> ReviewResult:
     JSONを抽出できない場合も`ReviewOutputParseError`を送出する。
     """
 
-def render_markdown(result: ReviewResult, *, project: str, mr_iid: int, sha: str) -> str:
+
+def render_markdown(
+    result: ReviewResult, *, project: str, mr_iid: int, sha: str
+) -> str:
     """`result`を人間可読なMarkdown文字列に整形する。"""
+
 
 def save_review(
     root: Path | str,
@@ -68,8 +72,10 @@ def save_review(
 ) -> ReviewPaths:
     """`result`を`<root>/<project>/<mr_iid>/<sha>/`へ保存し、索引に1行追記する。"""
 
+
 def append_entry(root: Path | str, entry: IndexEntry) -> None:
     """索引に`entry`を1行追記する。"""
+
 
 def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
     """索引の全件を、追記順(古い順)で返す。索引ファイルが無ければ空を返す。"""

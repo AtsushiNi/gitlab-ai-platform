@@ -7,15 +7,18 @@
 
 from __future__ import annotations
 
-from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY
 from gitlab_ai_platform.adapter_mcp_server.main import EXIT_CONFIG_ERROR, main
+from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY
 
 
-def test_main_returns_config_error_exit_code_without_starting_server(tmp_path, capsys) -> None:
+def test_main_returns_config_error_exit_code_without_starting_server(
+    tmp_path, capsys
+) -> None:
     # projectsが空 → ConfigError(GitLab AdapterへもMCPサーバーへも到達しない)
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        '[gitlab]\nurl = "https://gitlab.example.com"\nprojects = []\n', encoding="utf-8"
+        '[gitlab]\nurl = "https://gitlab.example.com"\nprojects = []\n',
+        encoding="utf-8",
     )
     env_path = tmp_path / ".env"
     env_path.write_text(f"{GITLAB_TOKEN_ENV_KEY}=secret-token\n", encoding="utf-8")

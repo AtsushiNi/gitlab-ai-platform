@@ -46,7 +46,9 @@ def test_from_raw_strips_trailing_slash_from_url():
 
 
 def test_from_raw_strips_whitespace_from_projects():
-    config = Config.from_raw(**_valid_kwargs(projects=[" group/project-a ", "group/project-b"]))
+    config = Config.from_raw(
+        **_valid_kwargs(projects=[" group/project-a ", "group/project-b"])
+    )
 
     assert config.projects == ("group/project-a", "group/project-b")
 
@@ -92,6 +94,8 @@ def test_repr_masks_gitlab_token():
 
 def test_config_error_message_does_not_leak_token_on_other_failures():
     with pytest.raises(ConfigError) as excinfo:
-        Config.from_raw(**_valid_kwargs(gitlab_token="super-secret-pat", max_parallel=0))
+        Config.from_raw(
+            **_valid_kwargs(gitlab_token="super-secret-pat", max_parallel=0)
+        )
 
     assert "super-secret-pat" not in str(excinfo.value)

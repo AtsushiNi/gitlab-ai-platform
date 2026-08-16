@@ -12,4 +12,4 @@ from __future__ import annotations
 from . import exit_codes
 from .single_run import SingleRunResult, execute_review, run_single_review
 
-__all__ = ["run_single_review", "execute_review", "SingleRunResult", "exit_codes"]
+__all__ = ["SingleRunResult", "execute_review", "exit_codes", "run_single_review"]

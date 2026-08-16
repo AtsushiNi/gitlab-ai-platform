@@ -75,7 +75,9 @@ class SqliteStateStore:
             # PRIMARY KEY(=一意制約)違反だけをDuplicateReviewErrorに変換する。NOT NULL違反等
             # (呼び出し側が不正な引数を渡したバグ)まで二重レビューとして握りつぶさないため
             if "UNIQUE constraint failed" not in str(exc):
-                raise StateStoreError(f"レビュー記録の作成に失敗しました: {exc}") from exc
+                raise StateStoreError(
+                    f"レビュー記録の作成に失敗しました: {exc}"
+                ) from exc
             raise DuplicateReviewError(
                 f"({project!r}, {mr_iid!r}, {commit_sha!r}) は既にレビュー記録が存在します"
             ) from exc
@@ -135,7 +137,9 @@ def _row_to_record(row: tuple) -> ReviewRecord:
         mr_iid=mr_iid,
         commit_sha=commit_sha,
         status=ReviewStatus(status),
-        reviewed_at=datetime.fromisoformat(reviewed_at) if reviewed_at is not None else None,
+        reviewed_at=datetime.fromisoformat(reviewed_at)
+        if reviewed_at is not None
+        else None,
         result_path=result_path,
     )
 

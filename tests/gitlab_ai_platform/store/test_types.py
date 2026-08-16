@@ -8,7 +8,10 @@ from gitlab_ai_platform.store import ReviewRecord, ReviewStatus
 
 def test_review_record_optional_fields_default_to_none():
     record = ReviewRecord(
-        project="group/project", mr_iid=1, commit_sha="abc123", status=ReviewStatus.PENDING
+        project="group/project",
+        mr_iid=1,
+        commit_sha="abc123",
+        status=ReviewStatus.PENDING,
     )
 
     assert record.reviewed_at is None
@@ -17,7 +20,10 @@ def test_review_record_optional_fields_default_to_none():
 
 def test_review_record_is_frozen():
     record = ReviewRecord(
-        project="group/project", mr_iid=1, commit_sha="abc123", status=ReviewStatus.PENDING
+        project="group/project",
+        mr_iid=1,
+        commit_sha="abc123",
+        status=ReviewStatus.PENDING,
     )
 
     with pytest.raises(dataclasses.FrozenInstanceError):

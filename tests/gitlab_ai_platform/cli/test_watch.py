@@ -84,12 +84,18 @@ class _FakeGitLabReader:
     def get_merge_request_diffs(self, project: str, mr_iid: int):
         return [
             MergeRequestDiff(
-                old_path="a.py", new_path="a.py", diff="-old\n+new", new_file=False,
-                renamed_file=False, deleted_file=False,
+                old_path="a.py",
+                new_path="a.py",
+                diff="-old\n+new",
+                new_file=False,
+                renamed_file=False,
+                deleted_file=False,
             )
         ]
 
-    def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
+    def list_merge_request_discussions(
+        self, project: str, mr_iid: int
+    ) -> list[Discussion]:
         return []
 
 
@@ -109,7 +115,9 @@ class _FakeGitLabReaderDriftingSha(_FakeGitLabReader):
 class _FakeWorkspaceManager:
     """MR IIDごとに例外を差し込める`WorkspaceManager`フェイク。"""
 
-    def __init__(self, worktree_path: Path, *, fail_for: dict[int, Exception] | None = None) -> None:
+    def __init__(
+        self, worktree_path: Path, *, fail_for: dict[int, Exception] | None = None
+    ) -> None:
         self._worktree_path = worktree_path
         self._fail_for = fail_for or {}
         self.prepare_calls: list[tuple[str, int, str]] = []
@@ -119,7 +127,11 @@ class _FakeWorkspaceManager:
         if mr_iid in self._fail_for:
             raise self._fail_for[mr_iid]
         return WorktreeHandle(
-            project=project, mr_iid=mr_iid, path=self._worktree_path, branch=f"mr-{mr_iid}", sha=ref
+            project=project,
+            mr_iid=mr_iid,
+            path=self._worktree_path,
+            branch=f"mr-{mr_iid}",
+            sha=ref,
         )
 
     def discard(self, project: str, mr_iid: int) -> None:
@@ -253,7 +265,9 @@ def test_build_on_detected_propagates_unexpected_exception(tmp_path):
         store.close()
 
 
-def test_run_watch_loop_processes_all_detected_reviews_then_stops(tmp_path, monkeypatch):
+def test_run_watch_loop_processes_all_detected_reviews_then_stops(
+    tmp_path, monkeypatch
+):
     # run_watch_loopはMrPoller.runにon_detectedを渡すだけの薄い結線であることを検証する。
     # build_on_detectedをラップし、そのサイクルで検出された全MRの処理が終わった時点で
     # stop_eventをセットすることで、poll_interval_seconds=0でも無限ループにならないようにする
@@ -270,7 +284,9 @@ def test_run_watch_loop_processes_all_detected_reviews_then_stops(tmp_path, monk
     original_build_on_detected = watch_module.build_on_detected
 
     def _stopping_build_on_detected(adapter_, workspace_, runner_, store_, config_):
-        inner = original_build_on_detected(adapter_, workspace_, runner_, store_, config_)
+        inner = original_build_on_detected(
+            adapter_, workspace_, runner_, store_, config_
+        )
         seen: list[DetectedReview] = []
 
         def _wrapped(review: DetectedReview) -> None:
@@ -332,7 +348,9 @@ def test_lock_path_for_memory_db_avoids_invalid_filename():
     assert lock_path.suffix == ".lock"
 
 
-def test_run_watch_with_memory_state_db_does_not_crash_on_lock_acquisition(tmp_path, monkeypatch):
+def test_run_watch_with_memory_state_db_does_not_crash_on_lock_acquisition(
+    tmp_path, monkeypatch
+):
     # ":memory:"はconfig.tomlの`[store] db_path`として設定可能な値であり、watchモードの
     # 起動処理(ロック取得含む)がそれで壊れないことを確認する
     monkeypatch.chdir(tmp_path)

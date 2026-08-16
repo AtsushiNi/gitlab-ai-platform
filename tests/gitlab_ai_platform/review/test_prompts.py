@@ -20,7 +20,14 @@ def test_build_review_instructions_is_deterministic():
 def test_includes_focus_points():
     instructions = build_review_instructions()
 
-    for keyword in ["致命的なバグ", "仕様", "デグレ", "テスト不足", "将来問題になりうる設計", "実装ミス"]:
+    for keyword in [
+        "致命的なバグ",
+        "仕様",
+        "デグレ",
+        "テスト不足",
+        "将来問題になりうる設計",
+        "実装ミス",
+    ]:
         assert keyword in instructions
 
 
@@ -52,7 +59,19 @@ def test_includes_structured_json_schema_matching_finding():
     instructions = build_review_instructions()
 
     assert "```json" in instructions
-    for keyword in ["summary", "findings", "severity", "critical", "major", "minor", "file", "line", "rationale", "suggestion"]:
+    keywords = [
+        "summary",
+        "findings",
+        "severity",
+        "critical",
+        "major",
+        "minor",
+        "file",
+        "line",
+        "rationale",
+        "suggestion",
+    ]
+    for keyword in keywords:
         assert keyword in instructions
 
 

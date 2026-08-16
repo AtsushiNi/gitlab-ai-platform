@@ -14,7 +14,9 @@ class WorkspaceError(Exception):
 class GitCommandError(WorkspaceError):
     """gitコマンドが非ゼロの終了コードで終了したことを表す。"""
 
-    def __init__(self, message: str, *, command: list[str], returncode: int, stderr: str) -> None:
+    def __init__(
+        self, message: str, *, command: list[str], returncode: int, stderr: str
+    ) -> None:
         super().__init__(message)
         self.command = command
         self.returncode = returncode
@@ -25,4 +27,4 @@ class DiskLimitExceededError(WorkspaceError):
     """GCで破棄可能なworktreeを全て破棄してもなお、ディスク上限を超過していることを表す。"""
 
 
-__all__ = ["WorkspaceError", "GitCommandError", "DiskLimitExceededError"]
+__all__ = ["DiskLimitExceededError", "GitCommandError", "WorkspaceError"]

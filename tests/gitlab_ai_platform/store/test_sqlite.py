@@ -92,7 +92,9 @@ def test_records_are_isolated_per_project_mr_commit(store):
     assert store.find("group/project-a", 1, "def456") is None
 
 
-def test_update_status_without_reviewed_at_or_result_path_preserves_existing_values(store):
+def test_update_status_without_reviewed_at_or_result_path_preserves_existing_values(
+    store,
+):
     # reviewed_at/result_pathを省略した更新(例: DONE→FAILEDへの状態遷移のみ)が、
     # 既に記録済みの値を意図せずNULLへ巻き戻さないこと
     store.create("group/project", 1, "abc123")

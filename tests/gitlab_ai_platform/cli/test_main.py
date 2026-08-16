@@ -14,7 +14,7 @@ from gitlab_ai_platform.cli.single_run import SingleRunResult
 from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY
 from gitlab_ai_platform.gitlab_adapter import GitLabApiError
 from gitlab_ai_platform.review.errors import ReviewOutputParseError
-from gitlab_ai_platform.review.types import ReviewPaths, ReviewResult, Severity, Finding
+from gitlab_ai_platform.review.types import Finding, ReviewPaths, ReviewResult, Severity
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.runner.errors import ClaudeCodeTimeoutError
 from gitlab_ai_platform.store.errors import StateStoreError
@@ -155,13 +155,22 @@ def test_review_command_returns_config_error_exit_code(tmp_path, capsys):
     # projectsが空 → ConfigError
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        '[gitlab]\nurl = "https://gitlab.example.com"\nprojects = []\n', encoding="utf-8"
+        '[gitlab]\nurl = "https://gitlab.example.com"\nprojects = []\n',
+        encoding="utf-8",
     )
     env_path = tmp_path / ".env"
     env_path.write_text(f"{GITLAB_TOKEN_ENV_KEY}=secret-token\n", encoding="utf-8")
 
     exit_code = main(
-        ["--config", str(config_path), "--env", str(env_path), "review", "group/project", "1"]
+        [
+            "--config",
+            str(config_path),
+            "--env",
+            str(env_path),
+            "review",
+            "group/project",
+            "1",
+        ]
     )
 
     assert exit_code == exit_codes.EXIT_CONFIG_ERROR
@@ -177,7 +186,9 @@ def test_review_command_returns_config_error_exit_code(tmp_path, capsys):
             exit_codes.EXIT_WORKSPACE_ERROR,
         ),
         (
-            ClaudeCodeTimeoutError("boom", timeout_seconds=1, log_path=Path("/tmp/x"), stderr=""),
+            ClaudeCodeTimeoutError(
+                "boom", timeout_seconds=1, log_path=Path("/tmp/x"), stderr=""
+            ),
             exit_codes.EXIT_RUNNER_ERROR,
         ),
         (ReviewOutputParseError("boom", raw_text=""), exit_codes.EXIT_REVIEW_ERROR),
@@ -218,7 +229,9 @@ def test_main_requires_a_subcommand(tmp_path):
     assert excinfo.value.code == 2
 
 
-def test_main_handles_keyboard_interrupt_during_config_loading(tmp_path, monkeypatch, capsys):
+def test_main_handles_keyboard_interrupt_during_config_loading(
+    tmp_path, monkeypatch, capsys
+):
     # 以前はrun_single_review呼び出し中のみKeyboardInterruptをEXIT_INTERRUPTEDへ変換しており、
     # load_config中の中断は未加工のtracebackになっていた回帰テスト
     def _raise(*args, **kwargs):
@@ -245,7 +258,9 @@ def _watch_argv(tmp_path: Path) -> list[str]:
     return ["--config", str(config_path), "--env", str(env_path), "watch"]
 
 
-def test_watch_command_returns_ok_when_run_watch_returns_normally(tmp_path, monkeypatch):
+def test_watch_command_returns_ok_when_run_watch_returns_normally(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr("gitlab_ai_platform.cli.main.run_watch", lambda *a, **k: None)
 
     exit_code = main(_watch_argv(tmp_path))
@@ -288,7 +303,9 @@ def test_watch_command_returns_already_running_exit_code(tmp_path, monkeypatch, 
             exit_codes.EXIT_WORKSPACE_ERROR,
         ),
         (
-            ClaudeCodeTimeoutError("boom", timeout_seconds=1, log_path=Path("/tmp/x"), stderr=""),
+            ClaudeCodeTimeoutError(
+                "boom", timeout_seconds=1, log_path=Path("/tmp/x"), stderr=""
+            ),
             exit_codes.EXIT_RUNNER_ERROR,
         ),
         (ReviewOutputParseError("boom", raw_text=""), exit_codes.EXIT_REVIEW_ERROR),
@@ -313,7 +330,9 @@ def test_watch_command_maps_pipeline_errors_to_exit_codes(
 
 
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
-def test_watch_command_sets_stop_event_on_signal_and_restores_handler(tmp_path, monkeypatch, sig):
+def test_watch_command_sets_stop_event_on_signal_and_restores_handler(
+    tmp_path, monkeypatch, sig
+):
     # run_watchを、自プロセスにシグナルを送ってからstop_eventの状態を確認するフェイクに差し替え、
     # SIGINT/SIGTERM受信時にstop_eventがセットされることを検証する
     original_handler = signal.getsignal(sig)

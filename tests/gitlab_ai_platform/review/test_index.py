@@ -56,7 +56,9 @@ def test_read_index_skips_malformed_trailing_line(tmp_path):
     first = _entry(mr_iid=1, sha="sha1")
     append_entry(tmp_path, first)
     with (tmp_path / "index.jsonl").open("a", encoding="utf-8") as f:
-        f.write('{"project": "group/project", "mr_iid": 2, "sha": "sha2"\n')  # 途中で切れた行
+        f.write(
+            '{"project": "group/project", "mr_iid": 2, "sha": "sha2"\n'
+        )  # 途中で切れた行
 
     assert read_index(tmp_path) == (first,)
 

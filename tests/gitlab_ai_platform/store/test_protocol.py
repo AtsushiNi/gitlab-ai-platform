@@ -32,7 +32,9 @@ class _FakeStateStore:
         *,
         status: ReviewStatus = ReviewStatus.PENDING,
     ) -> ReviewRecord:
-        record = ReviewRecord(project=project, mr_iid=mr_iid, commit_sha=commit_sha, status=status)
+        record = ReviewRecord(
+            project=project, mr_iid=mr_iid, commit_sha=commit_sha, status=status
+        )
         self._records[(project, mr_iid, commit_sha)] = record
         return record
 

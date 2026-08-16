@@ -28,7 +28,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from .types import Branch, CommitAction, Discussion, Issue, MergeRequest, MergeRequestDiff, Note
+from .types import (
+    Branch,
+    CommitAction,
+    Discussion,
+    Issue,
+    MergeRequest,
+    MergeRequestDiff,
+    Note,
+)
 
 
 @runtime_checkable
@@ -53,11 +61,15 @@ class GitLabReader(Protocol):
         """MRの詳細を取得する。"""
         ...
 
-    def get_merge_request_diffs(self, project: str, mr_iid: int) -> list[MergeRequestDiff]:
+    def get_merge_request_diffs(
+        self, project: str, mr_iid: int
+    ) -> list[MergeRequestDiff]:
         """MRの差分をファイル単位で取得する(`diffs`エンドポイント。`changes`は使わない)。"""
         ...
 
-    def list_merge_request_discussions(self, project: str, mr_iid: int) -> list[Discussion]:
+    def list_merge_request_discussions(
+        self, project: str, mr_iid: int
+    ) -> list[Discussion]:
         """MRのコメントを、返信関係を保ったスレッド単位で取得する。"""
         ...
 
@@ -116,7 +128,9 @@ class GitLabWriter(Protocol):
         """MRを作成する。"""
         ...
 
-    def create_merge_request_comment(self, project: str, mr_iid: int, body: str) -> Note:
+    def create_merge_request_comment(
+        self, project: str, mr_iid: int, body: str
+    ) -> Note:
         """MRにコメントを投稿する。"""
         ...
 
@@ -161,4 +175,4 @@ class GitLabAdapter(GitLabReader, GitLabWriter, Protocol):
     """GitLab Adapterが満たすべき完全なインターフェース。"""
 
 
-__all__ = ["GitLabReader", "GitLabWriter", "GitLabAdapter"]
+__all__ = ["GitLabAdapter", "GitLabReader", "GitLabWriter"]
