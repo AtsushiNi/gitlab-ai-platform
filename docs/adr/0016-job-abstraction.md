@@ -59,7 +59,7 @@ class JobStatus(str, Enum):
 
 許可される遷移:
 
-```
+```text
 PENDING → RUNNING
 RUNNING → DONE
 RUNNING → FAILED
