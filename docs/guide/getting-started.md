@@ -82,8 +82,7 @@ project/MR IIDを人間が都度指定する形。**`レビュー待ち` ラベ�
 4. **日々の運用に組み込む**: `レビュー待ち` ラベルを使った運用フローは
    [review-workflow.md](review-workflow.md)(ステータス: 未着手)
 
-コマンド全体のオプション・終了コードは [cli-reference.md](cli-reference.md)
-(ステータス: 未着手。当面は `gitlab-ai-platform review --help` を参照)、
+コマンド全体のオプション・終了コードは [cli-reference.md](cli-reference.md)を参照。
 うまくいかない場合は [operations/troubleshooting.md](../operations/troubleshooting.md)
 (ステータス: 未着手の場合はスコープ外)を参照。
 
@@ -93,5 +92,5 @@ project/MR IIDを人間が都度指定する形。**`レビュー待ち` ラベ�
 - [reading-results.md](reading-results.md) — 結果の読み方
 - [review-workflow.md](review-workflow.md) — 日々の運用フロー(未着手)
 - [limitations.md](limitations.md) — AIレビューの限界(未着手)
-- [cli-reference.md](cli-reference.md) — コマンド一覧(未着手)
+- [cli-reference.md](cli-reference.md) — コマンド一覧
 - [operations/configuration.md](../operations/configuration.md) — `config.toml`/`.env`の全項目リファレンス
