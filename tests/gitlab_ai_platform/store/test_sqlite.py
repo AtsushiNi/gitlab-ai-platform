@@ -145,6 +145,43 @@ def test_store_is_usable_from_a_different_thread_than_the_constructor(store):
     assert store.find("group/project", 99, "thread-sha") is not None
 
 
+def test_store_handles_many_concurrent_writers_without_errors(store):
+    # M2-1(並列レビュー実行、#80): 複数のワーカースレッドが同じ`SqliteStateStore`
+    # インスタンスへ同時にcreate/update_statusを呼んでも、"database is locked"のような
+    # 非決定的な失敗を起こさず、全レコードが正しく記録されることを確認する
+    worker_count = 20
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def worker(n: int) -> None:
+        try:
+            store.create("group/project", n, "concurrent-sha")
+            store.update_status(
+                "group/project",
+                n,
+                "concurrent-sha",
+                ReviewStatus.DONE,
+                reviewed_at=datetime(2026, 8, 13, 12, 0, 0),
+                result_path=f"reviews/group/project/{n}/concurrent-sha",
+            )
+        except BaseException as exc:  # noqa: BLE001
+            with errors_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(worker_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    for n in range(worker_count):
+        record = store.find("group/project", n, "concurrent-sha")
+        assert record is not None
+        assert record.status == ReviewStatus.DONE
+        assert record.result_path == f"reviews/group/project/{n}/concurrent-sha"
+
+
 def test_find_wraps_sqlite_errors_as_state_store_error(store):
     # sqlite3の低レベル例外(接続が閉じられている等)がそのまま伝播すると、
     # 呼び出し側(Poller等)がStateStoreErrorだけをcatchする契約をすり抜けてしまう回帰テスト

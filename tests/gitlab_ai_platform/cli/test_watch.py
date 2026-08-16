@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -178,6 +179,66 @@ class _FakeClaudeCodeRunner:
         )
 
 
+class _ConcurrencyTrackingClaudeCodeRunner(_FakeClaudeCodeRunner):
+    """`run`の同時実行数を計測するフェイク(M2-1のワーカープール検証用)。
+
+    `hold_seconds`だけ`run`の中で待つことで、複数MRの`run`呼び出しが実際に重なる
+    (真に並行実行されている)ことを観測できる時間の余白を作る。
+    """
+
+    def __init__(self, tmp_path: Path, *, hold_seconds: float = 0.05) -> None:
+        super().__init__(tmp_path)
+        self._hold_seconds = hold_seconds
+        self._active_lock = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+
+    def run(self, *args, **kwargs) -> RunResult:
+        with self._active_lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(self._hold_seconds)
+            return super().run(*args, **kwargs)
+        finally:
+            with self._active_lock:
+                self._active -= 1
+
+
+def _run_until_all_detected_reviews_processed(
+    adapter, workspace, runner, store, config, *, expected_count: int, monkeypatch
+) -> None:
+    """`run_watch_loop`を、対象の全MRが処理し終わった時点で`stop_event`をセットして止める。
+
+    複数のテストで使う共通ヘルパー(M2-1で並行実行になったため、`build_on_detected`の
+    呼び出し完了を待つだけでは「そのサイクルの全MR処理完了」を表せない。処理件数を
+    数えて判定する)。
+    """
+    stop_event = threading.Event()
+    original_build_on_detected = watch_module.build_on_detected
+    seen_lock = threading.Lock()
+    seen: list[DetectedReview] = []
+
+    def _counting_build_on_detected(adapter_, workspace_, runner_, store_, config_):
+        inner = original_build_on_detected(
+            adapter_, workspace_, runner_, store_, config_
+        )
+
+        def _wrapped(review: DetectedReview) -> None:
+            try:
+                inner(review)
+            finally:
+                with seen_lock:
+                    seen.append(review)
+                    if len(seen) == expected_count:
+                        stop_event.set()
+
+        return _wrapped
+
+    monkeypatch.setattr(watch_module, "build_on_detected", _counting_build_on_detected)
+    run_watch_loop(adapter, workspace, runner, store, config, stop_event=stop_event)
+
+
 def test_build_on_detected_runs_execute_review_and_marks_done(tmp_path):
     config = _config(tmp_path)
     adapter = _FakeGitLabReader([_mr(1, "sha-1")])
@@ -268,9 +329,11 @@ def test_build_on_detected_propagates_unexpected_exception(tmp_path):
 def test_run_watch_loop_processes_all_detected_reviews_then_stops(
     tmp_path, monkeypatch
 ):
-    # run_watch_loopはMrPoller.runにon_detectedを渡すだけの薄い結線であることを検証する。
-    # build_on_detectedをラップし、そのサイクルで検出された全MRの処理が終わった時点で
-    # stop_eventをセットすることで、poll_interval_seconds=0でも無限ループにならないようにする
+    # run_watch_loopはMrPoller.runの検出結果をワーカープール(M2-1)へ投入する薄い結線で
+    # あることを検証する。全MRの処理が終わった時点でstop_eventをセットすることで、
+    # poll_interval_seconds=0でも無限ループにならないようにする。
+    # M2-1以降は複数MRを並行実行するため、実行完了の順序は保証されない
+    # (runner.run_callsの並び順ではなく集合として比較する)
     config = _config(tmp_path)
     mrs = [_mr(1, "sha-1"), _mr(2, "sha-2")]
     adapter = _FakeGitLabReader(mrs)
@@ -279,32 +342,86 @@ def test_run_watch_loop_processes_all_detected_reviews_then_stops(
     workspace = _FakeWorkspaceManager(worktree_path)
     runner = _FakeClaudeCodeRunner(tmp_path)
     store = SqliteStateStore(":memory:")
-    stop_event = threading.Event()
-
-    original_build_on_detected = watch_module.build_on_detected
-
-    def _stopping_build_on_detected(adapter_, workspace_, runner_, store_, config_):
-        inner = original_build_on_detected(
-            adapter_, workspace_, runner_, store_, config_
-        )
-        seen: list[DetectedReview] = []
-
-        def _wrapped(review: DetectedReview) -> None:
-            inner(review)
-            seen.append(review)
-            if len(seen) == len(mrs):
-                stop_event.set()
-
-        return _wrapped
-
-    monkeypatch.setattr(watch_module, "build_on_detected", _stopping_build_on_detected)
 
     try:
-        run_watch_loop(adapter, workspace, runner, store, config, stop_event=stop_event)
+        _run_until_all_detected_reviews_processed(
+            adapter,
+            workspace,
+            runner,
+            store,
+            config,
+            expected_count=len(mrs),
+            monkeypatch=monkeypatch,
+        )
 
-        assert runner.run_calls == [(_PROJECT, 1), (_PROJECT, 2)]
+        assert set(runner.run_calls) == {(_PROJECT, 1), (_PROJECT, 2)}
         assert store.find(_PROJECT, 1, "sha-1").status == ReviewStatus.DONE
         assert store.find(_PROJECT, 2, "sha-2").status == ReviewStatus.DONE
+    finally:
+        store.close()
+
+
+def test_run_watch_loop_processes_reviews_concurrently_up_to_max_parallel(
+    tmp_path, monkeypatch
+):
+    # Issue #80「ワーカープール、同時実行数の設定」の中核: 複数MRのレビューが実際に
+    # 並行実行されること、かつ同時実行数がconfig.max_parallelを超えないことを検証する
+    max_parallel = 2
+    config = _config(tmp_path, max_parallel=max_parallel)
+    mrs = [_mr(i, f"sha-{i}") for i in range(1, 6)]
+    adapter = _FakeGitLabReader(mrs)
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _ConcurrencyTrackingClaudeCodeRunner(tmp_path, hold_seconds=0.1)
+    store = SqliteStateStore(":memory:")
+
+    try:
+        _run_until_all_detected_reviews_processed(
+            adapter,
+            workspace,
+            runner,
+            store,
+            config,
+            expected_count=len(mrs),
+            monkeypatch=monkeypatch,
+        )
+
+        assert len(runner.run_calls) == len(mrs)
+        # 同時実行数がmax_parallelを超えないこと
+        assert runner.max_active <= max_parallel
+        # 実際に複数MRが同時に実行された(単なる逐次実行ではない)こと
+        assert runner.max_active > 1
+        for mr in mrs:
+            assert store.find(_PROJECT, mr.iid, mr.sha).status == ReviewStatus.DONE
+    finally:
+        store.close()
+
+
+def test_run_watch_loop_isolates_worker_failure_from_other_reviews(tmp_path):
+    # Issue #80「失敗時の隔離」: 1件のMRの処理で想定外の例外が起きても、並行実行中の
+    # 他のMRの処理は完了する(State StoreがDONEへ更新される)ことを検証する。想定外の
+    # 例外自体は`docs/adr/0009`の方針通りrun_watch_loopの外へ伝播する
+    config = _config(tmp_path)
+    mrs = [_mr(1, "sha-1"), _mr(2, "sha-2"), _mr(3, "sha-3")]
+    adapter = _FakeGitLabReader(mrs)
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path, fail_for={2: RuntimeError("bug")})
+    runner = _FakeClaudeCodeRunner(tmp_path)
+    store = SqliteStateStore(":memory:")
+    stop_event = threading.Event()
+
+    try:
+        with pytest.raises(RuntimeError, match="bug"):
+            run_watch_loop(
+                adapter, workspace, runner, store, config, stop_event=stop_event
+            )
+
+        # MR2は失敗(FAILED)だが、MR1/MR3は影響を受けず完了している
+        assert store.find(_PROJECT, 1, "sha-1").status == ReviewStatus.DONE
+        assert store.find(_PROJECT, 2, "sha-2").status == ReviewStatus.FAILED
+        assert store.find(_PROJECT, 3, "sha-3").status == ReviewStatus.DONE
     finally:
         store.close()
 

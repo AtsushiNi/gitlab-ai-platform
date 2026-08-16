@@ -3,10 +3,12 @@
 - 実装場所: `src/gitlab_ai_platform/review/`(`types.py` / `errors.py` / `parser.py` /
   `markdown.py` / `storage.py` / `index.py` / `comparison.py`)
 - 対応Issue: [#37](https://github.com/AtsushiNi/gitlab-ai-platform/issues/37) (M1-9)、
+  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、索引書き込みの並行安全性)、
   [#81](https://github.com/AtsushiNi/gitlab-ai-platform/issues/81) (M2-2、再レビュー時の
   「修正済み/未対応/新規」の突き合わせを追加)
 - 関連ADR: [ADR-0006](../adr/0006-review-output-schema.md)、
-  [ADR-0014](../adr/0014-re-review-finding-matching.md)(再レビュー時のマッチング方式)
+  [ADR-0014](../adr/0014-re-review-finding-matching.md)(再レビュー時のマッチング方式)、
+  [ADR-0015](../adr/0015-parallel-review-execution.md)
 - ステータス: 実装済み
 
 ## 責務
@@ -37,6 +39,11 @@ Runnerに渡した入力プロンプトと実行ログのコピーも同じデ�
     検出はState Store, `store/`の責務であり、このモジュールは行わない)。
   - `storage.save_review`に渡す`run_log_path`は、Claude Code Runner(`runner/`)の
     `RunResult.log_path`をそのまま使うことを想定する。
+  - M2-1(#80)以降、`index.append_entry`は複数のワーカースレッドから同時に呼ばれうる
+    (`ReviewWorkerPool`、`docs/specs/cli.md`)。モジュール内の`threading.Lock`で追記を
+    直列化しており、行が混ざって壊れることはない([ADR-0015](../adr/0015-parallel-review-execution.md)
+    参照)。複数プロセスからの同時書き込みはこのロックの対象外で、`ProcessLock`
+    (`cli/lock.py`)が別途防ぐ
   - `comparison.compare_findings`は`ReviewResult`同士(前回・今回)を比較するだけで、
     「前回レビュー」をどう特定するか(索引からの検索・絞り込み)は関知しない。この判断は
     非対象節の通りCLI側(`cli/single_run.py`の`_find_previous_review_result`)の責務。
@@ -239,7 +246,8 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
   根拠・改善案が本文に含まれること、`line`が`None`の場合に`file:None`のような表示にならないことを
   検証する。
 - `test_index.py`: 索引ファイルが無い場合に空タプルを返すこと、追記した内容がそのまま
-  往復すること、複数件を追記した場合の順序を検証する。
+  往復すること、複数件を追記した場合の順序を検証する。(M2-1) 多数のスレッドが同時に
+  `append_entry`を呼んでも行が混ざらず、全件が正しく記録されることも検証する。
 - `test_storage.py`: `tmp_path`配下に`result.json`/`result.md`/`input.md`/`run_log.json`が
   期待するパスに書き出されること、`result.json`が`Finding`と往復可能なこと、`run_log_path`の
   内容がそのままコピーされること、`reviewed_at`省略時に現在時刻が使われること、索引への
@@ -262,6 +270,8 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のReview行
 - [ADR-0006: レビュー結果スキーマと保存レイアウトの設計](../adr/0006-review-output-schema.md)
+- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
+  `index.append_entry`の並行書き込み排他の設計判断
 - [ADR-0014: 再レビュー時の指摘マッチング方式](../adr/0014-re-review-finding-matching.md)(M2-2, #81)
 - [prompts.md](prompts.md) — レビュープロンプト(M1-8)。「出力」セクションはこのモジュールの
   スキーマと1対1の契約。再レビュー時も変更しない([ADR-0014](../adr/0014-re-review-finding-matching.md))
