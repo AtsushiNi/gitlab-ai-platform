@@ -22,6 +22,7 @@ from gitlab_ai_platform.gitlab_adapter.types import (
     MergeRequest,
     MergeRequestDiff,
 )
+from gitlab_ai_platform.job import JobStatus, JobType, SqliteJobRepository
 from gitlab_ai_platform.poller import DetectedReview
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.store import ReviewStatus, SqliteStateStore
@@ -46,6 +47,7 @@ def _config(tmp_path: Path, **overrides) -> Config:
         runner_timeout_seconds=1800,
         reviews_root=str(tmp_path / "reviews"),
         state_db_path=":memory:",
+        job_db_path=":memory:",
     )
     kwargs.update(overrides)
     return Config.from_raw(**kwargs)
@@ -206,7 +208,15 @@ class _ConcurrencyTrackingClaudeCodeRunner(_FakeClaudeCodeRunner):
 
 
 def _run_until_all_detected_reviews_processed(
-    adapter, workspace, runner, store, config, *, expected_count: int, monkeypatch
+    adapter,
+    workspace,
+    runner,
+    store,
+    job_repo,
+    config,
+    *,
+    expected_count: int,
+    monkeypatch,
 ) -> None:
     """`run_watch_loop`を、対象の全MRが処理し終わった時点で`stop_event`をセットして止める。
 
@@ -219,9 +229,11 @@ def _run_until_all_detected_reviews_processed(
     seen_lock = threading.Lock()
     seen: list[DetectedReview] = []
 
-    def _counting_build_on_detected(adapter_, workspace_, runner_, store_, config_):
+    def _counting_build_on_detected(
+        adapter_, workspace_, runner_, store_, job_repo_, config_
+    ):
         inner = original_build_on_detected(
-            adapter_, workspace_, runner_, store_, config_
+            adapter_, workspace_, runner_, store_, job_repo_, config_
         )
 
         def _wrapped(review: DetectedReview) -> None:
@@ -236,7 +248,9 @@ def _run_until_all_detected_reviews_processed(
         return _wrapped
 
     monkeypatch.setattr(watch_module, "build_on_detected", _counting_build_on_detected)
-    run_watch_loop(adapter, workspace, runner, store, config, stop_event=stop_event)
+    run_watch_loop(
+        adapter, workspace, runner, store, job_repo, config, stop_event=stop_event
+    )
 
 
 def test_build_on_detected_runs_execute_review_and_marks_done(tmp_path):
@@ -247,16 +261,24 @@ def test_build_on_detected_runs_execute_review_and_marks_done(tmp_path):
     workspace = _FakeWorkspaceManager(worktree_path)
     runner = _FakeClaudeCodeRunner(tmp_path)
     store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
 
     try:
-        on_detected = build_on_detected(adapter, workspace, runner, store, config)
+        on_detected = build_on_detected(
+            adapter, workspace, runner, store, job_repo, config
+        )
         on_detected(DetectedReview(project=_PROJECT, mr_iid=1, commit_sha="sha-1"))
 
         record = store.find(_PROJECT, 1, "sha-1")
         assert record.status == ReviewStatus.DONE
         assert workspace.prepare_calls == [(_PROJECT, 1, "sha-1")]
         assert runner.run_calls == [(_PROJECT, 1)]
+        # M3-1(#91): 検出されたレビューがreview Jobとして起票・完了していること
+        done_jobs = job_repo.list_by_status(JobStatus.DONE)
+        assert len(done_jobs) == 1
+        assert done_jobs[0].job_type == JobType.REVIEW
     finally:
+        job_repo.close()
         store.close()
 
 
@@ -271,16 +293,21 @@ def test_build_on_detected_logs_and_continues_on_known_pipeline_error(tmp_path):
     )
     runner = _FakeClaudeCodeRunner(tmp_path)
     store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
 
     try:
-        on_detected = build_on_detected(adapter, workspace, runner, store, config)
+        on_detected = build_on_detected(
+            adapter, workspace, runner, store, job_repo, config
+        )
         # 例外を送出せず、ログに記録して静かに終わる(呼び出し元のループを止めない)
         on_detected(DetectedReview(project=_PROJECT, mr_iid=1, commit_sha="sha-1"))
 
         record = store.find(_PROJECT, 1, "sha-1")
         assert record.status == ReviewStatus.FAILED
         assert runner.run_calls == []
+        assert len(job_repo.list_by_status(JobStatus.FAILED)) == 1
     finally:
+        job_repo.close()
         store.close()
 
 
@@ -295,9 +322,12 @@ def test_build_on_detected_uses_detected_sha_even_if_mr_has_moved_on(tmp_path):
     workspace = _FakeWorkspaceManager(worktree_path)
     runner = _FakeClaudeCodeRunner(tmp_path)
     store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
 
     try:
-        on_detected = build_on_detected(adapter, workspace, runner, store, config)
+        on_detected = build_on_detected(
+            adapter, workspace, runner, store, job_repo, config
+        )
         on_detected(DetectedReview(project=_PROJECT, mr_iid=1, commit_sha="sha-1"))
 
         assert store.find(_PROJECT, 1, "sha-1").status == ReviewStatus.DONE
@@ -306,6 +336,7 @@ def test_build_on_detected_uses_detected_sha_even_if_mr_has_moved_on(tmp_path):
         # (Pollerが次回の走査で新規に検出・起票する)
         assert store.find(_PROJECT, 1, "sha-2") is None
     finally:
+        job_repo.close()
         store.close()
 
 
@@ -317,12 +348,16 @@ def test_build_on_detected_propagates_unexpected_exception(tmp_path):
     workspace = _FakeWorkspaceManager(worktree_path, fail_for={1: RuntimeError("bug")})
     runner = _FakeClaudeCodeRunner(tmp_path)
     store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
 
     try:
-        on_detected = build_on_detected(adapter, workspace, runner, store, config)
+        on_detected = build_on_detected(
+            adapter, workspace, runner, store, job_repo, config
+        )
         with pytest.raises(RuntimeError, match="bug"):
             on_detected(DetectedReview(project=_PROJECT, mr_iid=1, commit_sha="sha-1"))
     finally:
+        job_repo.close()
         store.close()
 
 
@@ -342,6 +377,7 @@ def test_run_watch_loop_processes_all_detected_reviews_then_stops(
     workspace = _FakeWorkspaceManager(worktree_path)
     runner = _FakeClaudeCodeRunner(tmp_path)
     store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
 
     try:
         _run_until_all_detected_reviews_processed(
@@ -349,6 +385,7 @@ def test_run_watch_loop_processes_all_detected_reviews_then_stops(
             workspace,
             runner,
             store,
+            job_repo,
             config,
             expected_count=len(mrs),
             monkeypatch=monkeypatch,
@@ -358,6 +395,7 @@ def test_run_watch_loop_processes_all_detected_reviews_then_stops(
         assert store.find(_PROJECT, 1, "sha-1").status == ReviewStatus.DONE
         assert store.find(_PROJECT, 2, "sha-2").status == ReviewStatus.DONE
     finally:
+        job_repo.close()
         store.close()
 
 
@@ -375,6 +413,7 @@ def test_run_watch_loop_processes_reviews_concurrently_up_to_max_parallel(
     workspace = _FakeWorkspaceManager(worktree_path)
     runner = _ConcurrencyTrackingClaudeCodeRunner(tmp_path, hold_seconds=0.1)
     store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
 
     try:
         _run_until_all_detected_reviews_processed(
@@ -382,6 +421,7 @@ def test_run_watch_loop_processes_reviews_concurrently_up_to_max_parallel(
             workspace,
             runner,
             store,
+            job_repo,
             config,
             expected_count=len(mrs),
             monkeypatch=monkeypatch,
@@ -395,6 +435,7 @@ def test_run_watch_loop_processes_reviews_concurrently_up_to_max_parallel(
         for mr in mrs:
             assert store.find(_PROJECT, mr.iid, mr.sha).status == ReviewStatus.DONE
     finally:
+        job_repo.close()
         store.close()
 
 
@@ -410,12 +451,19 @@ def test_run_watch_loop_isolates_worker_failure_from_other_reviews(tmp_path):
     workspace = _FakeWorkspaceManager(worktree_path, fail_for={2: RuntimeError("bug")})
     runner = _FakeClaudeCodeRunner(tmp_path)
     store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
     stop_event = threading.Event()
 
     try:
         with pytest.raises(RuntimeError, match="bug"):
             run_watch_loop(
-                adapter, workspace, runner, store, config, stop_event=stop_event
+                adapter,
+                workspace,
+                runner,
+                store,
+                job_repo,
+                config,
+                stop_event=stop_event,
             )
 
         # MR2は失敗(FAILED)だが、MR1/MR3は影響を受けず完了している
@@ -423,6 +471,7 @@ def test_run_watch_loop_isolates_worker_failure_from_other_reviews(tmp_path):
         assert store.find(_PROJECT, 2, "sha-2").status == ReviewStatus.FAILED
         assert store.find(_PROJECT, 3, "sha-3").status == ReviewStatus.DONE
     finally:
+        job_repo.close()
         store.close()
 
 

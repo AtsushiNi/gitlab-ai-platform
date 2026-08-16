@@ -4,11 +4,13 @@
 - 対応Issue: [#38](https://github.com/AtsushiNi/gitlab-ai-platform/issues/38) (M1-10)、
   [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39) (M1-11)、
   [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48) (M2-11)、
-  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、`watch`の並列実行)
+  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、`watch`の並列実行)、
+  [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1、review Jobとしての再構成)
 - 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
   [ADR-0009](../adr/0009-cli-watch-design.md)、
   [ADR-0012](../adr/0012-decompose-interactive-session.md)、
-  [ADR-0015](../adr/0015-parallel-review-execution.md)
+  [ADR-0015](../adr/0015-parallel-review-execution.md)、
+  [ADR-0016](../adr/0016-job-abstraction.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
   要件→Issue分解の対話型`decompose`サブコマンド)
 
@@ -108,6 +110,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 ```python
 from gitlab_ai_platform.config import Config
 from gitlab_ai_platform.gitlab_adapter.protocol import GitLabReader
+from gitlab_ai_platform.job.protocol import JobRepository
 from gitlab_ai_platform.runner.protocol import ClaudeCodeRunner
 from gitlab_ai_platform.store.protocol import StateStore
 from gitlab_ai_platform.workspace.protocol import WorkspaceManager
@@ -132,7 +135,32 @@ def execute_review(
     `sha`省略時(`review`サブコマンド)はMR取得時点の最新`merge_request.sha`を使う。
     `sha`指定時(`watch`サブコマンド、M1-11)は、それが呼び出し時点の最新commitより
     古くても指定commitに対してレビューを行う(呼び出し側が既にState Storeへ起票済みの
-    commitを上書きしないため)。"""
+    commitを上書きしないため)。Job抽象(M3-1)からは直接呼ばれず、`execute_review_job`
+    経由で呼ばれる。"""
+
+
+def execute_review_job(
+    job_repo: JobRepository,
+    adapter: GitLabReader,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    store: StateStore,
+    config: Config,
+    project: str,
+    mr_iid: int,
+    *,
+    sha: str | None = None,
+    timeout_seconds: int | None = None,
+    allowed_tools: "Sequence[str]" = (),
+    disallowed_tools: "Sequence[str]" = (),
+    permission_mode: str | None = None,
+) -> "SingleRunResult":
+    """`execute_review`を`review`種別のJob(M3-1 [#91], ADR-0016)としてラップする。
+    `job_repo.enqueue`で`PENDING`のJobを起票し、`RUNNING`へ更新してから`execute_review`を
+    呼び出す。成功時はJobを`DONE`へ(`result`にproject/mr_iid/sha/結果保存先パスを記録)、
+    `execute_review`が送出する例外発生時はJobを`FAILED`へ更新してから元の例外を
+    そのまま再送出する。二重レビュー防止は引き続きState Store(`execute_review`内)が担う
+    (詳細: [specs/job-model.md](job-model.md))。"""
 
 
 def run_single_review(
@@ -146,7 +174,8 @@ def run_single_review(
     permission_mode: str | None = None,
 ) -> "SingleRunResult":
     """合成ルート。`config`からGitLabRestAdapter/GitWorkspaceManager/
-    SubprocessClaudeCodeRunner/SqliteStateStoreを組み立て、`execute_review`に委譲する。"""
+    SubprocessClaudeCodeRunner/SqliteStateStore/SqliteJobRepositoryを組み立て、
+    `execute_review_job`に委譲する。"""
 
 
 def build_workspace_manager(config: Config) -> "GitWorkspaceManager":
@@ -167,6 +196,7 @@ import threading
 
 from gitlab_ai_platform.config import Config
 from gitlab_ai_platform.gitlab_adapter.protocol import GitLabReader
+from gitlab_ai_platform.job.protocol import JobRepository
 from gitlab_ai_platform.poller import DetectedReview
 from gitlab_ai_platform.runner.protocol import ClaudeCodeRunner
 from gitlab_ai_platform.store.protocol import StateStore
@@ -192,10 +222,11 @@ def build_on_detected(
     workspace: WorkspaceManager,
     runner: ClaudeCodeRunner,
     store: StateStore,
+    job_repo: JobRepository,
     config: Config,
 ) -> "Callable[[DetectedReview], None]":
-    """`DetectedReview`ごとに`execute_review`を呼ぶコールバックを組み立てる。既知の
-    パイプライン例外はログに記録して握りつぶし、想定外の例外はそのまま伝播させる。"""
+    """`DetectedReview`ごとに`execute_review_job`(M3-1)を呼ぶコールバックを組み立てる。
+    既知のパイプライン例外はログに記録して握りつぶし、想定外の例外はそのまま伝播させる。"""
 
 
 def run_watch_loop(
@@ -203,12 +234,13 @@ def run_watch_loop(
     workspace: WorkspaceManager,
     runner: ClaudeCodeRunner,
     store: StateStore,
+    job_repo: JobRepository,
     config: Config,
     *,
     stop_event: threading.Event | None = None,
 ) -> None:
     """パイプライン本体。`MrPoller`と`build_on_detected`を結線する。
-    4つの依存先はすべてProtocol型で受け取る(具象実装に依存しない)。検出された各MRの
+    5つの依存先はすべてProtocol型で受け取る(具象実装に依存しない)。検出された各MRの
     処理は`ReviewWorkerPool(config.max_parallel, stop_event)`へ投入し、並行実行する
     (M2-1)。`stop_event`を省略した場合はここで生成し、`MrPoller.run`とプールの両方に
     同じオブジェクトを渡す(ワーカースレッドの想定外の例外がポーリングループの早期終了に
@@ -216,8 +248,8 @@ def run_watch_loop(
 
 
 def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> None:
-    """合成ルート。`config`から具象実装を組み立て、`ProcessLock`(多重起動防止、
-    `cli/lock.py`)を取得してから`run_watch_loop`に委譲する。"""
+    """合成ルート。`config`から具象実装(SqliteJobRepository含む、M3-1)を組み立て、
+    `ProcessLock`(多重起動防止、`cli/lock.py`)を取得してから`run_watch_loop`に委譲する。"""
 ```
 
 #### `decompose`(実装場所: `src/gitlab_ai_platform/cli/decompose.py`)
@@ -301,11 +333,20 @@ def run_decompose(
 | `runner_timeout_seconds` | `[runner].timeout_seconds` | `1800` |
 | `reviews_root` | `[reviews].root` | `"reviews"` |
 | `state_db_path` | `[store].db_path` | `"state.db"` |
+| `job_db_path` | `[job].db_path` | `"job.db"` (M3-1、[specs/job-model.md](job-model.md)) |
 
 `decompose`は`SingleRunResult`に相当する構造化結果を持たない。対話型セッションのため成否は
 人間が直接判断し、`run_decompose`は`claude`プロセスの終了コード(`int`)を返すだけである。
 
 ## 処理の流れ(`execute_review`)
+
+`review`/`watch`いずれも実際の呼び出し口は`execute_review_job`(M3-1)であり、以下の手順の
+前後にJobのライフサイクル管理が挟まる: `job_repo.enqueue(REVIEW_JOB_TYPE, ...)`で`PENDING`の
+Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DONE`に更新して`SingleRunResult`を
+返した後、Jobも`DONE`(`result`に結果保存先パス等を記録)へ更新する。手順1〜7のいずれかで
+例外が発生した場合はJobも`FAILED`へ更新してから元の例外を再送出する。以下の手順自体
+(State Storeとのやり取り)は`execute_review`本体の責務のままで変更していない
+(詳細: [specs/job-model.md](job-model.md))。
 
 1. `adapter.get_merge_request` / `get_merge_request_diffs` / `list_merge_request_discussions`で
    対象MRの詳細・diff・コメントを取得する。ここで失敗した場合、State Storeにはまだ触れず
@@ -340,12 +381,12 @@ def run_decompose(
    [ADR-0015](../adr/0015-parallel-review-execution.md))。投入自体は即座に戻るため、
    `poller.run`のループはブロックされない
 4. 投入されたコールバックは、`execution_id_scope()`で新しい実行IDを振ってから
-   `execute_review(adapter, workspace, runner, store, config, review.project,
-   review.mr_iid, sha=review.commit_sha)`を呼ぶ(`review`サブコマンドと同じパイプライン
-   本体を再利用。`sha`にMR Pollerが検出・起票した時点のcommitを明示的に渡すことで、
-   `execute_review`が実行時点の最新commitを取得し直して別のcommitとして起票し直して
-   しまい、Pollerが起票した元のレコードが`RUNNING`/`FAILED`/`DONE`に一度も遷移せず
-   孤立する事態を防ぐ)
+   `execute_review_job(job_repo, adapter, workspace, runner, store, config,
+   review.project, review.mr_iid, sha=review.commit_sha)`を呼ぶ(`review`サブコマンドと
+   同じパイプライン本体(`execute_review`)をJob経由で再利用する、M3-1)。`sha`にMR Pollerが
+   検出・起票した時点のcommitを明示的に渡すことで、`execute_review`が実行時点の最新commitを
+   取得し直して別のcommitとして起票し直してしまい、Pollerが起票した元のレコードが
+   `RUNNING`/`FAILED`/`DONE`に一度も遷移せず孤立する事態を防ぐ
 5. 既知のパイプライン例外(`GitLabAdapterError`/`WorkspaceError`/`RunnerError`/
    `ReviewError`/`StateStoreError`)はログ(`watch.review_failed`)に記録して次のMRの
    処理を続ける。State Storeは`execute_review`が既に`FAILED`へ更新済みのため、
@@ -431,9 +472,16 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
     トークンの値そのものが含まれないことを確認する
   - `build_workspace_manager`が既存の`credential.helper`を空値でクリアしてから
     独自の値を設定すること
+  - `execute_review_job`(M3-1): `SqliteJobRepository(":memory:")`を組み合わせ、正常系で
+    review Jobが`DONE`(`result`にproject/mr_iid/sha/結果保存先パス)へ更新されること、
+    `execute_review`が例外を送出した場合にJobが`FAILED`(`error`にメッセージ)へ更新されてから
+    元の例外が再送出されること、`sha`が`payload`経由で`execute_review`へ正しく伝わることを
+    検証する
 - `test_watch.py`: `build_on_detected`/`run_watch_loop`/`run_watch`を検証する(`test_single_run.py`
-  と同じくフェイク+実DBの`SqliteStateStore(":memory:")`で、実サービスには繋がない)。
-  - `build_on_detected`: 正常系で`execute_review`相当の結果(State Storeが`DONE`)になること、
+  と同じくフェイク+実DBの`SqliteStateStore(":memory:")`/`SqliteJobRepository(":memory:")`で、
+  実サービスには繋がない)。
+  - `build_on_detected`: 正常系で`execute_review_job`相当の結果(State Store・review Jobが
+    ともに`DONE`)になること、
     既知のパイプライン例外はログに記録して例外を送出しないこと(呼び出し元を止めない)、
     それ以外の例外はそのまま伝播すること、検出後にMRが別commitへ進んでいても
     `execute_review`には検出時の`sha`(`DetectedReview.commit_sha`)がそのまま渡り、
@@ -491,7 +539,8 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /
   [claude-code-runner.md](claude-code-runner.md) / [review-output.md](review-output.md) /
-  [state-store.md](state-store.md) — このCLIが結線する各コンポーネントの仕様
+  [state-store.md](state-store.md) / [job-model.md](job-model.md) —
+  このCLIが結線する各コンポーネントの仕様
 - [adapter-mcp-server.md](adapter-mcp-server.md) — `decompose`が`--mcp-config`で登録する
   GitLab Adapter MCP Serverの仕様
 - `references/spike-S3-git-worktree-windows.md` §8.1 — GitLab認証(credential helper)の

@@ -24,6 +24,7 @@ DEFAULT_RUNNER_LOG_DIR = "logs/runner"
 DEFAULT_RUNNER_TIMEOUT_SECONDS = 1800
 DEFAULT_REVIEWS_ROOT = "reviews"
 DEFAULT_STATE_DB_PATH = "state.db"
+DEFAULT_JOB_DB_PATH = "job.db"
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -86,6 +87,7 @@ def load_config(
     runner_section = raw.get("runner", {})
     reviews_section = raw.get("reviews", {})
     store_section = raw.get("store", {})
+    job_section = raw.get("job", {})
 
     return Config.from_raw(
         gitlab_url=gitlab_section.get("url", ""),
@@ -106,4 +108,5 @@ def load_config(
         ),
         reviews_root=reviews_section.get("root", DEFAULT_REVIEWS_ROOT),
         state_db_path=store_section.get("db_path", DEFAULT_STATE_DB_PATH),
+        job_db_path=job_section.get("db_path", DEFAULT_JOB_DB_PATH),
     )

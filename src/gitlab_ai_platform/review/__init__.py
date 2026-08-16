@@ -5,6 +5,12 @@ from __future__ import annotations
 from .comparison import compare_findings
 from .errors import ReviewError, ReviewOutputParseError
 from .index import append_entry, read_index
+from .job import (
+    REVIEW_JOB_TYPE,
+    build_review_job_payload,
+    build_review_job_result,
+    review_job_payload_to_args,
+)
 from .markdown import render_markdown
 from .parser import parse_review_output
 from .prompts import build_review_instructions
@@ -19,6 +25,7 @@ from .types import (
 )
 
 __all__ = [
+    "REVIEW_JOB_TYPE",
     "Finding",
     "IndexEntry",
     "ReviewComparison",
@@ -29,10 +36,13 @@ __all__ = [
     "Severity",
     "append_entry",
     "build_review_instructions",
+    "build_review_job_payload",
+    "build_review_job_result",
     "compare_findings",
     "load_review_result",
     "parse_review_output",
     "read_index",
     "render_markdown",
+    "review_job_payload_to_args",
     "save_review",
 ]
