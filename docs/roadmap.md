@@ -40,7 +40,7 @@ CLAUDE.mdの「次に着手すべきIssueはGitHub Projectsの着手順フィー
 | M1 | レビュー自動化MVP | レビュー待ちMRを自動検出→AIレビュー→ローカル保存まで一気通貫 | 完了 (12/12) |
 | M2 | 実運用強化 | 並列・再レビュー・人間のレビュー体験・GitLabへの選択投稿 | 進行中 (5/12) |
 | M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 完了 (8/8) |
-| M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 未起票 (0/10) |
+| M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 未着手 (0/11) |
 | X  | 横断 | セキュリティ・コスト・可観測性 | 未起票 (0/2) |
 
 ## M0. 土台整備
@@ -155,9 +155,30 @@ M2-12 は完了後にフォローアップIssueが複数派生している(い�
 
 ## M4. Issue駆動開発
 
-M4-1〜M4-10 はいずれも未起票。`references/タスク整理.md` の「M4. Issue駆動開発」節を参照。
-Issue取得・要求分析・質問判断・設計・実装計画・実装・push/MR作成・パイプライン統合・自己レビュー接続
-が含まれる。
+`references/タスク整理.md` のM4-1〜M4-10を、GitHub障害時にAIと検討した内容を踏まえて
+再設計した11タスクとしてIssue化した。主な変更点:
+
+- 「無人実行に向くタスクかどうか」をAIに判定させるのではなく、Issueへのラベル付与(人間の
+  事前判断)で無人実行トラックへ振り分ける(M1-5 MR Pollerと同じパターンをM4-1として横展開)
+- Issue取得(GitLab Adapter側)やIssue分解(対話型)は M2-10・M2-11・M2-12(GitLab Adapter
+  MCP Server)で既に対応済みのため、M4側は無人実行パイプライン向けの薄い部分のみを扱う
+- 対話が多く必要なタスクや、要件からIssueへの分解は、Windows VS Code拡張のClaude Code +
+  GitLab Adapter MCP Server(M2-12)で対応する対話型トラックとし、M4(無人実行トラック)には
+  含めない
+
+| Issue | タスク | 状態 |
+|-------|--------|------|
+| [#107](https://github.com/AtsushiNi/gitlab-ai-platform/issues/107) | M4-1 Issue用ラベルポーリング(Issue Poller) | 未着手 |
+| [#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108) | M4-2 Issue取得とRunnerプロンプトへの正規化 | 未着手 |
+| [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) | M4-3 要求分析フェーズ(Job種別 issue-analysis) | 未着手 |
+| [#110](https://github.com/AtsushiNi/gitlab-ai-platform/issues/110) | M4-4 質問する/仮定して進める判断ロジック | 未着手 |
+| [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111) | M4-5 人間への質問提示と回答の取り込み | 未着手 |
+| [#112](https://github.com/AtsushiNi/gitlab-ai-platform/issues/112) | M4-6 設計フェーズ(Job種別 design) | 未着手 |
+| [#113](https://github.com/AtsushiNi/gitlab-ai-platform/issues/113) | M4-7 実装計画の生成とタスク分解 | 未着手 |
+| [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) | M4-8 実装フェーズ(Job種別 implement) | 未着手 |
+| [#115](https://github.com/AtsushiNi/gitlab-ai-platform/issues/115) | M4-9 push と MR 作成 | 未着手 |
+| [#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116) | M4-10 Issue→MRパイプラインのオーケストレーション | 未着手 |
+| [#117](https://github.com/AtsushiNi/gitlab-ai-platform/issues/117) | M4-11 自己レビュー接続 | 未着手 |
 
 ## X. 横断
 
