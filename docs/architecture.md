@@ -103,7 +103,10 @@ flowchart TD
   自動リトライの仕組みまでは不要
 - **Linux/Docker**(M3以降): Issue駆動開発(M4)のような、人間が張り付かない無人実行が前提になる
   フェーズでは、失敗時の隔離・並列実行時のリソース制御・再現性のためにDocker上のRunnerが必要になる。
-  WindowsにはDocker Desktopが無いため、この段階で初めてLinux/Dockerへ処理を移す
+  WindowsにはDocker Desktopが無いため、この段階で初めてLinux/Dockerへ処理を移す。
+  実行環境(Claude Code + Bedrock認証を含むRunnerイメージ、ワークスペース用ボリューム)は
+  M3-4で構築済み([ADR-0020](adr/0020-docker-runtime.md)、
+  [docs/operations/docker-runtime.md](operations/docker-runtime.md))
 
 共通コード([ADR-0001](adr/0001-repository-structure.md)の`src/`レイアウト)は両環境で動くことを
 制約として維持する。GitLab Adapter・Workspace Manager・Review pipelineのロジック自体は
@@ -192,6 +195,12 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
   管理する新規リポジトリとして追加する。`JobType`(`review`/`issue-analysis`/`design`/`implement`)は
   実装完了を待たず先に列挙し、後からの互換性問題を避ける
   ([ADR-0016](adr/0016-job-abstraction.md)、M3-1で正式化)
+- **Runnerイメージはnpm経由でClaude Code CLIを導入し、シークレットは実行時の環境変数/
+  マウントされたファイル経由でのみ渡す**: `docs/operations/security.md`の
+  「コード・イメージにシークレットを焼き込まない」方針をコンテナ環境でも維持する。
+  Workspace用ボリュームはbare clone・worktree・実行ログ・レビュー結果・State/Job DBを
+  1つのマウントポイントにまとめ、`GitWorkspaceManager`の単一ルート前提と整合させる
+  ([ADR-0020](adr/0020-docker-runtime.md)、M3-4で正式化)
 
 ## 関連ドキュメント
 

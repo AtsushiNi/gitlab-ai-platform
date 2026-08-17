@@ -1,0 +1,36 @@
+# イメージビルド時にコンテキストへ含めないもの(M3-4 #94)。
+# シークレット・実行時生成物・開発ツールのキャッシュ等、イメージに焼き込む必要がないものを除外する。
+
+.git/
+.github/
+
+# シークレット・実行時設定(docker-compose.ymlからread-onlyでマウントする)
+.env
+.env.example
+config.toml
+config.example.toml
+
+# CLI実行時に生成される作業ディレクトリ・DB(.gitignoreと対応。/dataボリューム側で持つ)
+workspace/
+logs/
+reviews/
+state.db
+job.db
+
+# 開発ツールのキャッシュ・仮想環境
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# テスト・ドキュメント・一次資料(イメージの実行には不要)
+tests/
+docs/
+references/
+*.md
