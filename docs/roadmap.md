@@ -39,7 +39,7 @@ CLAUDE.mdの「次に着手すべきIssueはGitHub Projectsの着手順フィー
 | S  | Spike | 先に潰すべき技術的不確実性の検証 | 進行中 (3/4) |
 | M1 | レビュー自動化MVP | レビュー待ちMRを自動検出→AIレビュー→ローカル保存まで一気通貫 | 完了 (12/12) |
 | M2 | 実運用強化 | 並列・再レビュー・人間のレビュー体験・GitLabへの選択投稿 | 進行中 (5/12) |
-| M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 進行中 (4/8) |
+| M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 進行中 (5/8) |
 | M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 未起票 (0/10) |
 | X  | 横断 | セキュリティ・コスト・可観測性 | 未起票 (0/2) |
 
@@ -147,7 +147,7 @@ M2-12 は完了後にフォローアップIssueが複数派生している(い�
 | [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) | M3-1 Job 抽象の導入 | 完了 |
 | [#92](https://github.com/AtsushiNi/gitlab-ai-platform/issues/92) | M3-2 Job Queue の実装 | 完了 |
 | [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) | M3-3 Runner のプロセス分離 | 未着手 |
-| [#94](https://github.com/AtsushiNi/gitlab-ai-platform/issues/94) | M3-4 Linux/Docker 実行環境の構築 | 未着手 |
+| [#94](https://github.com/AtsushiNi/gitlab-ai-platform/issues/94) | M3-4 Linux/Docker 実行環境の構築 | 完了 |
 | [#95](https://github.com/AtsushiNi/gitlab-ai-platform/issues/95) | M3-5 Store の PostgreSQL 対応 | 未着手 |
 | [#96](https://github.com/AtsushiNi/gitlab-ai-platform/issues/96) | M3-6 Webhook 受信対応(任意有効化) | 完了 |
 | [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97) | M3-7 最小限の HTTP API / サーバ層 | 未着手 |

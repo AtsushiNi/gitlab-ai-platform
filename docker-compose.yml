@@ -1,0 +1,38 @@
+# Linux/Docker実行環境のRunnerサービス定義(M3-4 #94、docs/adr/0020-docker-runtime.md)。
+# 実際の起動手順・各設定項目の説明は docs/operations/docker-runtime.md を参照。
+#
+# 使い方の概要:
+#   1. config.example.toml を config.toml にコピーし、GitLab接続先等を設定する
+#   2. .env.example を .env にコピーし、GitLab PAT・AWS認証情報を設定する
+#      (このファイルはコンテナに直接コピーされず、env_file経由で環境変数として渡るだけ)
+#   3. docker compose run --rm runner review <project> <mr_iid> のように実行する
+#      (常駐実行する場合は `docker compose up -d` + command を watch に変更する)
+
+services:
+  runner:
+    build: .
+    image: gitlab-ai-platform-runner:latest
+    env_file:
+      # GitLab PAT・AWS/Bedrock認証情報をここから環境変数として注入する。
+      # イメージには焼き込まない(ADR-0020)
+      - .env
+    environment:
+      # Bedrock有効化はDockerfile側で既定化済み。リージョン等、環境依存の値だけここで指定する
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    volumes:
+      # GitLab接続先・プロジェクト一覧等(シークレットを含まない設定)をread-onlyでマウント
+      - ./config.toml:/app/config.toml:ro
+      # ワークスペース用ボリューム: bare clone・worktree・実行ログ・レビュー結果・
+      # State/Job DBをまとめて永続化する(ADR-0020「Workspace用ボリューム」)
+      - gitlab-ai-platform-data:/data
+      # AWS_PROFILE(SSO等、静的キーではなく認証情報ファイルを使う)方式を使う場合のみ
+      # 以下のコメントを外し、env_fileのAWS_PROFILE設定と組み合わせて使う
+      # - ~/.aws:/home/runner/.aws:ro
+    # config.example.tomlの既定値(workspace.root="workspace"等)は/appからの相対パスのため、
+    # /data配下を指すよう上書きする。config.tomlに直接書いてもよい
+    command:
+      - review
+      - --help
+
+volumes:
+  gitlab-ai-platform-data:
