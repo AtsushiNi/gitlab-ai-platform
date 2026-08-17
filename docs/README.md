@@ -63,6 +63,8 @@
   仕様。MR Pollerと共存し、二重起票防止ロジック(`ticket_if_unprocessed`)を共有する
 - [specs/http-api.md](specs/http-api.md) — 最小限のHTTP API(M3-7)の仕様。`JobRepository`への
   Job投入・状態/結果参照・一覧取得を提供する独立した`api`サブコマンド
+- [specs/orchestrator.md](specs/orchestrator.md) — Orchestrator(M3-7, M4-1〜M4-6, M4-9〜M4-10)の仕様。
+  現時点では「質問する / 仮定して進める」判断ロジック(M4-4)のみを実装済み
 
 ## 更新ルール
 
