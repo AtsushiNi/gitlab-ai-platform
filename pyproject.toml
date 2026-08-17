@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# PostgreSQL State Store(M3-5, docs/adr/0020-state-store-postgresql.md)用。SQLiteのみを
+# PostgreSQL State Store(M3-5, docs/adr/0021-state-store-postgresql.md)用。SQLiteのみを
 # 使うWindows運用では不要なため、ベースの依存には含めずextraとして分離する
 postgres = [
     "psycopg[binary]>=3.1",

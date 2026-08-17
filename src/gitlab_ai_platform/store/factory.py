@@ -1,7 +1,7 @@
 """`Config`から`StateStore`の具象実装を組み立てるファクトリ。
 
 方針(M3-5 [#95](https://github.com/AtsushiNi/gitlab-ai-platform/issues/95)、
-`docs/adr/0020-state-store-postgresql.md`「SQLite実装との共存」):
+`docs/adr/0021-state-store-postgresql.md`「SQLite実装との共存」):
 
 - 呼び出し側(`cli/single_run.py`・`cli/watch.py`)は`SqliteStateStore`/`PostgresStateStore`を
   直接構築せず、この`build_state_store(config)`を経由することで具象クラスの選択を
@@ -9,7 +9,7 @@
 - `PostgresStateStore`(および依存する`psycopg`)のimportは関数内に留める(遅延import)。
   `store_backend = "sqlite"`(Windows運用の既定)の場合、`psycopg`が未インストールでも
   `gitlab_ai_platform.store`パッケージ全体のimportが失敗しないようにするため
-  (ADR-0020: `psycopg`はbase依存ではなく`postgres`extra)
+  (ADR-0021: `psycopg`はbase依存ではなく`postgres`extra)
 """
 
 from __future__ import annotations

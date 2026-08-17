@@ -1,8 +1,8 @@
-"""`PostgresStateStore`(M3-5、docs/adr/0020-state-store-postgresql.md)の契約テスト。
+"""`PostgresStateStore`(M3-5、docs/adr/0021-state-store-postgresql.md)の契約テスト。
 
 CLAUDE.mdの「外部依存(GitLab API等)に触れるテストはモック/フィクスチャを使い、実サービスへは
 繋がない」という方針の例外として、本ファイルは実PostgreSQLサーバーへの接続を必要とする
-(ADR-0020「テスト方針」)。`psycopg`が未インストール、または接続先(環境変数
+(ADR-0021「テスト方針」)。`psycopg`が未インストール、または接続先(環境変数
 `GITLAB_AI_PLATFORM_TEST_POSTGRES_*`、既定は`localhost:5432`)に接続できない場合は
 モジュール全体・各テストをスキップする。CI(GitHub Actions、PostgreSQLサービスコンテナ無し)では
 常にスキップされ、`pytest`全体の成功/失敗には影響しない。
@@ -161,7 +161,7 @@ def test_update_status_without_reviewed_at_or_result_path_preserves_existing_val
 
 def test_create_does_not_mask_not_null_violation_as_duplicate_review(store):
     # NOT NULL制約違反(呼び出し側のバグ)は、二重レビュー(一意制約違反)と
-    # 区別してそのまま送出されること(ADR-0020: psycopg3は制約違反の種別を専用の
+    # 区別してそのまま送出されること(ADR-0021: psycopg3は制約違反の種別を専用の
     # 例外クラスで表現するため、UniqueViolationだけを捕まえれば区別できる)
     with pytest.raises(psycopg.errors.NotNullViolation) as excinfo:
         store._conn.execute(

@@ -1,18 +1,18 @@
 """`StateStore` を満たすPostgreSQL実装。
 
 方針(M3-5 [#95](https://github.com/AtsushiNi/gitlab-ai-platform/issues/95)、
-`docs/adr/0020-state-store-postgresql.md`):
+`docs/adr/0021-state-store-postgresql.md`):
 
 - ドライバは`psycopg`(psycopg3)の`binary`extra(`pyproject.toml`の`postgres`extra)を使う。
-  Windowsのオフライン制約下でもコンパイル済みwheelで導入できる(ADR-0020参照)
+  Windowsのオフライン制約下でもコンパイル済みwheelで導入できる(ADR-0021参照)
 - スキーマは`sqlite.py`とほぼ同一のDDLをそのまま使う(ADR-0003が「ANSI標準のDDLに近い形」に
   とどめていたため。プレースホルダ構文の違い(`?` → `%s`)以外に差分はない)
 - `reviewed_at`はSQLite実装と同じくTEXT(ISO 8601文字列)として保存する。PostgreSQL固有の
-  `TIMESTAMPTZ`型は使わない(ADR-0020「却下した選択肢」: 両実装で入出力契約を完全に揃えるため)
+  `TIMESTAMPTZ`型は使わない(ADR-0021「却下した選択肢」: 両実装で入出力契約を完全に揃えるため)
 - 二重レビュー防止の一意制約違反は`psycopg.errors.UniqueViolation`を`DuplicateReviewError`に
   変換して表現する(SQLite実装の`sqlite3.IntegrityError`+メッセージ判定と同じ契約)
 - 並行アクセスは`sqlite.py`と同じく単一コネクション+`threading.RLock`で直列化する
-  (ADR-0020: psycopg3のコネクションはスレッドセーフではなく、現状の`max_parallel`規模では
+  (ADR-0021: psycopg3のコネクションはスレッドセーフではなく、現状の`max_parallel`規模では
   コネクションプールを導入するメリットが小さいため)
 - コネクションは`autocommit=True`で開く。psycopg3はデフォルト(`autocommit=False`)だと
   エラー発生後のトランザクションが中断状態(aborted)のまま残り、明示的な`rollback()`を
@@ -33,7 +33,7 @@ from psycopg import errors as pg_errors
 from .errors import DuplicateReviewError, RecordNotFoundError, StateStoreError
 from .types import ReviewRecord, ReviewStatus
 
-# sqlite.pyの_CREATE_TABLE_SQLと意図的に同一のDDL(ADR-0020「スキーマはSQLite実装と
+# sqlite.pyの_CREATE_TABLE_SQLと意図的に同一のDDL(ADR-0021「スキーマはSQLite実装と
 # ほぼ同一のDDLをそのまま使う」)。PostgreSQLでもTEXT/INTEGER/複合PRIMARY KEYは
 # そのまま使えるため、方言差の吸収は不要だった
 _CREATE_TABLE_SQL = """
@@ -110,7 +110,7 @@ class PostgresStateStore:
             except pg_errors.UniqueViolation as exc:
                 # PRIMARY KEY(=一意制約)違反のみをDuplicateReviewErrorに変換する。psycopg3は
                 # 制約違反の種別を専用の例外クラスで表現するため、SQLite実装のような
-                # メッセージ文字列の部分一致判定は不要(ADR-0020)
+                # メッセージ文字列の部分一致判定は不要(ADR-0021)
                 raise DuplicateReviewError(
                     f"({project!r}, {mr_iid!r}, {commit_sha!r}) は既にレビュー記録が"
                     "存在します"

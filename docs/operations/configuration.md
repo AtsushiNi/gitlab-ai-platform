@@ -36,7 +36,7 @@
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN` | なし | 必須 | 自動実行系(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行)用のGitLab PAT。GitLab REST API認証(`PRIVATE-TOKEN`ヘッダ、`gitlab_adapter/rest.py`)、およびgit clone/fetch時のcredential helper経由のPAT供給(`cli/single_run.py`の`_build_workspace_manager`)に使う |
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN`と同じ値 | 省略可 | 対話型GitLab Adapter MCP Server(`adapter_mcp_server/main.py`)専用のGitLab PAT。書き込み操作(branch作成・push・MR/Issue作成等)を含む経路のため、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系、読み取り専用の想定)とは別のトークン・アカウントに分けることを推奨する([operations/security.md §4.1](security.md)、[ADR-0019](../adr/0019-gitlab-token-scoping.md))。未設定の場合は`GITLAB_AI_PLATFORM_GITLAB_TOKEN`にフォールバックする |
 | `GITLAB_AI_PLATFORM_WEBHOOK_SECRET` | なし | `webhook.enabled=true`の場合のみ必須 | Webhook受信サーバー(M3-6、[specs/webhook-receiver.md](../specs/webhook-receiver.md))がGitLab Webhookの`X-Gitlab-Token`ヘッダと突き合わせるSecret Token。GitLab側のWebhook設定画面の「Secret token」に同じ値を設定する。GitLab PATとは別の秘密であり、GitLab API認証には使わない |
-| `GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD` | なし | 省略可(`store.backend = "postgresql"`の場合に通常必要) | PostgreSQL State Store(M3-5、[specs/state-store.md](../specs/state-store.md)、[ADR-0020](../adr/0020-state-store-postgresql.md))の接続パスワード。ホスト・ポート・DB名・ユーザー名は`config.toml`の`[store.postgres]`に書く。`store.backend = "sqlite"`(既定)の場合は使われない。ローカルDocker Compose等のtrust認証運用ではパスワード無しもありうるため必須にはしていない |
+| `GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD` | なし | 省略可(`store.backend = "postgresql"`の場合に通常必要) | PostgreSQL State Store(M3-5、[specs/state-store.md](../specs/state-store.md)、[ADR-0021](../adr/0021-state-store-postgresql.md))の接続パスワード。ホスト・ポート・DB名・ユーザー名は`config.toml`の`[store.postgres]`に書く。`store.backend = "sqlite"`(既定)の場合は使われない。ローカルDocker Compose等のtrust認証運用ではパスワード無しもありうるため必須にはしていない |
 
 ## `config.toml`
 
@@ -85,7 +85,7 @@
 
 ### `[store]`
 
-M3-5([specs/state-store.md](../specs/state-store.md)、[ADR-0020](../adr/0020-state-store-postgresql.md))で
+M3-5([specs/state-store.md](../specs/state-store.md)、[ADR-0021](../adr/0021-state-store-postgresql.md))で
 PostgreSQLにも対応した。`backend`でSQLite/PostgreSQLを切り替える(既定はSQLiteのまま、
 Windows運用は無変更で動く)。
 
@@ -178,7 +178,7 @@ path = "/webhook"
 `GITLAB_AI_PLATFORM_WEBHOOK_SECRET`の設定も必要になる。
 
 `store.backend = "postgresql"`にする場合の例(M3以降のLinux/Docker運用を想定、
-[ADR-0020](../adr/0020-state-store-postgresql.md)):
+[ADR-0021](../adr/0021-state-store-postgresql.md)):
 
 ```toml
 [store]

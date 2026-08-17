@@ -1,9 +1,9 @@
-"""`build_state_store`(M3-5、docs/adr/0020-state-store-postgresql.md)のテスト。
+"""`build_state_store`(M3-5、docs/adr/0021-state-store-postgresql.md)のテスト。
 
 `store_backend = "postgresql"`のケースは、実際に接続を試みる前に
 `PostgresStateStore.__init__`が呼ばれた時点で失敗しうる(実PostgreSQLサーバーが必要)ため、
 `PostgresStateStore`自体をフェイクに差し替えて「正しい引数で構築されたか」だけを検証する
-(ADR-0020「テスト方針」)。実接続は`test_postgres.py`側で扱う。
+(ADR-0021「テスト方針」)。実接続は`test_postgres.py`側で扱う。
 """
 
 from __future__ import annotations

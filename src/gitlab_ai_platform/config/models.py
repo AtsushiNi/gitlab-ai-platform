@@ -148,7 +148,7 @@ class Config:
             state_db_path, "store.db_path", errors
         )
 
-        # PostgreSQL対応(M3-5, docs/adr/0020-state-store-postgresql.md)。backendは
+        # PostgreSQL対応(M3-5, docs/adr/0021-state-store-postgresql.md)。backendは
         # "sqlite"(既定)か"postgresql"のいずれかのみ許可する
         clean_store_backend = _require_nonempty_str(
             store_backend, "store.backend", errors
@@ -174,7 +174,7 @@ class Config:
             store_postgres_user, "store.postgres.user", errors
         )
         # パスワードはGitLab PAT/Webhook Secretと同じ理由で.env/環境変数経由だが、必須にはしない
-        # (ADR-0020: ローカルDocker Compose等のtrust認証運用ではパスワード無しがありうるため)
+        # (ADR-0021: ローカルDocker Compose等のtrust認証運用ではパスワード無しがありうるため)
         clean_store_postgres_password = (
             store_postgres_password.strip()
             if isinstance(store_postgres_password, str)

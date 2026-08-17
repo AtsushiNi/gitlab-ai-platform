@@ -1,4 +1,4 @@
-# ADR-0020: State Store の PostgreSQL 対応
+# ADR-0021: State Store の PostgreSQL 対応
 
 - Issue: [#95](https://github.com/AtsushiNi/gitlab-ai-platform/issues/95) (M3-5)
 - 状態: 決定
@@ -79,8 +79,7 @@ CREATE TABLE IF NOT EXISTS review_records (
 `reviewed_at`もSQLite実装と同じく`TEXT`(ISO 8601文字列)のまま保持する。`TIMESTAMPTZ`型に
 変えることも検討したが、あえて見送った(「却下した選択肢」参照)。
 
-### 接続設定: `config.toml`の`[store]`セクションに`backend`を追加し、Postgres接続情報は
-`[store.postgres]`に分ける。パスワードのみ`.env`/環境変数
+### 接続設定: `config.toml`の`[store]`セクションに`backend`を追加し、Postgres接続情報は`[store.postgres]`に分ける。パスワードのみ`.env`/環境変数
 
 GitLab PAT([ADR-0001](0001-repository-structure.md)、`config/loader.py`)・Webhook Secret Token
 ([ADR-0018](0018-webhook-receiver.md))と同じ方針で、シークレット(パスワード)のみ

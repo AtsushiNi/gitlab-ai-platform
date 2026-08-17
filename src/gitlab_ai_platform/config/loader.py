@@ -20,7 +20,7 @@ GITLAB_MCP_TOKEN_ENV_KEY = "GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP"
 # Webhook Secret Token(M3-6, docs/adr/0018-webhook-receiver.md)も同じ理由で.env/環境変数経由
 GITLAB_WEBHOOK_SECRET_ENV_KEY = "GITLAB_AI_PLATFORM_WEBHOOK_SECRET"
 
-# PostgreSQL State Store(M3-5, docs/adr/0020-state-store-postgresql.md)のパスワードも
+# PostgreSQL State Store(M3-5, docs/adr/0021-state-store-postgresql.md)のパスワードも
 # 同じ理由で.env/環境変数経由。ホスト・ポート・DB名・ユーザー名はconfig.tomlに書く
 STORE_POSTGRES_PASSWORD_ENV_KEY = "GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD"
 
@@ -36,7 +36,7 @@ DEFAULT_RUNNER_LOG_DIR = "logs/runner"
 DEFAULT_RUNNER_TIMEOUT_SECONDS = 1800
 DEFAULT_REVIEWS_ROOT = "reviews"
 DEFAULT_STATE_DB_PATH = "state.db"
-# PostgreSQL対応(M3-5, docs/adr/0020-state-store-postgresql.md)。既定は従来通りSQLite
+# PostgreSQL対応(M3-5, docs/adr/0021-state-store-postgresql.md)。既定は従来通りSQLite
 DEFAULT_STORE_BACKEND = "sqlite"
 DEFAULT_STORE_POSTGRES_HOST = "localhost"
 DEFAULT_STORE_POSTGRES_PORT = 5432
