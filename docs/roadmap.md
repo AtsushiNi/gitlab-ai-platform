@@ -39,7 +39,7 @@ CLAUDE.mdの「次に着手すべきIssueはGitHub Projectsの着手順フィー
 | S  | Spike | 先に潰すべき技術的不確実性の検証 | 進行中 (3/4) |
 | M1 | レビュー自動化MVP | レビュー待ちMRを自動検出→AIレビュー→ローカル保存まで一気通貫 | 完了 (12/12) |
 | M2 | 実運用強化 | 並列・再レビュー・人間のレビュー体験・GitLabへの選択投稿 | 進行中 (5/12) |
-| M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 進行中 (7/8) |
+| M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 完了 (8/8) |
 | M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 未起票 (0/10) |
 | X  | 横断 | セキュリティ・コスト・可観測性 | 未起票 (0/2) |
 
