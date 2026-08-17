@@ -5,18 +5,21 @@
   [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39) (M1-11)、
   [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48) (M2-11)、
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、`watch`の並列実行)、
-  [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1、review Jobとしての再構成)
+  [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1、review Jobとしての再構成)、
+  [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3、Runner Dispatcher
+  `worker`サブコマンド)
 - 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
   [ADR-0009](../adr/0009-cli-watch-design.md)、
   [ADR-0012](../adr/0012-decompose-interactive-session.md)、
   [ADR-0015](../adr/0015-parallel-review-execution.md)、
-  [ADR-0016](../adr/0016-job-abstraction.md)
+  [ADR-0016](../adr/0016-job-abstraction.md)、
+  [ADR-0020](../adr/0020-runner-process-separation.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
-  要件→Issue分解の対話型`decompose`サブコマンド)
+  要件→Issue分解の対話型`decompose`サブコマンド、Runner Dispatcher常駐`worker`サブコマンド)
 
 ## 責務
 
-3つのサブコマンドを提供する:
+4つのサブコマンドを提供する:
 
 - `review`: 指定した1つのproject/MRに対し、GitLab Adapter → Workspace Manager →
   Review(プロンプト) → Claude Code Runner → Review(パース・保存) → State Storeという
@@ -30,6 +33,11 @@
   受信するWebhookサーバーも背景スレッドで起動し、MR Pollerと同じ実行経路
   (`ReviewWorkerPool`)・二重起票防止ロジック(`poller.ticket_if_unprocessed`)を共有する
   (M3-6、[ADR-0018](../adr/0018-webhook-receiver.md)、[specs/webhook-receiver.md](webhook-receiver.md))
+- `worker`: Job Repository(`job/`)から`claim`で取り出したJobを処理し続けるRunner
+  Dispatcherの常駐モード(M3-3、[ADR-0020](../adr/0020-runner-process-separation.md))。
+  `review`/`watch`が使う「起票直後に同一プロセス内で同期処理する」経路(`execute_review_job`)
+  とは別の経路で、別プロセス/別ホストでの実行を想定する。同一`job_db_path`に対する複数
+  `worker`プロセスの同時稼働を前提とする設計のため、`watch`と異なり多重起動防止は行わない
 - `decompose`: 指定した1つのprojectに対し、GitLab Adapter MCP Server(M2-12、
   `adapter_mcp_server`)を`--mcp-config`で登録した**対話型**の`claude`セッションを起動する
   (M2-11、`docs/requirements.md` 3-C)。`review`/`watch`のheadless実行(`-p`付き、標準出力の
@@ -46,11 +54,15 @@
     引き継ぐだけであることに注意。`docs/adr/0012-decompose-interactive-session.md`)
   - `claude` CLIがPATH上で実行可能であること、Bedrock認証が環境変数経由で設定済みであること
     (Claude Code Runnerの前提, `docs/specs/claude-code-runner.md`と同じ)
-  - 対象プロジェクトへのgit clone/fetchがネットワーク的に到達可能であること(`review`/`watch`)
+  - 対象プロジェクトへのgit clone/fetchがネットワーク的に到達可能であること(`review`/`watch`/`worker`)
   - `decompose`は人間が対話するため、実行時にターミナル(TTY)を持つWindows端末上での利用を
     想定する(`docs/requirements.md` 3-C、`docs/architecture.md`「Windows/Linuxの分担」)。
     `review`/`watch`と異なり、対象プロジェクトのローカルclone/worktreeが存在することは
     前提にしない(要件がまだIssue化されていない段階から始まるため)
+  - `worker`は`config.toml`/`.env`(GitLab PAT)・GitLab到達性・`workspace_root`用のディスク・
+    `state_db_path`/`job_db_path`が揃っていれば、`review`/`watch`と同じホストでも別ホストでも
+    起動できる(M3-3、[ADR-0020](../adr/0020-runner-process-separation.md)。コンテナ化自体は
+    M3-4のスコープ)
 - 非対象:
   - オーケストレーション(Job間の遷移)はしない(`docs/architecture.md`のCLIの境界)
   - `review`はMR Pollerによる複数MR横断の走査はしない。`project`/`mr_iid`は呼び出し時に
@@ -58,6 +70,10 @@
   - GitLabへの自動コメント投稿はしない(Review, M1-9の境界を継承)
   - `watch`は失敗したレビューの自動リトライ・監視・プロセス再起動はしない
     (`docs/adr/0009-cli-watch-design.md`。M3以降のLinux/Docker移行後のスコープ)
+  - `worker`は`review`種別以外のJobType(`issue-analysis`/`design`/`implement`)の実際の処理を
+    実装しない(M4のスコープ)。未実装種別を明示的に`--job-types`でclaim対象にした場合は
+    `NotImplementedError`経由でデッドレター化する([ADR-0016](../adr/0016-job-abstraction.md)、
+    [ADR-0020](../adr/0020-runner-process-separation.md))
   - `decompose`はIssue分解案の自動決定・無人起票はしない。粒度・優先度・依存関係の判断は
     常に人間が対話の中で下す(`docs/requirements.md` 3-Cの「Bとの違い」)。分解後の
     設計・実装・MR作成(B/M4のスコープ)には進まない
@@ -75,6 +91,15 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
     [--permission-mode MODE]
 
 gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] watch
+
+gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] \
+    worker \
+    [--worker-id ID] \
+    [--job-types TYPE [TYPE ...]] \
+    [--poll-interval SECONDS] \
+    [--heartbeat-interval SECONDS] \
+    [--visibility-timeout SECONDS] \
+    [--once]
 
 gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] \
     decompose <project> \
@@ -96,11 +121,19 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 | `--allowed-tools`(review) | - | 空 | `claude --allowedTools`に対応 |
 | `--disallowed-tools`(review) | - | 空 | `claude --disallowedTools`に対応 |
 | `--permission-mode`(review/decompose) | - | なし | `claude --permission-mode`に対応 |
+| `--worker-id`(worker) | - | `hostname:pid`を自動生成 | このworkerプロセスのリース所有者ID(`claim`/`heartbeat`/`complete`/`fail`の`worker_id`) |
+| `--job-types`(worker) | - | `handlers`に登録済みの種別のみ(M3-3時点では`review`のみ) | claim対象とする`JobType`の値(`review`/`issue-analysis`/`design`/`implement`) |
+| `--poll-interval`(worker) | - | `5`(秒) | `claim`が空振りした際の待機秒数 |
+| `--heartbeat-interval`(worker) | - | `120`(秒) | Job処理中にリースを延長する間隔秒 |
+| `--visibility-timeout`(worker) | - | `600`(秒、`job.protocol.DEFAULT_VISIBILITY_TIMEOUT_SECONDS`) | `claim`時に設定する可視性タイムアウト秒 |
+| `--once`(worker) | - | 偽 | 1件だけJobをclaim・処理して終了する(デバッグ・単発実行用) |
 
-`watch`はサブコマンド固有の引数を持たない。走査対象プロジェクト・ポーリング間隔・
-レビュー待ちラベル等はすべて`config.toml`(`Config`)から読む
+`watch`/`worker`は`project`/`mr_iid`のような対象指定の引数を持たない。走査対象プロジェクト・
+ポーリング間隔・レビュー待ちラベル等はすべて`config.toml`(`Config`)から読む
 (`--timeout`等をMR単位で都度変えるユースケースは想定していない。デバッグ用途は
-`review`を使う)。
+`review`を使う)。`worker`固有のポーリング/heartbeat間隔・可視性タイムアウトは`Config`に
+追加せず、コード内蔵の既定値をCLIオプションで上書きする方式にした
+([ADR-0020](../adr/0020-runner-process-separation.md)「却下した選択肢」参照)。
 
 `decompose`は`project`(GitLabのプロジェクトパス)を人間が明示指定する。`review`と異なり
 `mr_iid`に相当するものは存在しない(要件がまだIssue化されていない段階から始まるため)。
@@ -258,6 +291,94 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
     `ProcessLock`(多重起動防止、`cli/lock.py`)を取得してから`run_watch_loop`に委譲する。"""
 ```
 
+#### `worker`(実装場所: `src/gitlab_ai_platform/cli/dispatcher.py`、M3-3)
+
+`review`/`watch`と同じ「パイプライン本体/合成ルート」分離パターンを踏襲する
+([ADR-0008](../adr/0008-cli-single-run-design.md)、[ADR-0020](../adr/0020-runner-process-separation.md))。
+`JobType` → `JobHandler`のディスパッチテーブルでJob受け渡しプロトコルを表現し、
+`RunnerDispatcher`本体は`review`固有のロジックを知らない。
+
+```python
+import threading
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
+
+from gitlab_ai_platform.config import Config
+from gitlab_ai_platform.gitlab_adapter.protocol import GitLabReader
+from gitlab_ai_platform.job.protocol import Job, JobRepository, JobType
+from gitlab_ai_platform.runner.protocol import ClaudeCodeRunner
+from gitlab_ai_platform.store.protocol import StateStore
+from gitlab_ai_platform.workspace.protocol import WorkspaceManager
+
+JobHandler = Callable[[Job], "dict[str, Any] | None"]
+
+
+def build_review_handler(
+    adapter: GitLabReader,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    store: StateStore,
+    config: Config,
+) -> JobHandler:
+    """review種別の`JobHandler`を組み立てる。`execute_review`本体(変更しない)をそのまま
+    呼び出し、`build_review_job_result`で`result`を組み立てて返す。"""
+
+
+def build_job_handlers(
+    adapter: GitLabReader,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    store: StateStore,
+    config: Config,
+) -> "dict[JobType, JobHandler]":
+    """JobType → JobHandlerのディスパッチテーブルを組み立てる。M3-3時点では`review`のみ。"""
+
+
+class RunnerDispatcher:
+    """`JobRepository.claim`でJobを取り出し、対応する`JobHandler`で処理するループ本体。
+    `job_repo`/`handlers`ともにProtocol型・関数のマッピングのみに依存する。"""
+
+    def __init__(
+        self,
+        job_repo: JobRepository,
+        handlers: "Mapping[JobType, JobHandler]",
+        *,
+        worker_id: str,
+        job_types: "Sequence[JobType] | None" = None,
+        poll_interval_seconds: float = 5.0,
+        heartbeat_interval_seconds: float = 120.0,
+        visibility_timeout_seconds: int = 600,
+    ) -> None: ...
+
+    def run_once(self) -> bool:
+        """1件Jobをclaimして処理する。claimできるJobが無ければ`False`を返す。"""
+
+    def run_forever(self, stop_event: threading.Event) -> None:
+        """`stop_event`がセットされるまで、claim→処理(空振り時のみ`poll_interval_seconds`
+        待機)を繰り返す。"""
+
+
+def default_worker_id() -> str:
+    """`--worker-id`省略時に使う既定のworker識別子(`hostname:pid`)を組み立てる。"""
+
+
+def run_dispatcher(
+    config: Config,
+    *,
+    stop_event: threading.Event | None = None,
+    worker_id: str | None = None,
+    job_types: "Sequence[JobType] | None" = None,
+    poll_interval_seconds: float = 5.0,
+    heartbeat_interval_seconds: float = 120.0,
+    visibility_timeout_seconds: int = 600,
+    run_once: bool = False,
+) -> None:
+    """合成ルート。`config`から具象実装(GitLabRestAdapter/build_workspace_manager/
+    SubprocessClaudeCodeRunner/SqliteStateStore/SqliteJobRepository)を組み立て、
+    `RunnerDispatcher`を起動する。`watch`と異なり`ProcessLock`は取得しない(複数`worker`
+    プロセス/ホストの同時稼働を前提とする設計のため、ADR-0020)。"""
+```
+
 #### `decompose`(実装場所: `src/gitlab_ai_platform/cli/decompose.py`)
 
 `review`/`watch`の「パイプライン本体/合成ルート」分離とは異なり、`decompose`にはProtocol型の
@@ -409,6 +530,34 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
    完了を待ってから(未着手のジョブはキャンセルする)、手順6で保持していた例外があれば
    再送出する
 
+## 処理の流れ(`worker`: `RunnerDispatcher`、M3-3)
+
+`run_dispatcher`(合成ルート)は`config`から具象実装を組み立て、`RunnerDispatcher.run_forever`
+(`--once`指定時は`run_once`を1回だけ)に委譲する([ADR-0020](../adr/0020-runner-process-separation.md))。
+
+1. `stop_event`がセットされるまで、`job_repo.claim(worker_id, job_types=...,
+   visibility_timeout_seconds=...)`を呼ぶ。`job_types`省略時は`build_job_handlers`が
+   組み立てたディスパッチテーブルに登録済みの種別(M3-3時点では`review`のみ)に絞られる
+2. `claim`が`None`を返した場合(処理対象のJobが無い)、`poll_interval_seconds`(既定5秒)
+   だけ待ってから手順1へ戻る
+3. Jobを取得できた場合、専用のdaemonスレッドを起動し`heartbeat_interval_seconds`
+   (既定120秒)ごとに`job_repo.heartbeat(job.id, worker_id, ...)`を呼んでリース
+   (可視性タイムアウトの期限)を延長し続ける
+4. `job.job_type`に対応する`JobHandler`を`handlers`辞書から引く。無ければ
+   `NotImplementedError`を送出する([ADR-0016](../adr/0016-job-abstraction.md)の契約)
+5. `review`種別の`JobHandler`(`build_review_handler`)は、`job.payload`から
+   `(project, mr_iid, sha)`を取り出し`execute_review`(変更しない)を呼び出し、結果から
+   `result`(`dict`)を組み立てて返す
+6. `handler`が正常終了した場合は`job_repo.complete(job.id, worker_id, result=result)`を
+   呼ぶ。`NotImplementedError`が送出された場合は`job_repo.fail(job.id, worker_id, str(exc),
+   retry=False)`(未実装種別はリトライしても結果が変わらないため即デッドレター化)。
+   それ以外の例外が送出された場合は`job_repo.fail(job.id, worker_id, str(exc), retry=True)`
+   (リトライ判定は`JobRepository`の`attempts`/`max_attempts`に委ねる、[ADR-0017](../adr/0017-job-queue.md))
+7. 手順6の完了後、heartbeatスレッドを停止して`join`する。1件のJobの処理結果に関わらず
+   例外を再送出せず、手順1へ戻る(1件の失敗が他のJobの処理を止めない。`watch`の
+   「想定外の例外はプロセスを落とす」方針とは意図的に異なる、[ADR-0020](../adr/0020-runner-process-separation.md)「却下した選択肢」参照)
+8. `stop_event`がセットされると、現在処理中のJob(あれば)の完了を待ってからループを終了する
+
 ## 処理の流れ(`decompose`: `run_decompose`)
 
 1. `build_mcp_config(config_path, env_path, ...)`で、GitLab Adapter MCP Serverを登録した
@@ -426,21 +575,22 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 ## エラー時の振る舞い(`cli/main.py`)
 
 このモジュール自身は独自の例外型を持たない。パイプライン(`review`は
-`execute_review`/`run_single_review`、`watch`は`run_watch`、`decompose`は`run_decompose`)が
-送出する例外をそのまま受け取り、`cli/exit_codes.py`の終了コードとエラーメッセージ
-(標準エラー出力)に変換する。
+`execute_review`/`run_single_review`、`watch`は`run_watch`、`worker`は`run_dispatcher`、
+`decompose`は`run_decompose`)が送出する例外をそのまま受け取り、`cli/exit_codes.py`の
+終了コードとエラーメッセージ(標準エラー出力)に変換する。
 
 | 例外 | 終了コード | サブコマンド | 備考 |
 |---|---|---|---|
 | `config.ConfigError` | 10 | 全て | `load_config`失敗時。PATの値は含めない(`ConfigError`自体の契約) |
-| `gitlab_adapter.errors.GitLabAdapterError` | 11 | review/watch | |
-| `workspace.errors.WorkspaceError` | 12 | review/watch | |
-| `runner.errors.RunnerError` | 13 | review/watch | `log_path`属性があれば標準エラー出力にあわせて表示する |
-| `review.errors.ReviewError` | 14 | review/watch | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
-| `store.errors.StateStoreError` | 15 | review/watch | |
-| `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`) |
+| `gitlab_adapter.errors.GitLabAdapterError` | 11 | review/watch/worker | |
+| `workspace.errors.WorkspaceError` | 12 | review/watch/worker | |
+| `runner.errors.RunnerError` | 13 | review/watch/worker | `log_path`属性があれば標準エラー出力にあわせて表示する |
+| `review.errors.ReviewError` | 14 | review/watch/worker | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
+| `store.errors.StateStoreError` | 15 | review/watch/worker | |
+| `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`)。`worker`は多重起動防止を行わないため該当しない(ADR-0020) |
 | `decompose.ClaudeCommandNotFoundError` | 17 | decompose | 対話型`claude`プロセスの起動自体に失敗した場合(`FileNotFoundError`)。それ以外は`claude`プロセス自身の終了コードをそのまま返す(`docs/adr/0012-decompose-interactive-session.md`) |
-| `KeyboardInterrupt` | 130 | 全て | `watch`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
+| `job.errors.JobError` | 18 | worker | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`自体がDB接続不良等でJob Repository起因のエラーを送出した場合のみ(個々のJobの処理失敗は`RunnerDispatcher`が握りつぶし続行するため、通常この経路には来ない。M3-3、[ADR-0020](../adr/0020-runner-process-separation.md)) |
+| `KeyboardInterrupt` | 130 | 全て | `watch`/`worker`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
 | 上記以外の例外 | 1 | 全て | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
 
 `watch`では、上記5種類のパイプライン例外(11〜15)のうち`run_watch_loop`のループ内
@@ -453,6 +603,12 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 `SqliteStateStore`の初期化自体が失敗する場合)。プロセスが継続せず終了するのは
 Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、構成段階での
 上記5種類の例外(11〜15)、または想定外の例外(1)の場合。
+
+`worker`も同様に、`RunnerDispatcher._process`のループ内(1件のJob処理を包む箇所)で発生した
+パイプライン例外は`fail(..., retry=True)`に変換されログに記録されるため、これらの終了コード
+では終了しない。`cli.main`まで伝播するのは`run_dispatcher`の構成段階(`GitLabRestAdapter`等の
+組み立て)での失敗、またはJob Repository自体の異常(`JobError`、18)、Ctrl+C/SIGTERM
+(正常終了、終了コード0)、想定外の例外(1)の場合のみ。
 
 `argparse`の引数エラーは自動的に終了コード`2`・使い方メッセージになる(このCLIでは独自定義しない)。
 
@@ -515,16 +671,32 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   Windows分岐(`msvcrt`)は開発機がmacOSのため実機検証はできず、`sys.platform`/
   `sys.modules["msvcrt"]`をテスト用のフェイクに差し替えてロジックのみ検証する
   (`references/spike-S3-git-worktree-windows.md`と同様の制約)
-- `test_main.py`: `run_single_review`/`run_watch`/`run_decompose`を`monkeypatch`で差し替え、
-  CLI引数が正しく渡ること、各例外型が対応する終了コード・標準エラー出力になること、正常系で
-  標準出力にサマリ(結果パス・指摘件数)が表示されることを検証する。`watch`はSIGINT/SIGTERM
-  受信で`stop_event`がセットされること、`main`終了後にシグナルハンドラが元へ戻ることも検証する。
-  `watch`も`review`と同じ5種類のパイプライン例外(構成段階を想定し`run_watch`自体から
-  送出させる)が同じ終了コードへ変換されることをパラメタライズテストで検証する。`decompose`は
-  `run_decompose`の戻り値(`claude`の終了コード)がそのままCLIの終了コードになること、
-  `project`/`--permission-mode`/`--config`/`--env`が正しく渡ること、
+- `test_dispatcher.py`(M3-3): `build_review_handler`/`build_job_handlers`を
+  `test_single_run.py`/`test_watch.py`と同じ手書きフェイク(`GitLabReader`/`WorkspaceManager`/
+  `ClaudeCodeRunner`)+実DBの`SqliteStateStore(":memory:")`で検証する。`RunnerDispatcher`は
+  `claim`/`heartbeat`/`complete`/`fail`のみを満たす手書きフェイク`JobRepository`で制御フロー
+  (`run_once`の返り値、handler成功時の`complete`呼び出し、例外送出時の
+  `fail(..., retry=True)`、未対応JobType(handlerが無い)時の`fail(..., retry=False)`、
+  `job_types`省略時に`handlers`登録済みの種別のみをclaim対象にすること、Job処理中の
+  定期的な`heartbeat`呼び出し、`heartbeat`が`LeaseLostError`を送出してもhandler本体は
+  中断されないこと、`run_forever`の`stop_event`までの空振りポーリング)を検証する。
+  `run_dispatcher`(合成ルート)は実サービスに繋がない範囲(`run_once=True`でJobが無い状態、
+  `stop_event`を起動前にセットする)で具象実装の組み立てが例外を出さないことを検証する
+- `test_main.py`: `run_single_review`/`run_watch`/`run_dispatcher`/`run_decompose`を
+  `monkeypatch`で差し替え、CLI引数が正しく渡ること、各例外型が対応する終了コード・
+  標準エラー出力になること、正常系で標準出力にサマリ(結果パス・指摘件数)が表示されることを
+  検証する。`watch`/`worker`はSIGINT/SIGTERM受信で`stop_event`がセットされること、`main`
+  終了後にシグナルハンドラが元へ戻ることも検証する。`watch`も`review`と同じ5種類の
+  パイプライン例外(構成段階を想定し`run_watch`自体から送出させる)が同じ終了コードへ
+  変換されることをパラメタライズテストで検証する。`worker`は同じ5種類のパイプライン例外に
+  加え`JobError`が`EXIT_JOB_ERROR`(18)に変換されることも検証し、`--worker-id`/
+  `--job-types`/`--poll-interval`/`--heartbeat-interval`/`--visibility-timeout`/`--once`が
+  正しく`run_dispatcher`へ渡ること、省略時は`worker_id`/`job_types`が`None`・`run_once`が
+  `False`になること、不正な`--job-types`値・非正数の間隔指定が終了コード`2`(argparse)に
+  なることを検証する。`decompose`は`run_decompose`の戻り値(`claude`の終了コード)がそのまま
+  CLIの終了コードになること、`project`/`--permission-mode`/`--config`/`--env`が正しく渡ること、
   `ClaudeCommandNotFoundError`が`EXIT_CLAUDE_NOT_FOUND`(17)に変換されること、
-  `ConfigError`が`review`/`watch`と同じ`EXIT_CONFIG_ERROR`(10)経路に乗ることを検証する
+  `ConfigError`が`review`/`watch`/`worker`と同じ`EXIT_CONFIG_ERROR`(10)経路に乗ることを検証する
 - `test_decompose.py`: 実`claude`・実MCPサーバーには繋がない(CLAUDE.mdのテスト方針)。
   `build_mcp_config`が`--config`/`--env`パスを`adapter_mcp_server`起動コマンドへ引き継ぎ、
   GitLab PAT等の値を一切含まないこと・`--log-dir`が指定時のみ付与されること、
@@ -546,6 +718,8 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [ADR-0012: 要件→Issue分解ワークフロー(`decompose`)の対話型セッション設計](../adr/0012-decompose-interactive-session.md)
 - [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   `watch`の`ReviewWorkerPool`による並列実行の設計判断
+- [ADR-0020: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0020-runner-process-separation.md) —
+  `worker`サブコマンド・`RunnerDispatcher`の設計判断
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信
   サーバー(M3-6)の仕様
@@ -553,11 +727,12 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /
   [claude-code-runner.md](claude-code-runner.md) / [review-output.md](review-output.md) /
   [state-store.md](state-store.md) / [job-model.md](job-model.md) —
-  このCLIが結線する各コンポーネントの仕様
+  このCLIが結線する各コンポーネントの仕様(`job-model.md`は`worker`が呼び出す
+  `claim`/`heartbeat`/`complete`/`fail`の詳細)
 - [adapter-mcp-server.md](adapter-mcp-server.md) — `decompose`が`--mcp-config`で登録する
   GitLab Adapter MCP Serverの仕様
 - `references/spike-S3-git-worktree-windows.md` §8.1 — GitLab認証(credential helper)の
   実機検証結果
 - ソースコード: `src/gitlab_ai_platform/cli/`
-  (`main.py` / `single_run.py` / `watch.py` / `worker_pool.py` / `decompose.py` / `lock.py` /
-  `exit_codes.py` / `__main__.py` / `__init__.py`)
+  (`main.py` / `single_run.py` / `watch.py` / `worker_pool.py` / `dispatcher.py` /
+  `decompose.py` / `lock.py` / `exit_codes.py` / `__main__.py` / `__init__.py`)

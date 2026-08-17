@@ -7,7 +7,10 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
 
 - `review`サブコマンドで単発レビュー実行(デバッグ・プロンプト改善用)、`watch`サブコマンドで
   常駐モード(M1-11)、`decompose`サブコマンドで要件→Issue分解の対話型セッション(M2-11
-  [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48))を提供する。
+  [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48))、`worker`サブコマンドで
+  Runner Dispatcher(M3-3 [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93)、
+  `docs/adr/0020-runner-process-separation.md`。`JobRepository.claim`でJobを取り出し続ける
+  別プロセス/別ホスト実行用の常駐モード)を提供する。
 - パイプライン(`single_run.run_single_review`)が送出する各段階の例外
   (`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)を捕まえ、`exit_codes`の対応する終了コードとエラーメッセージ
@@ -37,6 +40,8 @@ from ..config import (
     load_config,
 )
 from ..gitlab_adapter.errors import GitLabAdapterError
+from ..job.errors import JobError
+from ..job.protocol import DEFAULT_VISIBILITY_TIMEOUT_SECONDS, JobType
 from ..logging_ import execution_id_scope, get_logger, setup_logging
 from ..review.errors import ReviewError
 from ..runner.errors import RunnerError
@@ -44,6 +49,11 @@ from ..store.errors import StateStoreError
 from ..workspace.errors import WorkspaceError
 from . import exit_codes
 from .decompose import ClaudeCommandNotFoundError, run_decompose
+from .dispatcher import (
+    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    run_dispatcher,
+)
 from .lock import AlreadyRunningError
 from .single_run import SingleRunResult, run_single_review
 from .watch import run_watch
@@ -71,6 +81,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_review_command(config, args)
         if args.command == "watch":
             return _run_watch_command(config)
+        if args.command == "worker":
+            return _run_worker_command(config, args)
         if args.command == "decompose":
             return _run_decompose_command(args)
 
@@ -178,6 +190,61 @@ def _run_watch_command(config: Config) -> int:
     return exit_codes.EXIT_OK
 
 
+def _run_worker_command(config: Config, args: argparse.Namespace) -> int:
+    stop_event = threading.Event()
+    restore_handlers = _install_shutdown_handler(stop_event)
+    job_types = (
+        tuple(JobType(value) for value in args.job_types) if args.job_types else None
+    )
+    try:
+        run_dispatcher(
+            config,
+            stop_event=stop_event,
+            worker_id=args.worker_id,
+            job_types=job_types,
+            poll_interval_seconds=args.poll_interval,
+            heartbeat_interval_seconds=args.heartbeat_interval,
+            visibility_timeout_seconds=args.visibility_timeout,
+            run_once=args.once,
+        )
+    except GitLabAdapterError as exc:
+        # 個々のJobの失敗はRunnerDispatcherが握りつぶすため、ここに届くのは具象実装の
+        # 組み立て(構成)段階の失敗のみ(`_run_watch_command`と同じ変換)
+        _logger.error(
+            "cli.worker_failed", extra={"stage": "gitlab_adapter", "error": str(exc)}
+        )
+        print(f"GitLab Adapterエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_GITLAB_ADAPTER_ERROR
+    except WorkspaceError as exc:
+        _logger.error(
+            "cli.worker_failed", extra={"stage": "workspace", "error": str(exc)}
+        )
+        print(f"Workspace Managerエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_WORKSPACE_ERROR
+    except RunnerError as exc:
+        _logger.error("cli.worker_failed", extra={"stage": "runner", "error": str(exc)})
+        print(f"Claude Code Runnerエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_RUNNER_ERROR
+    except ReviewError as exc:
+        _logger.error("cli.worker_failed", extra={"stage": "review", "error": str(exc)})
+        print(f"レビュー結果の解析エラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_REVIEW_ERROR
+    except StateStoreError as exc:
+        _logger.error(
+            "cli.worker_failed", extra={"stage": "state_store", "error": str(exc)}
+        )
+        print(f"State Storeエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_STATE_STORE_ERROR
+    except JobError as exc:
+        _logger.error("cli.worker_failed", extra={"stage": "job", "error": str(exc)})
+        print(f"Job Repositoryエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_JOB_ERROR
+    finally:
+        restore_handlers()
+
+    return exit_codes.EXIT_OK
+
+
 def _run_decompose_command(args: argparse.Namespace) -> int:
     # ConfigError(GitLab認証等の設定不備)はここに来る前に`main`が既に検証・変換済み。
     # decompose自身はConfigの値を読まず、検証済みの--config/--envパスをそのまま
@@ -250,6 +317,14 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _positive_float(value: str) -> float:
+    # workerのポーリング/heartbeat間隔用。0や負値だとビジーループ・即時リース失効になるため拒否する
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"正の数値を指定してください: {value!r}")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gitlab-ai-platform",
@@ -311,6 +386,56 @@ def _build_parser() -> argparse.ArgumentParser:
             "対象プロジェクトを定期走査し、レビュー待ちMRを検出次第レビューし続ける"
             "(常駐モード。Ctrl+C/SIGTERMで終了)"
         ),
+    )
+
+    worker_parser = subparsers.add_parser(
+        "worker",
+        help=(
+            "Job Repositoryからclaimで取り出したJobを処理し続けるRunner Dispatcher"
+            "(常駐モード。別プロセス/別ホストでの実行を想定、Ctrl+C/SIGTERMで終了。"
+            "M3-3、docs/adr/0020-runner-process-separation.md)"
+        ),
+    )
+    worker_parser.add_argument(
+        "--worker-id",
+        default=None,
+        help="このworkerプロセスのリース所有者ID(省略時は`hostname:pid`を自動生成)",
+    )
+    worker_parser.add_argument(
+        "--job-types",
+        nargs="*",
+        default=None,
+        choices=[job_type.value for job_type in JobType],
+        metavar="TYPE",
+        help=(
+            "claim対象とするJobType(省略時はhandlerを持つ種別=reviewのみを対象にする)"
+        ),
+    )
+    worker_parser.add_argument(
+        "--poll-interval",
+        type=_positive_float,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
+        metavar="SECONDS",
+        help=f"claimが空振りした際の待機秒数(既定: {DEFAULT_POLL_INTERVAL_SECONDS})",
+    )
+    worker_parser.add_argument(
+        "--heartbeat-interval",
+        type=_positive_float,
+        default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        metavar="SECONDS",
+        help=f"Job処理中にリースを延長する間隔秒(既定: {DEFAULT_HEARTBEAT_INTERVAL_SECONDS})",
+    )
+    worker_parser.add_argument(
+        "--visibility-timeout",
+        type=_positive_int,
+        default=DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+        metavar="SECONDS",
+        help=f"claim時に設定する可視性タイムアウト秒(既定: {DEFAULT_VISIBILITY_TIMEOUT_SECONDS})",
+    )
+    worker_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="1件だけJobをclaim・処理して終了する(デバッグ・単発実行用)",
     )
 
     decompose_parser = subparsers.add_parser(
