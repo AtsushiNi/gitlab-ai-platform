@@ -223,7 +223,7 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 
 漏洩(誤コミット・チャットへの平文貼付等)に気づいた場合の対応手順。
 「PATが切れた/権限不足になった」場合の復旧手順(通常の失効・再発行)は
-[troubleshooting.md §2.1](troubleshooting.md#21-gitlab-api認証切れpat失効--終了コード11)を参照。
+[troubleshooting.md §2.1](troubleshooting.md#21-gitlab-api認証切れpat失効-終了コード11)を参照。
 ここでは**漏洩**という異常事態への対応に絞る。
 
 1. 漏洩したトークンがどちらのアカウント由来か特定する(§4.1の自動実行系用/対話型MCP用の

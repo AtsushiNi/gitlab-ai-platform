@@ -111,7 +111,7 @@ GitLab PATの観点では実質的に「自動実行系(単発`review`+`watch`�
   操作を実行したアカウント単位で記録されるため、2アカウントに分けることで
   「どちらの経路(自動実行系/対話型)から行われた操作か」がGitLab側のログだけで判別できる。
   単一アカウントの場合、Adapter層の構造化ログ(`gitlab_adapter/rest.py`の`_record_write`、
-  [ADR-0002追記(M1-3)](0002-gitlab-adapter-interface.md#追記m1-3-31)参照)と突き合わせないと
+  [ADR-0002追記(M1-3)](0002-gitlab-adapter-interface.md#追記m1-331)参照)と突き合わせないと
   経路を特定できなかった
 - **棚卸し表の運用ルール**([security.md §4.3](../operations/security.md)を拡充):
   発行済みPAT一覧に「アカウント名」「用途(自動実行系/対話型)」「スコープ」「付与ロール」
