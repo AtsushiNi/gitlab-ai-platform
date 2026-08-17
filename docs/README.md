@@ -56,7 +56,8 @@
 - [specs/adapter-mcp-server.md](specs/adapter-mcp-server.md) — GitLab Adapter MCP Server(M2-12)の仕様。
   対話型Claude CodeがGitLab Adapterの許可された操作をツールとして呼び出すための経路
 - [specs/job-model.md](specs/job-model.md) — Job抽象・状態機械(M3-1)の仕様。既存レビュー処理を
-  `review`種別のJobとして再構成する経路を含む
+  `review`種別のJobとして再構成する経路、取得の排他・可視性タイムアウト・リトライ・
+  デッドレター(M3-2)を含む
 
 ## 更新ルール
 
