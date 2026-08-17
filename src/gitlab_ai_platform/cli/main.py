@@ -10,7 +10,10 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
   [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48))、`worker`サブコマンドで
   Runner Dispatcher(M3-3 [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93)、
   `docs/adr/0022-runner-process-separation.md`。`JobRepository.claim`でJobを取り出し続ける
-  別プロセス/別ホスト実行用の常駐モード)を提供する。
+  別プロセス/別ホスト実行用の常駐モード)、`api`サブコマンドでJob Repositoryへの最小限の
+  HTTP API(M3-7 [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97)、
+  `docs/adr/0023-http-api.md`。Job投入・状態/結果参照・一覧取得。将来のUI・他ツール連携の口)
+  を提供する。
 - パイプライン(`single_run.run_single_review`)が送出する各段階の例外
   (`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)を捕まえ、`exit_codes`の対応する終了コードとエラーメッセージ
@@ -48,6 +51,7 @@ from ..runner.errors import RunnerError
 from ..store.errors import StateStoreError
 from ..workspace.errors import WorkspaceError
 from . import exit_codes
+from .api_server import run_api_server
 from .decompose import ClaudeCommandNotFoundError, run_decompose
 from .dispatcher import (
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
@@ -83,6 +87,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_watch_command(config)
         if args.command == "worker":
             return _run_worker_command(config, args)
+        if args.command == "api":
+            return _run_api_command(config)
         if args.command == "decompose":
             return _run_decompose_command(args)
 
@@ -237,6 +243,27 @@ def _run_worker_command(config: Config, args: argparse.Namespace) -> int:
         return exit_codes.EXIT_STATE_STORE_ERROR
     except JobError as exc:
         _logger.error("cli.worker_failed", extra={"stage": "job", "error": str(exc)})
+        print(f"Job Repositoryエラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_JOB_ERROR
+    finally:
+        restore_handlers()
+
+    return exit_codes.EXIT_OK
+
+
+def _run_api_command(config: Config) -> int:
+    stop_event = threading.Event()
+    restore_handlers = _install_shutdown_handler(stop_event)
+    try:
+        run_api_server(config, stop_event=stop_event)
+    except ConfigError as exc:
+        # api.token未設定(空)の場合(`run_api_server`が検証する。ADR-0023「決定」)
+        _logger.error("cli.api_failed", extra={"stage": "config", "error": str(exc)})
+        print(f"設定エラー: {exc}", file=sys.stderr)
+        return exit_codes.EXIT_CONFIG_ERROR
+    except JobError as exc:
+        # `SqliteJobRepository`の構築失敗等、Job Repository起因のエラー(`worker`と同じ変換)
+        _logger.error("cli.api_failed", extra={"stage": "job", "error": str(exc)})
         print(f"Job Repositoryエラー: {exc}", file=sys.stderr)
         return exit_codes.EXIT_JOB_ERROR
     finally:
@@ -436,6 +463,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--once",
         action="store_true",
         help="1件だけJobをclaim・処理して終了する(デバッグ・単発実行用)",
+    )
+
+    subparsers.add_parser(
+        "api",
+        help=(
+            "Job Repositoryへの最小限のHTTP APIサーバーを起動する"
+            "(常駐モード。Ctrl+C/SIGTERMで終了。Job投入・状態/結果参照・一覧取得。"
+            "M3-7、docs/adr/0023-http-api.md)"
+        ),
     )
 
     decompose_parser = subparsers.add_parser(

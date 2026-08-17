@@ -30,6 +30,9 @@ def _valid_kwargs(**overrides):
         webhook_port=8088,
         webhook_path="/webhook",
         webhook_secret_token="",
+        api_host="127.0.0.1",
+        api_port=8090,
+        api_token="",
     )
     kwargs.update(overrides)
     return kwargs
@@ -63,6 +66,9 @@ def test_from_raw_builds_config_with_valid_values():
     assert config.webhook_port == 8088
     assert config.webhook_path == "/webhook"
     assert config.webhook_secret_token == ""
+    assert config.api_host == "127.0.0.1"
+    assert config.api_port == 8090
+    assert config.api_token == ""
 
 
 def test_from_raw_strips_trailing_slash_from_url():
@@ -136,6 +142,9 @@ def test_from_raw_strips_whitespace_from_projects():
         {"webhook_port": -1},
         {"webhook_path": ""},
         {"webhook_path": "webhook"},
+        {"api_host": ""},
+        {"api_port": 0},
+        {"api_port": -1},
     ],
 )
 def test_from_raw_rejects_invalid_values(overrides):
@@ -180,6 +189,13 @@ def test_repr_masks_webhook_secret_token():
     )
 
     assert "whsec-super-secret" not in repr(config)
+    assert "***" in repr(config)
+
+
+def test_repr_masks_api_token():
+    config = Config.from_raw(**_valid_kwargs(api_token="apitoken-super-secret"))
+
+    assert "apitoken-super-secret" not in repr(config)
     assert "***" in repr(config)
 
 

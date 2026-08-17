@@ -523,6 +523,88 @@ def test_worker_command_rejects_non_positive_interval(tmp_path, flag, value):
     assert excinfo.value.code == 2
 
 
+def _api_argv(tmp_path: Path) -> list[str]:
+    config_path, env_path = _write_config(tmp_path)
+    return ["--config", str(config_path), "--env", str(env_path), "api"]
+
+
+def test_api_command_returns_ok_when_run_api_server_returns_normally(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.main.run_api_server", lambda *a, **k: None
+    )
+
+    exit_code = main(_api_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_OK
+
+
+def test_api_command_passes_a_stop_event_to_run_api_server(tmp_path, monkeypatch):
+    captured = {}
+
+    def _fake_run_api_server(config, *, stop_event=None):
+        captured["stop_event"] = stop_event
+
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.main.run_api_server", _fake_run_api_server
+    )
+
+    main(_api_argv(tmp_path))
+
+    assert isinstance(captured["stop_event"], threading.Event)
+    assert not captured["stop_event"].is_set()
+
+
+def test_api_command_returns_config_error_exit_code(tmp_path, monkeypatch, capsys):
+    # config.api_tokenが空の場合にrun_api_serverが送出するConfigError(ADR-0023)
+    from gitlab_ai_platform.config import ConfigError
+
+    def _raise(*args, **kwargs):
+        raise ConfigError("api.token が設定されていません")
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_api_server", _raise)
+
+    exit_code = main(_api_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_CONFIG_ERROR
+    assert "設定エラー" in capsys.readouterr().err
+
+
+def test_api_command_returns_job_error_exit_code(tmp_path, monkeypatch, capsys):
+    def _raise(*args, **kwargs):
+        raise JobError("DB接続エラー")
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_api_server", _raise)
+
+    exit_code = main(_api_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_JOB_ERROR
+    assert "Job Repositoryエラー" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+def test_api_command_sets_stop_event_on_signal_and_restores_handler(
+    tmp_path, monkeypatch, sig
+):
+    original_handler = signal.getsignal(sig)
+    observed = {}
+
+    def _fake_run_api_server(config, *, stop_event=None):
+        os.kill(os.getpid(), sig)
+        observed["was_set_after_signal"] = stop_event.is_set()
+
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.main.run_api_server", _fake_run_api_server
+    )
+
+    exit_code = main(_api_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_OK
+    assert observed["was_set_after_signal"] is True
+    assert signal.getsignal(sig) == original_handler
+
+
 def _decompose_argv(tmp_path: Path, *extra: str) -> list[str]:
     config_path, env_path = _write_config(tmp_path)
     return [

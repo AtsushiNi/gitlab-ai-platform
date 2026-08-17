@@ -61,6 +61,9 @@ def _config(tmp_path: Path, **overrides) -> Config:
         webhook_port=8088,
         webhook_path="/webhook",
         webhook_secret_token="",
+        api_host="127.0.0.1",
+        api_port=8090,
+        api_token="",
     )
     kwargs.update(overrides)
     return Config.from_raw(**kwargs)

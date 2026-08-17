@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from gitlab_ai_platform.config import (
+    API_TOKEN_ENV_KEY,
     GITLAB_MCP_TOKEN_ENV_KEY,
     GITLAB_TOKEN_ENV_KEY,
     GITLAB_WEBHOOK_SECRET_ENV_KEY,
@@ -53,6 +54,10 @@ enabled = true
 host = "127.0.0.1"
 port = 9090
 path = "/gitlab/webhook"
+
+[api]
+host = "127.0.0.1"
+port = 9191
 """
 
 
@@ -94,7 +99,8 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
         f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n"
         f"{GITLAB_MCP_TOKEN_ENV_KEY}=mcp-from-dotenv\n"
         f"{GITLAB_WEBHOOK_SECRET_ENV_KEY}=whsec-from-dotenv\n"
-        f"{STORE_POSTGRES_PASSWORD_ENV_KEY}=pgpw-from-dotenv\n",
+        f"{STORE_POSTGRES_PASSWORD_ENV_KEY}=pgpw-from-dotenv\n"
+        f"{API_TOKEN_ENV_KEY}=apitoken-from-dotenv\n",
     )
 
     config = load_config(config_path=config_path, env_path=env_path)
@@ -124,6 +130,9 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
     assert config.webhook_port == 9090
     assert config.webhook_path == "/gitlab/webhook"
     assert config.webhook_secret_token == "whsec-from-dotenv"
+    assert config.api_host == "127.0.0.1"
+    assert config.api_port == 9191
+    assert config.api_token == "apitoken-from-dotenv"
 
 
 def test_load_config_prefers_real_env_var_over_dotenv_file(tmp_path, monkeypatch):
@@ -193,6 +202,9 @@ def test_load_config_applies_defaults_when_optional_sections_missing(
     assert config.webhook_port == 8088
     assert config.webhook_path == "/webhook"
     assert config.webhook_secret_token == ""
+    assert config.api_host == "127.0.0.1"
+    assert config.api_port == 8090
+    assert config.api_token == ""
 
 
 def test_load_config_raises_without_leaking_token_when_other_fields_invalid(

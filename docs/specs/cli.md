@@ -7,19 +7,23 @@
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、`watch`の並列実行)、
   [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1、review Jobとしての再構成)、
   [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3、Runner Dispatcher
-  `worker`サブコマンド)
+  `worker`サブコマンド)、
+  [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97) (M3-7、HTTP API
+  `api`サブコマンド)
 - 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
   [ADR-0009](../adr/0009-cli-watch-design.md)、
   [ADR-0012](../adr/0012-decompose-interactive-session.md)、
   [ADR-0015](../adr/0015-parallel-review-execution.md)、
   [ADR-0016](../adr/0016-job-abstraction.md)、
-  [ADR-0022](../adr/0022-runner-process-separation.md)
+  [ADR-0022](../adr/0022-runner-process-separation.md)、
+  [ADR-0023](../adr/0023-http-api.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
-  要件→Issue分解の対話型`decompose`サブコマンド、Runner Dispatcher常駐`worker`サブコマンド)
+  要件→Issue分解の対話型`decompose`サブコマンド、Runner Dispatcher常駐`worker`サブコマンド、
+  HTTP APIサーバー常駐`api`サブコマンド)
 
 ## 責務
 
-4つのサブコマンドを提供する:
+5つのサブコマンドを提供する:
 
 - `review`: 指定した1つのproject/MRに対し、GitLab Adapter → Workspace Manager →
   Review(プロンプト) → Claude Code Runner → Review(パース・保存) → State Storeという
@@ -43,6 +47,11 @@
   (M2-11、`docs/requirements.md` 3-C)。`review`/`watch`のheadless実行(`-p`付き、標準出力の
   JSONをパース)とは異なり、stdin/stdout/stderrをそのまま人間に継承させ、ターミナルで
   人間とClaude Codeが直接対話しながら新しい開発要件を複数のGitLab Issueへ分解・起票する
+- `api`: Job Repository(`job/`)への最小限のHTTP API(投入・状態/結果参照・一覧取得)を
+  提供する常駐モード(M3-7、[ADR-0023](../adr/0023-http-api.md)、
+  [specs/http-api.md](http-api.md))。`worker`と同様、`review`/`watch`が使う経路とは別の
+  独立したプロセスで、`watch`(Poller/Webhook)・`worker`(Runner Dispatcher)いずれの稼働状況
+  にも依存しない。「将来のUIや他ツール連携の口」として、任意の`JobType`のJobを投入できる
 
 ## 前提と非対象
 
@@ -63,6 +72,10 @@
     `state_db_path`/`job_db_path`が揃っていれば、`review`/`watch`と同じホストでも別ホストでも
     起動できる(M3-3、[ADR-0022](../adr/0022-runner-process-separation.md)。コンテナ化自体は
     M3-4のスコープ)
+  - `api`は`.env`の`GITLAB_AI_PLATFORM_API_TOKEN`(未設定なら`ConfigError`で起動しない)と
+    `job_db_path`のみが前提で、GitLab到達性・`workspace_root`は不要(GitLab Adapter/Workspace
+    Manager/Claude Code Runnerのいずれにも依存しないため、M3-7、
+    [ADR-0023](../adr/0023-http-api.md))
 - 非対象:
   - オーケストレーション(Job間の遷移)はしない(`docs/architecture.md`のCLIの境界)
   - `review`はMR Pollerによる複数MR横断の走査はしない。`project`/`mr_iid`は呼び出し時に
@@ -77,6 +90,9 @@
   - `decompose`はIssue分解案の自動決定・無人起票はしない。粒度・優先度・依存関係の判断は
     常に人間が対話の中で下す(`docs/requirements.md` 3-Cの「Bとの違い」)。分解後の
     設計・実装・MR作成(B/M4のスコープ)には進まない
+  - `api`はJobの実行(`worker`の責務)を行わない。`claim`/`heartbeat`/`complete`/`fail`
+    (Runner Dispatcher専用の操作)は公開せず、Job Repositoryへの読み書き(投入・参照・一覧)
+    のみを提供する(M3-7、[ADR-0023](../adr/0023-http-api.md))
 
 ## 公開インターフェース
 
@@ -100,6 +116,8 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
     [--heartbeat-interval SECONDS] \
     [--visibility-timeout SECONDS] \
     [--once]
+
+gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] api
 
 gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] \
     decompose <project> \
@@ -134,6 +152,11 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 `review`を使う)。`worker`固有のポーリング/heartbeat間隔・可視性タイムアウトは`Config`に
 追加せず、コード内蔵の既定値をCLIオプションで上書きする方式にした
 ([ADR-0022](../adr/0022-runner-process-separation.md)「却下した選択肢」参照)。
+
+`api`もCLI固有のオプションを持たない(`--host`/`--port`/`--token`のような上書きは提供しない)。
+待受アドレス/ポートは`config.toml`の`[api]`セクション、トークンは`.env`の
+`GITLAB_AI_PLATFORM_API_TOKEN`のみで設定する(`webhook`と同じ方針、
+[ADR-0023](../adr/0023-http-api.md)「決定」)。
 
 `decompose`は`project`(GitLabのプロジェクトパス)を人間が明示指定する。`review`と異なり
 `mr_iid`に相当するものは存在しない(要件がまだIssue化されていない段階から始まるため)。
@@ -379,6 +402,27 @@ def run_dispatcher(
     プロセス/ホストの同時稼働を前提とする設計のため、ADR-0022)。"""
 ```
 
+#### `api`(実装場所: `src/gitlab_ai_platform/cli/api_server.py`、M3-7)
+
+`worker`と同じ「合成ルートを`cli/<name>.py`に置く」パターンを踏襲するが、`api`は常駐ループ
+(claim/poll)を持たず、`ApiServer`(`api/server.py`、[specs/http-api.md](http-api.md))を
+起動して`stop_event`を待つだけの薄い合成ルートになる([ADR-0023](../adr/0023-http-api.md))。
+
+```python
+import threading
+
+from gitlab_ai_platform.config import Config
+
+
+def run_api_server(
+    config: Config, *, stop_event: threading.Event | None = None
+) -> None:
+    """合成ルート。`config`から`SqliteJobRepository`/`ApiServer`を組み立てて`start()`し、
+    `stop_event`がセットされるまで待つ。`config.api_token`が空の場合は`ConfigError`を
+    送出する(無認証での起動を防ぐ)。`worker`と同じ理由で`ProcessLock`は取得しない
+    (複数`api`プロセスの同時稼働を妨げない、ADR-0022と同じ考え方)。"""
+```
+
 #### `decompose`(実装場所: `src/gitlab_ai_platform/cli/decompose.py`)
 
 `review`/`watch`の「パイプライン本体/合成ルート」分離とは異なり、`decompose`にはProtocol型の
@@ -558,6 +602,17 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
    「想定外の例外はプロセスを落とす」方針とは意図的に異なる、[ADR-0022](../adr/0022-runner-process-separation.md)「却下した選択肢」参照)
 8. `stop_event`がセットされると、現在処理中のJob(あれば)の完了を待ってからループを終了する
 
+## 処理の流れ(`api`: `run_api_server`、M3-7)
+
+詳細は[specs/http-api.md](http-api.md)「処理の流れ」を参照。概略:
+
+1. `config.api_token`が空なら`ConfigError`を送出して終了する
+2. `SqliteJobRepository(config.job_db_path)`と`ApiServer`(`token`/`host`/`port`は
+   `config.api_token`/`api_host`/`api_port`)を組み立て、`start()`する
+   (`ThreadingHTTPServer.serve_forever`を背景スレッドで実行)
+3. `stop_event`がセットされるまで待つ。セットされたら`ApiServer.stop()`→
+   `job_repo.close()`の順で終了する
+
 ## 処理の流れ(`decompose`: `run_decompose`)
 
 1. `build_mcp_config(config_path, env_path, ...)`で、GitLab Adapter MCP Serverを登録した
@@ -576,21 +631,21 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 
 このモジュール自身は独自の例外型を持たない。パイプライン(`review`は
 `execute_review`/`run_single_review`、`watch`は`run_watch`、`worker`は`run_dispatcher`、
-`decompose`は`run_decompose`)が送出する例外をそのまま受け取り、`cli/exit_codes.py`の
-終了コードとエラーメッセージ(標準エラー出力)に変換する。
+`api`は`run_api_server`、`decompose`は`run_decompose`)が送出する例外をそのまま受け取り、
+`cli/exit_codes.py`の終了コードとエラーメッセージ(標準エラー出力)に変換する。
 
 | 例外 | 終了コード | サブコマンド | 備考 |
 |---|---|---|---|
-| `config.ConfigError` | 10 | 全て | `load_config`失敗時。PATの値は含めない(`ConfigError`自体の契約) |
+| `config.ConfigError` | 10 | 全て | `load_config`失敗時。`api`は`config.api_token`が空の場合にも`run_api_server`が送出する。PATの値は含めない(`ConfigError`自体の契約) |
 | `gitlab_adapter.errors.GitLabAdapterError` | 11 | review/watch/worker | |
 | `workspace.errors.WorkspaceError` | 12 | review/watch/worker | |
 | `runner.errors.RunnerError` | 13 | review/watch/worker | `log_path`属性があれば標準エラー出力にあわせて表示する |
 | `review.errors.ReviewError` | 14 | review/watch/worker | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
 | `store.errors.StateStoreError` | 15 | review/watch/worker | |
-| `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`)。`worker`は多重起動防止を行わないため該当しない(ADR-0022) |
+| `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`)。`worker`/`api`は多重起動防止を行わないため該当しない(ADR-0022/ADR-0023) |
 | `decompose.ClaudeCommandNotFoundError` | 17 | decompose | 対話型`claude`プロセスの起動自体に失敗した場合(`FileNotFoundError`)。それ以外は`claude`プロセス自身の終了コードをそのまま返す(`docs/adr/0012-decompose-interactive-session.md`) |
-| `job.errors.JobError` | 18 | worker | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`自体がDB接続不良等でJob Repository起因のエラーを送出した場合のみ(個々のJobの処理失敗は`RunnerDispatcher`が握りつぶし続行するため、通常この経路には来ない。M3-3、[ADR-0022](../adr/0022-runner-process-separation.md)) |
-| `KeyboardInterrupt` | 130 | 全て | `watch`/`worker`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
+| `job.errors.JobError` | 18 | worker/api | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`(worker)・`enqueue`/`get`/`list_by_status`/`list_dead_letters`(api)自体がDB接続不良等でJob Repository起因のエラーを送出した場合のみ。`worker`は個々のJobの処理失敗を`RunnerDispatcher`が、`api`は個々のリクエストのエラーを`ApiServer`がそれぞれ握りつぶし続行するため、通常この経路には来ない(M3-3/[ADR-0022](../adr/0022-runner-process-separation.md)、M3-7/[ADR-0023](../adr/0023-http-api.md)) |
+| `KeyboardInterrupt` | 130 | 全て | `watch`/`worker`/`api`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
 | 上記以外の例外 | 1 | 全て | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
 
 `watch`では、上記5種類のパイプライン例外(11〜15)のうち`run_watch_loop`のループ内
@@ -682,21 +737,30 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   中断されないこと、`run_forever`の`stop_event`までの空振りポーリング)を検証する。
   `run_dispatcher`(合成ルート)は実サービスに繋がない範囲(`run_once=True`でJobが無い状態、
   `stop_event`を起動前にセットする)で具象実装の組み立てが例外を出さないことを検証する
-- `test_main.py`: `run_single_review`/`run_watch`/`run_dispatcher`/`run_decompose`を
-  `monkeypatch`で差し替え、CLI引数が正しく渡ること、各例外型が対応する終了コード・
-  標準エラー出力になること、正常系で標準出力にサマリ(結果パス・指摘件数)が表示されることを
-  検証する。`watch`/`worker`はSIGINT/SIGTERM受信で`stop_event`がセットされること、`main`
-  終了後にシグナルハンドラが元へ戻ることも検証する。`watch`も`review`と同じ5種類の
-  パイプライン例外(構成段階を想定し`run_watch`自体から送出させる)が同じ終了コードへ
-  変換されることをパラメタライズテストで検証する。`worker`は同じ5種類のパイプライン例外に
-  加え`JobError`が`EXIT_JOB_ERROR`(18)に変換されることも検証し、`--worker-id`/
-  `--job-types`/`--poll-interval`/`--heartbeat-interval`/`--visibility-timeout`/`--once`が
-  正しく`run_dispatcher`へ渡ること、省略時は`worker_id`/`job_types`が`None`・`run_once`が
-  `False`になること、不正な`--job-types`値・非正数の間隔指定が終了コード`2`(argparse)に
-  なることを検証する。`decompose`は`run_decompose`の戻り値(`claude`の終了コード)がそのまま
-  CLIの終了コードになること、`project`/`--permission-mode`/`--config`/`--env`が正しく渡ること、
-  `ClaudeCommandNotFoundError`が`EXIT_CLAUDE_NOT_FOUND`(17)に変換されること、
-  `ConfigError`が`review`/`watch`/`worker`と同じ`EXIT_CONFIG_ERROR`(10)経路に乗ることを検証する
+- `test_api_server.py`(M3-7): `run_api_server`を実DBの`SqliteJobRepository(":memory:")`と
+  組み合わせて検証する。`config.api_token`が空の場合に`ConfigError`を送出すること
+  (ポートをbindしないこと)、`stop_event`が既にセットされていれば`start`後すぐに`stop`が
+  呼ばれ正常に戻ること、`ApiServer`が実際に構築され`server_port`が取得できることを
+  実サービスに繋がない範囲で検証する(`api/test_server.py`の詳細な入出力検証は
+  [specs/http-api.md](http-api.md)側)
+- `test_main.py`: `run_single_review`/`run_watch`/`run_dispatcher`/`run_api_server`/
+  `run_decompose`を`monkeypatch`で差し替え、CLI引数が正しく渡ること、各例外型が対応する
+  終了コード・標準エラー出力になること、正常系で標準出力にサマリ(結果パス・指摘件数)が
+  表示されることを検証する。`watch`/`worker`/`api`はSIGINT/SIGTERM受信で`stop_event`が
+  セットされること、`main`終了後にシグナルハンドラが元へ戻ることも検証する。`watch`も
+  `review`と同じ5種類のパイプライン例外(構成段階を想定し`run_watch`自体から送出させる)が
+  同じ終了コードへ変換されることをパラメタライズテストで検証する。`worker`は同じ5種類の
+  パイプライン例外に加え`JobError`が`EXIT_JOB_ERROR`(18)に変換されることも検証し、
+  `--worker-id`/`--job-types`/`--poll-interval`/`--heartbeat-interval`/`--visibility-timeout`/
+  `--once`が正しく`run_dispatcher`へ渡ること、省略時は`worker_id`/`job_types`が`None`・
+  `run_once`が`False`になること、不正な`--job-types`値・非正数の間隔指定が終了コード`2`
+  (argparse)になることを検証する。`api`は`ConfigError`が`EXIT_CONFIG_ERROR`(10)、
+  `JobError`が`EXIT_JOB_ERROR`(18)に変換されることを検証する(CLI固有オプションを
+  持たないため引数関連のテストは無い)。`decompose`は`run_decompose`の戻り値(`claude`の
+  終了コード)がそのままCLIの終了コードになること、`project`/`--permission-mode`/
+  `--config`/`--env`が正しく渡ること、`ClaudeCommandNotFoundError`が
+  `EXIT_CLAUDE_NOT_FOUND`(17)に変換されること、`ConfigError`が`review`/`watch`/`worker`/
+  `api`と同じ`EXIT_CONFIG_ERROR`(10)経路に乗ることを検証する
 - `test_decompose.py`: 実`claude`・実MCPサーバーには繋がない(CLAUDE.mdのテスト方針)。
   `build_mcp_config`が`--config`/`--env`パスを`adapter_mcp_server`起動コマンドへ引き継ぎ、
   GitLab PAT等の値を一切含まないこと・`--log-dir`が指定時のみ付与されること、
@@ -720,10 +784,13 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   `watch`の`ReviewWorkerPool`による並列実行の設計判断
 - [ADR-0022: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0022-runner-process-separation.md) —
   `worker`サブコマンド・`RunnerDispatcher`の設計判断
+- [ADR-0023: 最小限の HTTP API / サーバ層の設計](../adr/0023-http-api.md) —
+  `api`サブコマンド・`ApiServer`の設計判断
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信
   サーバー(M3-6)の仕様
 - [ADR-0018: Webhook 受信対応(任意有効化)の設計](../adr/0018-webhook-receiver.md)
+- [http-api.md](http-api.md) — `api`サブコマンドが起動する最小限のHTTP API(M3-7)の仕様
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /
   [claude-code-runner.md](claude-code-runner.md) / [review-output.md](review-output.md) /
   [state-store.md](state-store.md) / [job-model.md](job-model.md) —
@@ -735,4 +802,5 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   実機検証結果
 - ソースコード: `src/gitlab_ai_platform/cli/`
   (`main.py` / `single_run.py` / `watch.py` / `worker_pool.py` / `dispatcher.py` /
-  `decompose.py` / `lock.py` / `exit_codes.py` / `__main__.py` / `__init__.py`)
+  `api_server.py` / `decompose.py` / `lock.py` / `exit_codes.py` / `__main__.py` /
+  `__init__.py`)、`src/gitlab_ai_platform/api/`(`server.py` / `errors.py` / `__init__.py`)

@@ -37,6 +37,7 @@
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN`と同じ値 | 省略可 | 対話型GitLab Adapter MCP Server(`adapter_mcp_server/main.py`)専用のGitLab PAT。書き込み操作(branch作成・push・MR/Issue作成等)を含む経路のため、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系、読み取り専用の想定)とは別のトークン・アカウントに分けることを推奨する([operations/security.md §4.1](security.md)、[ADR-0019](../adr/0019-gitlab-token-scoping.md))。未設定の場合は`GITLAB_AI_PLATFORM_GITLAB_TOKEN`にフォールバックする |
 | `GITLAB_AI_PLATFORM_WEBHOOK_SECRET` | なし | `webhook.enabled=true`の場合のみ必須 | Webhook受信サーバー(M3-6、[specs/webhook-receiver.md](../specs/webhook-receiver.md))がGitLab Webhookの`X-Gitlab-Token`ヘッダと突き合わせるSecret Token。GitLab側のWebhook設定画面の「Secret token」に同じ値を設定する。GitLab PATとは別の秘密であり、GitLab API認証には使わない |
 | `GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD` | なし | 省略可(`store.backend = "postgresql"`の場合に通常必要) | PostgreSQL State Store(M3-5、[specs/state-store.md](../specs/state-store.md)、[ADR-0021](../adr/0021-state-store-postgresql.md))の接続パスワード。ホスト・ポート・DB名・ユーザー名は`config.toml`の`[store.postgres]`に書く。`store.backend = "sqlite"`(既定)の場合は使われない。ローカルDocker Compose等のtrust認証運用ではパスワード無しもありうるため必須にはしていない |
+| `GITLAB_AI_PLATFORM_API_TOKEN` | なし | `api`サブコマンドを実行する場合のみ必須 | 最小限のHTTP API(M3-7、[specs/http-api.md](../specs/http-api.md)、[ADR-0023](../adr/0023-http-api.md))が`X-Api-Token`ヘッダと突き合わせる認証トークン。Webhookの`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`とは別の値にする(信頼境界が異なるため)。未設定のまま`api`サブコマンドを起動すると`ConfigError`になる |
 
 ## `config.toml`
 
@@ -134,6 +135,18 @@ GitLab側の設定手順(対象プロジェクトの「Settings > Webhooks」):
 4. SSL verification: TLS終端の有無に応じて設定(本サーバー自体はHTTPのみを話す。
    TLSが必要な場合はリバースプロキシを前段に置く)
 
+### `[api]`
+
+M3-7([specs/http-api.md](../specs/http-api.md)、[ADR-0023](../adr/0023-http-api.md))。
+`api`サブコマンド(常駐、`review`/`watch`/`worker`/`decompose`とは別プロセス)が起動する
+最小限のHTTP APIの設定。**Webhookとは異なり`enabled`フラグは無い**(`api`サブコマンドを
+実行すること自体が有効化を意味する、[ADR-0023](../adr/0023-http-api.md)「決定」)。
+
+| キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
+|---|---|---|---|---|
+| `host` | `"127.0.0.1"` | str | 省略可 | HTTP APIサーバーの待受アドレス。Webhookの既定`"0.0.0.0"`と異なり既定はループバックのみ(書き込み系操作を含むため安全側の既定、[ADR-0023](../adr/0023-http-api.md)参照)。外部公開する場合は明示的に変更する |
+| `port` | `8090` | int(正の整数) | 省略可 | HTTP APIサーバーの待受ポート。Webhookの既定`8088`と衝突しないポート |
+
 ## `config.toml`の例
 
 ```toml
@@ -171,11 +184,17 @@ enabled = false
 host = "0.0.0.0"
 port = 8088
 path = "/webhook"
+
+[api]
+host = "127.0.0.1"
+port = 8090
 ```
 
 上記はすべて既定値と同じ値のため、実運用では`[gitlab]`の`url`/`projects`(既定値が無く必須)
 以外は省略してよい。`webhook.enabled = true`にする場合は`.env`に
-`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`の設定も必要になる。
+`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`の設定も必要になる。`api`サブコマンドを使う場合は
+`.env`に`GITLAB_AI_PLATFORM_API_TOKEN`の設定が必要になる(`[api]`セクション自体に
+`enabled`は無い)。
 
 `store.backend = "postgresql"`にする場合の例(M3以降のLinux/Docker運用を想定、
 [ADR-0021](../adr/0021-state-store-postgresql.md)):
@@ -206,6 +225,8 @@ GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP=glpat-yyyyyyyyyyyyyyyyyyyy
 GITLAB_AI_PLATFORM_WEBHOOK_SECRET=whsec-xxxxxxxxxxxxxxxxxxxx
 # store.backend = "postgresql" にする場合のみ通常必要
 GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD=xxxxxxxxxxxxxxxxxxxx
+# apiサブコマンドを使う場合のみ必要(Webhook Secretとは別の値にする)
+GITLAB_AI_PLATFORM_API_TOKEN=apitoken-xxxxxxxxxxxxxxxxxxxx
 ```
 
 雛形は`.env.example`(リポジトリ直下)を参照。PATのスコープ・アカウント分離・トークン管理の

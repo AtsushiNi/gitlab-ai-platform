@@ -150,7 +150,7 @@ M2-12 は完了後にフォローアップIssueが複数派生している(い�
 | [#94](https://github.com/AtsushiNi/gitlab-ai-platform/issues/94) | M3-4 Linux/Docker 実行環境の構築 | 完了 |
 | [#95](https://github.com/AtsushiNi/gitlab-ai-platform/issues/95) | M3-5 Store の PostgreSQL 対応 | 完了 |
 | [#96](https://github.com/AtsushiNi/gitlab-ai-platform/issues/96) | M3-6 Webhook 受信対応(任意有効化) | 完了 |
-| [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97) | M3-7 最小限の HTTP API / サーバ層 | 未着手 |
+| [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97) | M3-7 最小限の HTTP API / サーバ層 | 完了 |
 | [#98](https://github.com/AtsushiNi/gitlab-ai-platform/issues/98) | M3-8 AI用GitLabアカウントとトークンスコープの設計 | 完了 |
 
 ## M4. Issue駆動開発
