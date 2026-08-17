@@ -149,22 +149,37 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 
 ### 4.1 GitLab PAT
 
-- 環境変数`GITLAB_AI_PLATFORM_GITLAB_TOKEN`(`.env`ファイルまたは実際にexportされたOS環境変数)
-  経由で供給する([`config/loader.py`](../../src/gitlab_ai_platform/config/loader.py)の
-  `GITLAB_TOKEN_ENV_KEY`)。`config.toml`(リポジトリにコミットされうる)には**書かない**
-- `.env`・`config.toml`はいずれも`.gitignore`対象
+**AI用GitLabアカウント・トークンスコープの設計は[ADR-0019](../adr/0019-gitlab-token-scoping.md)
+(M3-8)で決定した。** 以下はその実装を反映した現状。
+
+- **アカウント分離**: 人間の個人アカウントは使わない。用途に応じて2つのAI用アカウントを使う
+  ([ADR-0019](../adr/0019-gitlab-token-scoping.md)「決定 1」):
+  - 自動実行系用アカウント(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行) —
+    構造的に読み取りしか行わない経路(§3.3)のため、ロールは**Reporter**に留める
+  - 対話型GitLab Adapter MCP Server用アカウント — branch作成・push・MR/Issue作成等の
+    書き込み(§2.2)を行うため、ロールは**Developer**(Maintainer以上は与えない)
+- **用途別トークン**: 上記2アカウントに対応して、PATも2種類の環境変数で供給する
+  (`config.toml`(リポジトリにコミットされうる)には**書かない**、`.env`ファイルまたは
+  実際にexportされたOS環境変数経由。`.env`・`config.toml`はいずれも`.gitignore`対象):
+  - `GITLAB_AI_PLATFORM_GITLAB_TOKEN`(`GITLAB_TOKEN_ENV_KEY`) — 自動実行系用。
+    `cli/single_run.py`・`cli/watch.py`が使う
+  - `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`(`GITLAB_MCP_TOKEN_ENV_KEY`) — 対話型MCP
+    Server用。`adapter_mcp_server/main.py`が使う。**未設定の場合は`GITLAB_AI_PLATFORM_GITLAB_TOKEN`
+    にフォールバックする**(用途別トークンの分離は必須ではなくオプション。
+    [`config/models.py`](../../src/gitlab_ai_platform/config/models.py)の`Config.from_raw`)
 - **スコープ最小化**([`.env.example`](../../.env.example)、
   [references/spike-S2-gitlab-rest-api.md](../../references/spike-S2-gitlab-rest-api.md) §3):
-  - 読み取りのみで足りる用途(M1のレビュー実行)は`read_api`で足りる
-  - 書き込み操作(branch作成・push・MR/Issue作成等、M2以降)が必要な場合は`api`スコープに
-    切り替える。`api`は常に読み書き全体を含み、GitLabのスコープ機構だけでは
-    「コメントは許可するがmergeは禁止」という粒度の制御はできない。この粒度の制御は
-    §3.1のAdapter層のコード側で機構的に絞り込んでいる(GitLabスコープに依存しない設計)
-  - 推奨(未実装・運用ルール): AI用GitLabアカウントのロールをMaintainer未満(Developer等)に
-    留めることで、仮にAdapter層の制御をすり抜けてもGitLab側でmergeが拒否される二重の防御にする
-    ([setup-windows.md](setup-windows.md)参照)
+  - `GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系)は`read_api`で足りる
+  - `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`(対話型MCP)は書き込み操作(branch作成・push・
+    MR/Issue作成等)を含むため`api`スコープが必要。`api`は常に読み書き全体を含み、
+    GitLabのスコープ機構だけでは「コメントは許可するがmergeは禁止」という粒度の制御は
+    できない。この粒度の制御は§3.1のAdapter層のコード側で機構的に絞り込んでいる
+    (GitLabスコープに依存しない設計)
+  - 上記のアカウントロール分離(自動実行系=Reporter)と組み合わせることで、
+    仮にPATのスコープ設定を誤ってもGitLab側のロールが書き込みAPIを拒否する二重の防御になる
+    ([ADR-0019](../adr/0019-gitlab-token-scoping.md)参照)
 - **ログへの非露出**:
-  - `Config.__repr__`はPATを`'***'`にマスクする([`config/models.py`](../../src/gitlab_ai_platform/config/models.py))
+  - `Config.__repr__`は両トークンを`'***'`にマスクする([`config/models.py`](../../src/gitlab_ai_platform/config/models.py))
   - `ConfigError`のメッセージにはPATの値そのものを含めない
   - GitLab Adapter MCP Serverのツール引数・戻り値・エラーメッセージのいずれにもトークン文字列が
     含まれないことを[`test_secrets.py`](../../tests/gitlab_ai_platform/adapter_mcp_server/test_secrets.py)で担保
@@ -175,7 +190,7 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
   ([`cli/single_run.py`](../../src/gitlab_ai_platform/cli/single_run.py)の
   `_credential_helper`/`build_workspace_manager`)。トークンの値自体はcredential helperの
   コマンド文字列には埋め込まず、環境変数名だけを埋め込み、実際の値はsubprocessの環境変数として
-  注入する
+  注入する(自動実行系用トークンのみを使う。MCP用トークンはこの経路では使われない)
 
 ### 4.2 AWS(Bedrock)認証情報
 
@@ -194,10 +209,37 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 [D-10 運用・トラブルシューティングガイド](troubleshooting.md)と合わせて、
 今後以下の観点を運用ルールとして整備することを推奨する:
 
-- 発行済みPAT・AWSクレデンシャルの一覧(発行者・用途・付与スコープ・発行日・最終利用日)
-- 定期的なローテーション(特にPATは有効期限を設定し、無期限発行を避ける)
+- 発行済みPAT・AWSクレデンシャルの一覧。§4.1の2アカウント運用([ADR-0019](../adr/0019-gitlab-token-scoping.md))
+  に合わせて、少なくとも次の列を記録する: アカウント名・**用途(自動実行系/対話型MCP)**・
+  付与スコープ(`read_api`/`api`)・付与ロール(Reporter/Developer)・発行者・発行日・最終利用日
+- 定期的なローテーション(特にPATは有効期限を設定し、無期限発行を避ける)。対話型MCP用トークン
+  (`api`スコープ、書き込み可能)は自動実行系用トークン(`read_api`スコープ)より影響範囲が
+  大きいため、優先してローテーション間隔を短くすることを推奨する
 - 退職・異動・プロジェクト終了時のトークン失効
-- AI用GitLabアカウントのロールが必要以上に強くなっていないかの定期確認(§4.1)
+- AI用GitLabアカウントのロールが必要以上に強くなっていないかの定期確認
+  (自動実行系=Reporter、対話型MCP=Developerを超えていないか。§4.1)
+
+### 4.4 PAT漏洩時の対応手順
+
+漏洩(誤コミット・チャットへの平文貼付等)に気づいた場合の対応手順。
+「PATが切れた/権限不足になった」場合の復旧手順(通常の失効・再発行)は
+[troubleshooting.md §2.1](troubleshooting.md#21-gitlab-api認証切れpat失効--終了コード11)を参照。
+ここでは**漏洩**という異常事態への対応に絞る。
+
+1. 漏洩したトークンがどちらのアカウント由来か特定する(§4.1の自動実行系用/対話型MCP用の
+   どちらか)。特定できない場合は両方とも失効させる
+2. 社内GitLabの`User Settings > Access Tokens`で該当PATを即座に**Revoke**する。
+   新規発行と`.env`の更新は事後でよい。まず失効を優先する
+3. 対話型MCP用トークン(`api`スコープ)が漏洩した場合、書き込み操作(branch作成・push・
+   MR/Issue作成・コメント投稿)が第三者に悪用されうる。該当プロジェクトのAudit Events・
+   最近のMR/Issue・pushされたcommitを確認し、意図しない変更が無いか確認する
+4. 自動実行系用トークン(`read_api`スコープ、かつアカウントロールがReporter)が漏洩した
+   場合の影響範囲は読み取りのみ(非公開プロジェクトのコード・Issue内容の閲覧)に限定される。
+   とはいえ機微情報が漏洩しうるため、同様に失効を優先する
+5. 新しいPATを発行し、`.env`(または実環境変数)の該当キー(`GITLAB_AI_PLATFORM_GITLAB_TOKEN`
+   または`GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`)を更新する
+   ([configuration.md](configuration.md)「シークレット」節)
+6. §4.3の棚卸し表の当該行を更新し、失効日・再発行日を記録する
 
 ## 5. X-1(セキュリティレビュー)での確認観点
 
@@ -219,6 +261,7 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 - [ADR-0002: GitLab Adapterインターフェース設計](../adr/0002-gitlab-adapter-interface.md) — 許可リスト方式の原点
 - [ADR-0005: Claude Code Runner設計](../adr/0005-claude-code-runner-design.md) — `--dangerously-skip-permissions`を提供しない方針
 - [ADR-0010: GitLab Adapter MCP Serverの設計](../adr/0010-gitlab-mcp-tool-bridge.md) — 「新しい権限を一切追加しない」ことの担保表
+- [ADR-0019: AI用GitLabアカウントとトークンスコープの設計](../adr/0019-gitlab-token-scoping.md) — アカウント分離・用途別トークン・棚卸し・漏洩時対応
 - [specs/gitlab-adapter.md](../specs/gitlab-adapter.md)
 - [specs/adapter-mcp-server.md](../specs/adapter-mcp-server.md)
 - [specs/claude-code-runner.md](../specs/claude-code-runner.md)

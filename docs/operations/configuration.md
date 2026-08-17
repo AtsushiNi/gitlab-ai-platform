@@ -33,8 +33,9 @@
 
 | キー | 既定値 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|
-| `GITLAB_AI_PLATFORM_GITLAB_TOKEN` | なし | 必須 | GitLab REST API認証(`PRIVATE-TOKEN`ヘッダ、`gitlab_adapter/rest.py`)、およびgit clone/fetch時のcredential helper経由のPAT供給(`cli/single_run.py`の`_build_workspace_manager`)に使う |
-| `GITLAB_AI_PLATFORM_WEBHOOK_SECRET` | なし | `webhook.enabled=true`の場合のみ必須 | Webhook受信サーバー(M3-6、[specs/webhook-receiver.md](../specs/webhook-receiver.md))がGitLab Webhookの`X-Gitlab-Token`ヘッダと突き合わせるSecret Token。GitLab側のWebhook設定画面の「Secret token」に同じ値を設定する |
+| `GITLAB_AI_PLATFORM_GITLAB_TOKEN` | なし | 必須 | 自動実行系(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行)用のGitLab PAT。GitLab REST API認証(`PRIVATE-TOKEN`ヘッダ、`gitlab_adapter/rest.py`)、およびgit clone/fetch時のcredential helper経由のPAT供給(`cli/single_run.py`の`_build_workspace_manager`)に使う |
+| `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN`と同じ値 | 省略可 | 対話型GitLab Adapter MCP Server(`adapter_mcp_server/main.py`)専用のGitLab PAT。書き込み操作(branch作成・push・MR/Issue作成等)を含む経路のため、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系、読み取り専用の想定)とは別のトークン・アカウントに分けることを推奨する([operations/security.md §4.1](security.md)、[ADR-0019](../adr/0019-gitlab-token-scoping.md))。未設定の場合は`GITLAB_AI_PLATFORM_GITLAB_TOKEN`にフォールバックする |
+| `GITLAB_AI_PLATFORM_WEBHOOK_SECRET` | なし | `webhook.enabled=true`の場合のみ必須 | Webhook受信サーバー(M3-6、[specs/webhook-receiver.md](../specs/webhook-receiver.md))がGitLab Webhookの`X-Gitlab-Token`ヘッダと突き合わせるSecret Token。GitLab側のWebhook設定画面の「Secret token」に同じ値を設定する。GitLab PATとは別の秘密であり、GitLab API認証には使わない |
 
 ## `config.toml`
 
@@ -160,11 +161,15 @@ path = "/webhook"
 ## `.env`の例
 
 ```text
+# 自動実行系(review/watch)用。read_apiスコープで足りる
 GITLAB_AI_PLATFORM_GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+# 対話型GitLab Adapter MCP Server用(省略可、未設定ならGITLAB_AI_PLATFORM_GITLAB_TOKENに
+# フォールバック)。書き込みを含むためapiスコープが必要
+GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP=glpat-yyyyyyyyyyyyyyyyyyyy
 # webhook.enabled = true にする場合のみ必要(GitLab側Webhook設定のSecret tokenと同じ値)
 GITLAB_AI_PLATFORM_WEBHOOK_SECRET=whsec-xxxxxxxxxxxxxxxxxxxx
 ```
 
-雛形は`.env.example`(リポジトリ直下)を参照。レビュー用途(読み取りのみ)なら`read_api`
-スコープで足りる。PATのスコープ・トークン管理の方針は [operations/security.md](security.md)
-を参照(D-9、本ドキュメント作成時点では未着手)。
+雛形は`.env.example`(リポジトリ直下)を参照。PATのスコープ・アカウント分離・トークン管理の
+方針は [operations/security.md](security.md)・[ADR-0019](../adr/0019-gitlab-token-scoping.md)
+を参照(D-9・M3-8)。

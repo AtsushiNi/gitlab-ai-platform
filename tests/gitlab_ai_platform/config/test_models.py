@@ -7,6 +7,7 @@ def _valid_kwargs(**overrides):
     kwargs = dict(
         gitlab_url="https://gitlab.example.com",
         gitlab_token="secret-token",
+        gitlab_token_mcp="",
         projects=["group/project-a"],
         poll_interval_seconds=60,
         max_parallel=5,
@@ -33,6 +34,7 @@ def test_from_raw_builds_config_with_valid_values():
 
     assert config.gitlab_url == "https://gitlab.example.com"
     assert config.gitlab_token == "secret-token"
+    assert config.gitlab_token_mcp == "secret-token"
     assert config.projects == ("group/project-a",)
     assert config.poll_interval_seconds == 60
     assert config.max_parallel == 5
@@ -57,6 +59,21 @@ def test_from_raw_strips_trailing_slash_from_url():
     assert config.gitlab_url == "https://gitlab.example.com"
 
 
+def test_from_raw_falls_back_gitlab_token_mcp_to_gitlab_token_when_unset():
+    config = Config.from_raw(**_valid_kwargs(gitlab_token_mcp=""))
+
+    assert config.gitlab_token_mcp == config.gitlab_token
+
+
+def test_from_raw_uses_gitlab_token_mcp_when_provided():
+    config = Config.from_raw(
+        **_valid_kwargs(gitlab_token="review-token", gitlab_token_mcp="mcp-token")
+    )
+
+    assert config.gitlab_token == "review-token"
+    assert config.gitlab_token_mcp == "mcp-token"
+
+
 def test_from_raw_strips_whitespace_from_projects():
     config = Config.from_raw(
         **_valid_kwargs(projects=[" group/project-a ", "group/project-b"])
@@ -73,6 +90,8 @@ def test_from_raw_strips_whitespace_from_projects():
         {"gitlab_token": ""},
         {"gitlab_token": "   "},
         {"gitlab_token": None},
+        {"gitlab_token_mcp": None},
+        {"gitlab_token_mcp": 123},
         {"projects": []},
         {"projects": [""]},
         {"projects": [123]},
@@ -132,6 +151,13 @@ def test_repr_masks_gitlab_token():
     config = Config.from_raw(**_valid_kwargs(gitlab_token="super-secret-pat"))
 
     assert "super-secret-pat" not in repr(config)
+    assert "***" in repr(config)
+
+
+def test_repr_masks_gitlab_token_mcp():
+    config = Config.from_raw(**_valid_kwargs(gitlab_token_mcp="super-secret-mcp-pat"))
+
+    assert "super-secret-mcp-pat" not in repr(config)
     assert "***" in repr(config)
 
 
