@@ -23,6 +23,11 @@ class Config:
     poll_interval_seconds: int
     max_parallel: int
     review_label: str
+    # Issue Poller(M4-1, docs/adr/0024-issue-poller-dedup.md)が検出対象とするラベル名。
+    # review_labelと同じ設定機構(config.toml)に準拠する
+    issue_label: str
+    # Issue Ticket Store(二重投入防止用の専用DB、state.db/job.dbとは別ファイル)
+    issue_ticket_db_path: str
     workspace_root: str
     workspace_max_disk_mb: int
     runner_log_dir: str
@@ -55,6 +60,8 @@ class Config:
             f"poll_interval_seconds={self.poll_interval_seconds!r}, "
             f"max_parallel={self.max_parallel!r}, "
             f"review_label={self.review_label!r}, "
+            f"issue_label={self.issue_label!r}, "
+            f"issue_ticket_db_path={self.issue_ticket_db_path!r}, "
             f"workspace_root={self.workspace_root!r}, "
             f"workspace_max_disk_mb={self.workspace_max_disk_mb!r}, "
             f"runner_log_dir={self.runner_log_dir!r}, "
@@ -89,6 +96,8 @@ class Config:
         poll_interval_seconds: object,
         max_parallel: object,
         review_label: object,
+        issue_label: object,
+        issue_ticket_db_path: object,
         workspace_root: object,
         workspace_max_disk_mb: object,
         runner_log_dir: object,
@@ -140,6 +149,10 @@ class Config:
             max_parallel, "poller.max_parallel", errors
         )
         clean_label = _require_nonempty_str(review_label, "review.label", errors)
+        clean_issue_label = _require_nonempty_str(issue_label, "issue.label", errors)
+        clean_issue_ticket_db_path = _require_nonempty_str(
+            issue_ticket_db_path, "issue.ticket_db_path", errors
+        )
         clean_workspace_root = _require_nonempty_str(
             workspace_root, "workspace.root", errors
         )
@@ -233,6 +246,8 @@ class Config:
         assert clean_interval is not None
         assert clean_max_parallel is not None
         assert clean_label is not None
+        assert clean_issue_label is not None
+        assert clean_issue_ticket_db_path is not None
         assert clean_workspace_root is not None
         assert clean_workspace_max_disk_mb is not None
         assert clean_runner_log_dir is not None
@@ -264,6 +279,8 @@ class Config:
             poll_interval_seconds=clean_interval,
             max_parallel=clean_max_parallel,
             review_label=clean_label,
+            issue_label=clean_issue_label,
+            issue_ticket_db_path=clean_issue_ticket_db_path,
             workspace_root=clean_workspace_root,
             workspace_max_disk_mb=clean_workspace_max_disk_mb,
             runner_log_dir=clean_runner_log_dir,

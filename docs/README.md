@@ -63,6 +63,9 @@
   仕様。MR Pollerと共存し、二重起票防止ロジック(`ticket_if_unprocessed`)を共有する
 - [specs/http-api.md](specs/http-api.md) — 最小限のHTTP API(M3-7)の仕様。`JobRepository`への
   Job投入・状態/結果参照・一覧取得を提供する独立した`api`サブコマンド
+- [specs/issue-poller.md](specs/issue-poller.md) — Issue Poller(M4-1)の仕様。無人実行ラベルの
+  付いたIssueを検出し、専用のIssue Ticket Storeで二重投入を防ぎながら`issue-analysis`種別の
+  Jobを投入する
 
 ## 更新ルール
 

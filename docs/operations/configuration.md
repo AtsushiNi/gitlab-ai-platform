@@ -64,6 +64,18 @@
 |---|---|---|---|---|
 | `label` | `"レビュー待ち"` | str | 省略可 | `MrPoller.poll_once`が`list_merge_requests(labels=(label,))`で絞り込むGitLab MRラベル名。**現時点では未配線(M1-11で使用予定)** |
 
+### `[issue]`
+
+M4-1([specs/issue-poller.md](../specs/issue-poller.md)、
+[ADR-0024](../adr/0024-issue-poller-dedup.md))。Issue Pollerが無人実行トラックへ振り分ける
+Issueを検出するための設定。**現時点ではCLIに未配線**(`IssuePoller`単体のコンストラクタ引数として
+利用可能。配線は別Issue)。
+
+| キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
+|---|---|---|---|---|
+| `label` | `"AI実装"` | str | 省略可 | `IssuePoller.poll_once`が`list_issues(labels=(label,))`で絞り込むGitLab Issueラベル名。人間がこのラベルを付けたIssueだけが無人実行トラックの対象になる |
+| `ticket_db_path` | `"issue_tickets.db"` | str | 省略可 | `SqliteIssueTicketStore`のDBファイルパス。`(project, issue_iid)`単位で無人実行Jobの起票済み状態を記録し、二重投入を防ぐ。State Store(`[store]`)・Job(`[job]`)とは別のDBファイル |
+
 ### `[workspace]`
 
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
@@ -160,6 +172,10 @@ max_parallel = 5
 
 [review]
 label = "レビュー待ち"
+
+[issue]
+label = "AI実装"
+ticket_db_path = "issue_tickets.db"
 
 [workspace]
 root = "workspace"

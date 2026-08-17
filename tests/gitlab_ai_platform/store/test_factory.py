@@ -20,6 +20,8 @@ def _config(**overrides) -> Config:
         poll_interval_seconds=60,
         max_parallel=5,
         review_label="レビュー待ち",
+        issue_label="AI実装",
+        issue_ticket_db_path=":memory:",
         workspace_root="workspace",
         workspace_max_disk_mb=5000,
         runner_log_dir="logs/runner",
