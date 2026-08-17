@@ -1,16 +1,20 @@
 # Job Model
 
 - 実装場所: `src/gitlab_ai_platform/job/`
-- 対応Issue: [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1)
-- 関連ADR: [ADR-0016](../adr/0016-job-abstraction.md)
-- ステータス: 実装済み(Protocol定義 + SQLite実装 + 既存レビュー処理のJob化)
+- 対応Issue: [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1)、
+  [#92](https://github.com/AtsushiNi/gitlab-ai-platform/issues/92) (M3-2)
+- 関連ADR: [ADR-0016](../adr/0016-job-abstraction.md)、[ADR-0017](../adr/0017-job-queue.md)
+- ステータス: 実装済み(Protocol定義 + SQLite実装 + 既存レビュー処理のJob化 [M3-1] +
+  取得の排他・可視性タイムアウト・リトライ・デッドレター [M3-2])
 
 ## 責務
 
 タスク種別(`review`/`issue-analysis`/`design`/`implement`)を横断して、1件のタスク実行の
 ライフサイクル(`PENDING → RUNNING → (DONE | FAILED | WAITING_HUMAN)`という状態機械)を
-記録・照会する。実装(SQLite、M3-1。将来は複数Runnerからの排他取得を伴うJob Queue、M3-2)を
-`typing.Protocol`で抽象化し、呼び出し側(CLI・将来のOrchestrator)を具象実装から切り離す。
+記録・照会する。実装(SQLite)を`typing.Protocol`で抽象化し、呼び出し側(CLI・将来の
+Orchestrator)を具象実装から切り離す。M3-2で、複数Runner(M3-3で別プロセス/別ホストに
+分離される想定)からの排他取得(`claim`)・可視性タイムアウト・リトライ・デッドレターを
+Job Repositoryのメソッドとして追加した([ADR-0017](../adr/0017-job-queue.md))。
 
 ## 前提と非対象
 
@@ -24,13 +28,21 @@
   - State Store(`store/`、[ADR-0003](../adr/0003-state-store-interface.md))は
     `(project, mr_iid, commit_sha)`単位の二重レビュー防止に責務を絞ったまま残る。Jobは
     State Storeを置き換えず、統合もしない、別コンポーネントとして併存する
+  - `enqueue`/`get`/`update_status`/`list_by_status`/`close`(M3-1)は、既存の
+    `execute_review_job`(`cli/single_run.py`)が使う「起票直後に同一プロセス内で同期処理する」
+    経路として無改修のまま残っている。`claim`/`heartbeat`/`complete`/`fail`/
+    `list_dead_letters`(M3-2)は、M3-3のRunner Dispatcher(別プロセスとしてJobを取り出して
+    処理する経路)向けに追加したメソッドで、M3-2時点では呼び出し元を持たない
+    ([ADR-0017](../adr/0017-job-queue.md))
 - 非対象:
-  - 取得の排他(`claim`)・可視性タイムアウト・リトライ・デッドレターはM3-2(Job Queue)の
-    スコープ。本実装(`SqliteJobRepository`)は単一プロセス・逐次実行を前提にした最小実装
   - `review`以外のJobType(`issue-analysis`/`design`/`implement`)の実際の実行(Runner
     Dispatcher側の処理)はM4のスコープ。M3-1時点では値としての予約のみ
   - 二重レビュー防止そのもの(State Storeの責務のまま)。Jobは「実行1回分のライフサイクル」の
     管理に専念する
+  - `claim`/`complete`/`fail`をRunnerの実行経路に実配線すること(Runner Dispatcher自体の
+    実装)はM3-3([#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93))のスコープ
+  - 専用のバックグラウンドスレッド/定期実行による可視性タイムアウトの回収は行わない。
+    `claim`実行時に期限切れJobを回収する遅延評価方式とする([ADR-0017](../adr/0017-job-queue.md))
 
 ## 公開インターフェース
 
@@ -39,10 +51,14 @@
 同ファイルに定義する。State Store等と異なり`types.py`を分けていない)。
 
 ```python
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
+
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_VISIBILITY_TIMEOUT_SECONDS = 600
 
 
 class JobType(str, Enum):
@@ -70,12 +86,24 @@ class Job:
     error: str | None
     created_at: datetime
     updated_at: datetime
+    # M3-2で追加したキュー関連の付帯情報(末尾にデフォルト値付きで追加、既存フィールドは不変)
+    attempts: int = 0
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    dead_letter_at: datetime | None = None
 
 
 @runtime_checkable
 class JobRepository(Protocol):
-    def enqueue(self, job_type: JobType, payload: dict[str, Any]) -> Job:
-        """新しいJobを`PENDING`状態で作成する。"""
+    def enqueue(
+        self,
+        job_type: JobType,
+        payload: dict[str, Any],
+        *,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    ) -> Job:
+        """新しいJobを`PENDING`状態で作成する。`max_attempts`は`claim`によるリトライの上限。"""
         ...
 
     def get(self, job_id: str) -> Job | None:
@@ -100,13 +128,56 @@ class JobRepository(Protocol):
     def close(self) -> None:
         """DB接続等の内部リソースを解放する。"""
         ...
+
+    def claim(
+        self,
+        worker_id: str,
+        *,
+        job_types: Sequence[JobType] | None = None,
+        visibility_timeout_seconds: int = DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+    ) -> Job | None:
+        """`PENDING`のJobを1件、他のworkerと排他して取得し`RUNNING`へ遷移させる(M3-2)。
+
+        取得前に可視性タイムアウトを過ぎた`RUNNING`のJobを回収する。取得できるJobが
+        なければ`None`を返す。
+        """
+        ...
+
+    def heartbeat(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        visibility_timeout_seconds: int = DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+    ) -> Job:
+        """claim済みJobのリース(可視性タイムアウトの期限)を延長する。"""
+        ...
+
+    def complete(
+        self, job_id: str, worker_id: str, result: dict[str, Any] | None = None
+    ) -> Job:
+        """claim済みJobを正常終了として報告し`DONE`へ遷移させる。"""
+        ...
+
+    def fail(
+        self, job_id: str, worker_id: str, error: str, *, retry: bool = True
+    ) -> Job:
+        """claim済みJobの失敗を報告する。リトライ上限未満なら`PENDING`へ戻し、
+        上限到達または`retry=False`なら`FAILED`へ遷移させデッドレターとして確定する。"""
+        ...
+
+    def list_dead_letters(self) -> list[Job]:
+        """デッドレター化したJobを一覧する。"""
+        ...
 ```
 
 SQLite実装: `src/gitlab_ai_platform/job/sqlite.py`の`SqliteJobRepository`。
 `SqliteJobRepository(db_path: Path | str = ":memory:")`でDBファイルパス(またはインメモリ)を
 指定して構築する。State Store(`SqliteStateStore`)と同じく`threading.RLock`で全メソッドの
 本体を直列化しており、`ReviewWorkerPool`(M2-1)のような複数ワーカースレッドから同一インスタンス
-を安全に共有できる。
+を安全に共有できる。`heartbeat`/`complete`/`fail`は、要求元の`worker_id`が対象Jobの現在の
+リース所有者と一致しない場合`LeaseLostError`を送出する(可視性タイムアウトで別workerに
+再取得された後の遅延報告を検知するため、[ADR-0017](../adr/0017-job-queue.md))。
 
 ### review Jobのpayload/result構造
 
@@ -172,7 +243,7 @@ Jobを起票し、`RUNNING`へ更新してから`execute_review`を呼び出す�
 
 M3-1時点では「起票してすぐに処理する」単一プロセス・逐次実行のモデルであり、
 Jobが`PENDING`のまま別プロセスに取り出されて処理される、という実際のキューイングは
-M3-2(Job Queue)のスコープ。
+M3-3(Runnerのプロセス分離)で`claim`(M3-2で実装済み)を使って実配線する想定。
 
 ## 入出力スキーマ
 
@@ -181,10 +252,10 @@ M3-2(Job Queue)のスコープ。
 | 型 | フィールド | 補足 |
 |---|---|---|
 | `JobType` (Enum) | `REVIEW` / `ISSUE_ANALYSIS` / `DESIGN` / `IMPLEMENT` | タスク種別。M3-1で実際にRunnerが処理できるのは`REVIEW`のみ。他はM4での実装を見越した予約値 |
-| `JobStatus` (Enum) | `PENDING` / `RUNNING` / `WAITING_HUMAN` / `DONE` / `FAILED` | Jobの進行状態(状態機械) |
-| `Job` (frozen dataclass) | `id: str`, `job_type: JobType`, `status: JobStatus`, `payload: dict[str, Any]`, `result: dict[str, Any] \| None`, `error: str \| None`, `created_at: datetime`, `updated_at: datetime` | `id`はUUID(SQLite実装が`uuid.uuid4()`で生成) |
+| `JobStatus` (Enum) | `PENDING` / `RUNNING` / `WAITING_HUMAN` / `DONE` / `FAILED` | Jobの進行状態(状態機械)。M3-2でもこの5値のまま変更していない([ADR-0017](../adr/0017-job-queue.md)) |
+| `Job` (frozen dataclass) | `id: str`, `job_type: JobType`, `status: JobStatus`, `payload: dict[str, Any]`, `result: dict[str, Any] \| None`, `error: str \| None`, `created_at: datetime`, `updated_at: datetime`, `attempts: int = 0`, `max_attempts: int = 3`, `lease_owner: str \| None = None`, `lease_expires_at: datetime \| None = None`, `dead_letter_at: datetime \| None = None` | `id`はUUID(SQLite実装が`uuid.uuid4()`で生成)。`attempts`以降はM3-2で追加(末尾にデフォルト値付き) |
 
-許可される状態遷移([ADR-0016](../adr/0016-job-abstraction.md)):
+許可される状態遷移([ADR-0016](../adr/0016-job-abstraction.md)、`update_status`が検証する):
 
 ```text
 PENDING → RUNNING
@@ -196,29 +267,42 @@ WAITING_HUMAN → FAILED    (タイムアウト・却下)
 ```
 
 `DONE`/`FAILED`は終端状態で、そこからの遷移は無い。上記以外への`update_status`
-(同一状態への遷移も含む)は`InvalidJobTransitionError`を送出する。
+(同一状態への遷移も含む)は`InvalidJobTransitionError`を送出する。この遷移表は
+`update_status`が検証する「アプリケーションが明示的に報告する状態変化」のみを対象とし、
+`fail`のリトライパス(`RUNNING → PENDING`、可視性タイムアウトの回収時も含む)はキュー内部
+専用の遷移として`update_status`を経由せず実装している([ADR-0017](../adr/0017-job-queue.md))。
 
-SQLiteスキーマ(`jobs`テーブル、`status`/`job_type`双方にインデックス):
+SQLiteスキーマ(`jobs`テーブル、`status`/`job_type`/`lease_expires_at`にインデックス):
 
 ```sql
 CREATE TABLE jobs (
     id TEXT PRIMARY KEY,
     job_type TEXT NOT NULL,
     status TEXT NOT NULL,
-    payload TEXT NOT NULL,   -- JSON
-    result TEXT,             -- JSON
+    payload TEXT NOT NULL,        -- JSON
+    result TEXT,                  -- JSON
     error TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    lease_owner TEXT,             -- claim中のworker_id(M3-2)
+    lease_token TEXT,             -- claim呼び出しごとの一意token。Jobには公開しない内部用
+    lease_expires_at TEXT,        -- 可視性タイムアウトの期限(ISO 8601)
+    dead_letter_at TEXT           -- デッドレター化した日時(ISO 8601、非NULLならデッドレター)
 );
 CREATE INDEX idx_jobs_status ON jobs(status);
 CREATE INDEX idx_jobs_job_type ON jobs(job_type);
+CREATE INDEX idx_jobs_lease_expires_at ON jobs(lease_expires_at);
 ```
 
 `payload`/`result`はJSON文字列としてTEXTカラムに保存し、アプリケーション側で
 `json.dumps`/`json.loads`する([ADR-0001](../adr/0001-repository-structure.md)の依存最小
-方針によりORMは使わない)。`created_at`/`updated_at`はState Storeの`reviewed_at`と同じく
-ISO 8601文字列で保存し、呼び出し側には`datetime`として返す。
+方針によりORMは使わない)。`created_at`/`updated_at`/`lease_expires_at`/`dead_letter_at`は
+State Storeの`reviewed_at`と同じくISO 8601文字列で保存し、呼び出し側には`datetime`として
+返す。M3-1時点のDBファイル(これらのカラムを持たない)は、`SqliteJobRepository`の起動時に
+`ALTER TABLE`で不足しているカラムのみ後方互換で追加する([ADR-0017](../adr/0017-job-queue.md)
+「スキーマ変更は`ALTER TABLE`による後方互換マイグレーションとする」)。
 
 review Jobの`payload`/`result`(`review/job.py`):
 
@@ -241,6 +325,10 @@ review Jobの`payload`/`result`(`review/job.py`):
 - `JobNotFoundError(JobError)` — `update_status`が存在しない`job_id`に対して呼ばれたことを
   表す。呼び出し側は先に`enqueue`を呼ぶべきだったことを意味し、通常は呼び出し側のバグとして
   扱う(リトライで解決しない)
+- `LeaseLostError(JobError)` — `heartbeat`/`complete`/`fail`が、要求元の`worker_id`と対象Jobの
+  現在のリース所有者が一致しない状態で呼ばれたことを表す(M3-2、[ADR-0017](../adr/0017-job-queue.md))。
+  可視性タイムアウトで別workerに再取得された後、元のworkerが遅れて完了/失敗を報告してきた
+  場合などに送出する
 
 `execute_review_job`は`execute_review`が送出する例外(`GitLabAdapterError`/`WorkspaceError`/
 `RunnerError`/`ReviewError`/`StateStoreError`等)を捕まえてJobを`FAILED`へ更新したうえで、
@@ -254,14 +342,16 @@ review Jobの`payload`/`result`(`review/job.py`):
 (`src/`をミラー、[ADR-0001](../adr/0001-repository-structure.md))。
 
 - `job/test_protocol.py`: `JobRepository`の公開メソッド集合が`enqueue`/`get`/
-  `update_status`/`list_by_status`/`close`と完全一致することを検証する(将来メソッドが
-  意図せず増減した場合にこのテストで落ちる)。`Job`の`frozen=True`、`JobType`/`JobStatus`の
-  値、Protocolを満たすダミー実装への`isinstance`も検証する
-- `job/test_errors.py`: `InvalidJobTransitionError`/`JobNotFoundError`が`JobError`の
-  サブクラスであることを検証する
+  `update_status`/`list_by_status`/`close`/`claim`/`heartbeat`/`complete`/`fail`/
+  `list_dead_letters`と完全一致することを検証する(将来メソッドが意図せず増減した場合に
+  このテストで落ちる)。`Job`の`frozen=True`、`JobType`/`JobStatus`の値、M3-2で追加した
+  フィールドの既定値(`attempts=0`等)、Protocolを満たすダミー実装(新メソッドのスタブ実装を
+  含む)への`isinstance`も検証する
+- `job/test_errors.py`: `InvalidJobTransitionError`/`JobNotFoundError`/`LeaseLostError`が
+  `JobError`のサブクラスであることを検証する
 - `job/test_sqlite.py`: `SqliteJobRepository`をインメモリDB(`:memory:`)で実行し、実DB・
   実サービスへは繋がない(CLAUDE.mdのテスト方針)。以下を検証する:
-  - `enqueue`→`get`の往復、`PENDING`状態での起票
+  - `enqueue`→`get`の往復、`PENDING`状態での起票、`max_attempts`のカスタム指定
   - 許可される状態遷移(`PENDING → RUNNING → DONE/FAILED/WAITING_HUMAN`、
     `WAITING_HUMAN → RUNNING/FAILED`)が`update_status`で成功すること
   - 許可されない遷移(終端状態からの遷移、逆行、同一状態への遷移含む)が
@@ -271,6 +361,19 @@ review Jobの`payload`/`result`(`review/job.py`):
   - `list_by_status`が指定状態のJobのみを返すこと
   - 複数ワーカースレッドからの同時`enqueue`/`update_status`が例外を送出しないこと
     (`store/test_sqlite.py`と同じ並行アクセスの回帰テスト)
+  - `claim`: `PENDING`のJobを`RUNNING`へ遷移させて返すこと、既にclaim済みのJobは再取得
+    されないこと、`job_types`によるフィルタ、対象が無ければ`None`を返すこと、複数ワーカー
+    スレッドからの同時`claim`で同一Jobが二重取得されないこと(排他取得の回帰テスト)
+  - `heartbeat`: リース期限を延長すること、`worker_id`不一致/未claimのJobで
+    `LeaseLostError`になること
+  - `complete`: `DONE`へ遷移しリース情報をクリアすること、`worker_id`不一致で
+    `LeaseLostError`になること
+  - `fail`: リトライ余地があれば`PENDING`へ戻すこと、`retry=False`または上限到達時に
+    `FAILED`+デッドレター化すること、`worker_id`不一致で`LeaseLostError`になること
+  - 可視性タイムアウト: 期限切れのリースを次の`claim`が回収し、リトライ余地があれば
+    再取得可能に戻すこと、上限到達時はデッドレター化すること
+  - `list_dead_letters`が空/デッドレター化したJobのみを返すこと
+  - M3-1時点のスキーマ(新カラムを持たないDBファイル)を後方互換でマイグレーションできること
 - `review/test_job.py`: `build_review_job_payload`/`review_job_payload_to_args`/
   `build_review_job_result`の組み立て・分解が正しいことを検証する
 - `cli/test_single_run.py`: `execute_review_job`が成功時にJobを`DONE`(`result`に
@@ -285,6 +388,9 @@ review Jobの`payload`/`result`(`review/job.py`):
 
 - [architecture.md](../architecture.md) 「MVP → AI Platformへの成長パス」のJob抽象・状態機械の行
 - [ADR-0016: Job抽象・状態機械のインターフェース設計](../adr/0016-job-abstraction.md)
+- [ADR-0017: Job Queue(取得の排他・可視性タイムアウト・リトライ・デッドレター)の設計](../adr/0017-job-queue.md)
+- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) — SQLite実装の
+  ロック方針(`threading.RLock`)の前例、複数プロセス/ホストからの同時アクセスの検討経緯
 - [ADR-0003: State Store のインターフェースとスキーマ設計](../adr/0003-state-store-interface.md) —
   State StoreとJobを別コンポーネントとして併存させる設計判断
 - [specs/state-store.md](state-store.md) — State Store(併存する二重レビュー防止の仕組み)の仕様

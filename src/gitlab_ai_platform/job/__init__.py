@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
-from .errors import InvalidJobTransitionError, JobError, JobNotFoundError
-from .protocol import Job, JobRepository, JobStatus, JobType
+from .errors import (
+    InvalidJobTransitionError,
+    JobError,
+    JobNotFoundError,
+    LeaseLostError,
+)
+from .protocol import (
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+    Job,
+    JobRepository,
+    JobStatus,
+    JobType,
+)
 from .sqlite import SqliteJobRepository
 
 __all__ = [
+    "DEFAULT_MAX_ATTEMPTS",
+    "DEFAULT_VISIBILITY_TIMEOUT_SECONDS",
     "InvalidJobTransitionError",
     "Job",
     "JobError",
@@ -14,5 +28,6 @@ __all__ = [
     "JobRepository",
     "JobStatus",
     "JobType",
+    "LeaseLostError",
     "SqliteJobRepository",
 ]

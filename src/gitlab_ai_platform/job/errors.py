@@ -23,4 +23,17 @@ class JobNotFoundError(JobError):
     """指定した`job_id`のJobが存在しないことを表す。"""
 
 
-__all__ = ["InvalidJobTransitionError", "JobError", "JobNotFoundError"]
+class LeaseLostError(JobError):
+    """`claim`で取得したリースが失効済みであることを表す(M3-2, `docs/adr/0017-job-queue.md`)。
+
+    可視性タイムアウトで別workerに再取得された後、元のworkerが遅れて`heartbeat`/`complete`/
+    `fail`を呼んだ場合など、要求元の`worker_id`が現在のリース所有者と一致しないときに送出する。
+    """
+
+
+__all__ = [
+    "InvalidJobTransitionError",
+    "JobError",
+    "JobNotFoundError",
+    "LeaseLostError",
+]

@@ -3,7 +3,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from gitlab_ai_platform.job import Job, JobRepository, JobStatus, JobType
+from gitlab_ai_platform.job import (
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+    Job,
+    JobRepository,
+    JobStatus,
+    JobType,
+)
 
 _EXPECTED_PUBLIC_METHODS = {
     "enqueue",
@@ -11,6 +18,13 @@ _EXPECTED_PUBLIC_METHODS = {
     "update_status",
     "list_by_status",
     "close",
+    # M3-2([#92], docs/adr/0017-job-queue.md): 取得の排他・可視性タイムアウト・リトライ・
+    # デッドレターのための新メソッド
+    "claim",
+    "heartbeat",
+    "complete",
+    "fail",
+    "list_dead_letters",
 }
 
 
@@ -19,8 +33,7 @@ def _public_methods(protocol_cls: type) -> set[str]:
 
 
 def test_job_repository_exposes_only_expected_operations():
-    # M3-1のスコープは5メソッドのみ(claim等の排他取得はM3-2、ADR-0016)。将来メソッドが
-    # 意図せず増減した場合にこのテストで検知できるようにする
+    # 将来メソッドが意図せず増減した場合にこのテストで検知できるようにする
     assert _public_methods(JobRepository) == _EXPECTED_PUBLIC_METHODS
 
 
@@ -72,6 +85,22 @@ def test_job_holds_payload_and_result_as_plain_dicts():
     assert job.result == {"result_path": "reviews/group/project/1/abc123"}
 
 
+def test_job_queue_fields_have_backward_compatible_defaults():
+    # M3-2([#92], docs/adr/0017-job-queue.md)で追加したフィールド。既存フィールドのみを
+    # 指定するキーワード構築(_job()ヘルパー)が無改修で動くことを確認する
+    job = _job()
+
+    assert job.attempts == 0
+    assert job.max_attempts == DEFAULT_MAX_ATTEMPTS
+    assert job.lease_owner is None
+    assert job.lease_expires_at is None
+    assert job.dead_letter_at is None
+
+
+def test_default_visibility_timeout_seconds_is_positive():
+    assert DEFAULT_VISIBILITY_TIMEOUT_SECONDS > 0
+
+
 class _FakeJobRepository:
     """Protocolを満たすダミー実装。SQLite実装もこの形になる。"""
 
@@ -79,7 +108,13 @@ class _FakeJobRepository:
         self._jobs: dict[str, Job] = {}
         self._next_id = 1
 
-    def enqueue(self, job_type: JobType, payload: dict) -> Job:
+    def enqueue(
+        self,
+        job_type: JobType,
+        payload: dict,
+        *,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    ) -> Job:
         job_id = str(self._next_id)
         self._next_id += 1
         now = datetime.now(UTC)
@@ -92,6 +127,7 @@ class _FakeJobRepository:
             error=None,
             created_at=now,
             updated_at=now,
+            max_attempts=max_attempts,
         )
         self._jobs[job_id] = job
         return job
@@ -122,6 +158,49 @@ class _FakeJobRepository:
 
     def close(self) -> None:
         pass
+
+    def claim(
+        self,
+        worker_id: str,
+        *,
+        job_types=None,
+        visibility_timeout_seconds: int = DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+    ) -> Job | None:
+        for job in self._jobs.values():
+            if job.status != JobStatus.PENDING:
+                continue
+            if job_types is not None and job.job_type not in job_types:
+                continue
+            updated = dataclasses.replace(
+                job,
+                status=JobStatus.RUNNING,
+                lease_owner=worker_id,
+                attempts=job.attempts + 1,
+                updated_at=datetime.now(UTC),
+            )
+            self._jobs[job.id] = updated
+            return updated
+        return None
+
+    def heartbeat(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        visibility_timeout_seconds: int = DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+    ) -> Job:
+        return self._jobs[job_id]
+
+    def complete(self, job_id: str, worker_id: str, result: dict | None = None) -> Job:
+        return self.update_status(job_id, JobStatus.DONE, result=result)
+
+    def fail(
+        self, job_id: str, worker_id: str, error: str, *, retry: bool = True
+    ) -> Job:
+        return self.update_status(job_id, JobStatus.FAILED, error=error)
+
+    def list_dead_letters(self) -> list[Job]:
+        return [job for job in self._jobs.values() if job.dead_letter_at is not None]
 
 
 def test_fake_job_repository_satisfies_protocol():
