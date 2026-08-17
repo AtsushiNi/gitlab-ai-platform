@@ -53,6 +53,12 @@ def _config(tmp_path: Path, **overrides) -> Config:
         webhook_port=8088,
         webhook_path="/webhook",
         webhook_secret_token="",
+        store_backend="sqlite",
+        store_postgres_host="localhost",
+        store_postgres_port=5432,
+        store_postgres_dbname="gitlab_ai_platform",
+        store_postgres_user="gitlab_ai_platform",
+        store_postgres_password="",
     )
     kwargs.update(overrides)
     return Config.from_raw(**kwargs)
@@ -474,7 +480,7 @@ def test_run_dispatcher_run_once_with_no_jobs_does_not_crash(tmp_path):
 
 
 def test_run_dispatcher_returns_immediately_when_stop_event_preset(tmp_path):
-    # `watch`のProcessLockに相当する多重起動防止はworkerには無い(ADR-0020)。
+    # `watch`のProcessLockに相当する多重起動防止はworkerには無い(ADR-0022)。
     # stop_eventを起動前にセットしておけばclaimループ本体に一切入らない
     config = _config(tmp_path, job_db_path=str(tmp_path / "job.db"))
     stop_event = threading.Event()
@@ -485,7 +491,7 @@ def test_run_dispatcher_returns_immediately_when_stop_event_preset(tmp_path):
 
 def test_run_dispatcher_does_not_prevent_a_second_concurrent_invocation(tmp_path):
     # `worker`は同一job_db_pathへの複数プロセス同時起動を前提とする設計であり、`watch`と
-    # 異なりProcessLockを取得しない(ADR-0020「決定」)。2回連続で呼んでもAlreadyRunningError
+    # 異なりProcessLockを取得しない(ADR-0022「決定」)。2回連続で呼んでもAlreadyRunningError
     # 等の多重起動エラーにならないことを確認する
     config = _config(tmp_path, job_db_path=str(tmp_path / "job.db"))
 

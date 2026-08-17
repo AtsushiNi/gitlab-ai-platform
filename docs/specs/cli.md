@@ -13,7 +13,7 @@
   [ADR-0012](../adr/0012-decompose-interactive-session.md)、
   [ADR-0015](../adr/0015-parallel-review-execution.md)、
   [ADR-0016](../adr/0016-job-abstraction.md)、
-  [ADR-0020](../adr/0020-runner-process-separation.md)
+  [ADR-0022](../adr/0022-runner-process-separation.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
   要件→Issue分解の対話型`decompose`サブコマンド、Runner Dispatcher常駐`worker`サブコマンド)
 
@@ -34,7 +34,7 @@
   (`ReviewWorkerPool`)・二重起票防止ロジック(`poller.ticket_if_unprocessed`)を共有する
   (M3-6、[ADR-0018](../adr/0018-webhook-receiver.md)、[specs/webhook-receiver.md](webhook-receiver.md))
 - `worker`: Job Repository(`job/`)から`claim`で取り出したJobを処理し続けるRunner
-  Dispatcherの常駐モード(M3-3、[ADR-0020](../adr/0020-runner-process-separation.md))。
+  Dispatcherの常駐モード(M3-3、[ADR-0022](../adr/0022-runner-process-separation.md))。
   `review`/`watch`が使う「起票直後に同一プロセス内で同期処理する」経路(`execute_review_job`)
   とは別の経路で、別プロセス/別ホストでの実行を想定する。同一`job_db_path`に対する複数
   `worker`プロセスの同時稼働を前提とする設計のため、`watch`と異なり多重起動防止は行わない
@@ -61,7 +61,7 @@
     前提にしない(要件がまだIssue化されていない段階から始まるため)
   - `worker`は`config.toml`/`.env`(GitLab PAT)・GitLab到達性・`workspace_root`用のディスク・
     `state_db_path`/`job_db_path`が揃っていれば、`review`/`watch`と同じホストでも別ホストでも
-    起動できる(M3-3、[ADR-0020](../adr/0020-runner-process-separation.md)。コンテナ化自体は
+    起動できる(M3-3、[ADR-0022](../adr/0022-runner-process-separation.md)。コンテナ化自体は
     M3-4のスコープ)
 - 非対象:
   - オーケストレーション(Job間の遷移)はしない(`docs/architecture.md`のCLIの境界)
@@ -73,7 +73,7 @@
   - `worker`は`review`種別以外のJobType(`issue-analysis`/`design`/`implement`)の実際の処理を
     実装しない(M4のスコープ)。未実装種別を明示的に`--job-types`でclaim対象にした場合は
     `NotImplementedError`経由でデッドレター化する([ADR-0016](../adr/0016-job-abstraction.md)、
-    [ADR-0020](../adr/0020-runner-process-separation.md))
+    [ADR-0022](../adr/0022-runner-process-separation.md))
   - `decompose`はIssue分解案の自動決定・無人起票はしない。粒度・優先度・依存関係の判断は
     常に人間が対話の中で下す(`docs/requirements.md` 3-Cの「Bとの違い」)。分解後の
     設計・実装・MR作成(B/M4のスコープ)には進まない
@@ -133,7 +133,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 (`--timeout`等をMR単位で都度変えるユースケースは想定していない。デバッグ用途は
 `review`を使う)。`worker`固有のポーリング/heartbeat間隔・可視性タイムアウトは`Config`に
 追加せず、コード内蔵の既定値をCLIオプションで上書きする方式にした
-([ADR-0020](../adr/0020-runner-process-separation.md)「却下した選択肢」参照)。
+([ADR-0022](../adr/0022-runner-process-separation.md)「却下した選択肢」参照)。
 
 `decompose`は`project`(GitLabのプロジェクトパス)を人間が明示指定する。`review`と異なり
 `mr_iid`に相当するものは存在しない(要件がまだIssue化されていない段階から始まるため)。
@@ -294,7 +294,7 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
 #### `worker`(実装場所: `src/gitlab_ai_platform/cli/dispatcher.py`、M3-3)
 
 `review`/`watch`と同じ「パイプライン本体/合成ルート」分離パターンを踏襲する
-([ADR-0008](../adr/0008-cli-single-run-design.md)、[ADR-0020](../adr/0020-runner-process-separation.md))。
+([ADR-0008](../adr/0008-cli-single-run-design.md)、[ADR-0022](../adr/0022-runner-process-separation.md))。
 `JobType` → `JobHandler`のディスパッチテーブルでJob受け渡しプロトコルを表現し、
 `RunnerDispatcher`本体は`review`固有のロジックを知らない。
 
@@ -376,7 +376,7 @@ def run_dispatcher(
     """合成ルート。`config`から具象実装(GitLabRestAdapter/build_workspace_manager/
     SubprocessClaudeCodeRunner/SqliteStateStore/SqliteJobRepository)を組み立て、
     `RunnerDispatcher`を起動する。`watch`と異なり`ProcessLock`は取得しない(複数`worker`
-    プロセス/ホストの同時稼働を前提とする設計のため、ADR-0020)。"""
+    プロセス/ホストの同時稼働を前提とする設計のため、ADR-0022)。"""
 ```
 
 #### `decompose`(実装場所: `src/gitlab_ai_platform/cli/decompose.py`)
@@ -533,7 +533,7 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 ## 処理の流れ(`worker`: `RunnerDispatcher`、M3-3)
 
 `run_dispatcher`(合成ルート)は`config`から具象実装を組み立て、`RunnerDispatcher.run_forever`
-(`--once`指定時は`run_once`を1回だけ)に委譲する([ADR-0020](../adr/0020-runner-process-separation.md))。
+(`--once`指定時は`run_once`を1回だけ)に委譲する([ADR-0022](../adr/0022-runner-process-separation.md))。
 
 1. `stop_event`がセットされるまで、`job_repo.claim(worker_id, job_types=...,
    visibility_timeout_seconds=...)`を呼ぶ。`job_types`省略時は`build_job_handlers`が
@@ -555,7 +555,7 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
    (リトライ判定は`JobRepository`の`attempts`/`max_attempts`に委ねる、[ADR-0017](../adr/0017-job-queue.md))
 7. 手順6の完了後、heartbeatスレッドを停止して`join`する。1件のJobの処理結果に関わらず
    例外を再送出せず、手順1へ戻る(1件の失敗が他のJobの処理を止めない。`watch`の
-   「想定外の例外はプロセスを落とす」方針とは意図的に異なる、[ADR-0020](../adr/0020-runner-process-separation.md)「却下した選択肢」参照)
+   「想定外の例外はプロセスを落とす」方針とは意図的に異なる、[ADR-0022](../adr/0022-runner-process-separation.md)「却下した選択肢」参照)
 8. `stop_event`がセットされると、現在処理中のJob(あれば)の完了を待ってからループを終了する
 
 ## 処理の流れ(`decompose`: `run_decompose`)
@@ -587,9 +587,9 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 | `runner.errors.RunnerError` | 13 | review/watch/worker | `log_path`属性があれば標準エラー出力にあわせて表示する |
 | `review.errors.ReviewError` | 14 | review/watch/worker | Claude Codeの応答が結果スキーマを満たさなかった場合等 |
 | `store.errors.StateStoreError` | 15 | review/watch/worker | |
-| `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`)。`worker`は多重起動防止を行わないため該当しない(ADR-0020) |
+| `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`)。`worker`は多重起動防止を行わないため該当しない(ADR-0022) |
 | `decompose.ClaudeCommandNotFoundError` | 17 | decompose | 対話型`claude`プロセスの起動自体に失敗した場合(`FileNotFoundError`)。それ以外は`claude`プロセス自身の終了コードをそのまま返す(`docs/adr/0012-decompose-interactive-session.md`) |
-| `job.errors.JobError` | 18 | worker | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`自体がDB接続不良等でJob Repository起因のエラーを送出した場合のみ(個々のJobの処理失敗は`RunnerDispatcher`が握りつぶし続行するため、通常この経路には来ない。M3-3、[ADR-0020](../adr/0020-runner-process-separation.md)) |
+| `job.errors.JobError` | 18 | worker | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`自体がDB接続不良等でJob Repository起因のエラーを送出した場合のみ(個々のJobの処理失敗は`RunnerDispatcher`が握りつぶし続行するため、通常この経路には来ない。M3-3、[ADR-0022](../adr/0022-runner-process-separation.md)) |
 | `KeyboardInterrupt` | 130 | 全て | `watch`/`worker`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
 | 上記以外の例外 | 1 | 全て | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
 
@@ -718,7 +718,7 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [ADR-0012: 要件→Issue分解ワークフロー(`decompose`)の対話型セッション設計](../adr/0012-decompose-interactive-session.md)
 - [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   `watch`の`ReviewWorkerPool`による並列実行の設計判断
-- [ADR-0020: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0020-runner-process-separation.md) —
+- [ADR-0022: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0022-runner-process-separation.md) —
   `worker`サブコマンド・`RunnerDispatcher`の設計判断
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信

@@ -9,7 +9,7 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
   常駐モード(M1-11)、`decompose`サブコマンドで要件→Issue分解の対話型セッション(M2-11
   [#48](https://github.com/AtsushiNi/gitlab-ai-platform/issues/48))、`worker`サブコマンドで
   Runner Dispatcher(M3-3 [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93)、
-  `docs/adr/0020-runner-process-separation.md`。`JobRepository.claim`でJobを取り出し続ける
+  `docs/adr/0022-runner-process-separation.md`。`JobRepository.claim`でJobを取り出し続ける
   別プロセス/別ホスト実行用の常駐モード)を提供する。
 - パイプライン(`single_run.run_single_review`)が送出する各段階の例外
   (`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
@@ -393,7 +393,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Job Repositoryからclaimで取り出したJobを処理し続けるRunner Dispatcher"
             "(常駐モード。別プロセス/別ホストでの実行を想定、Ctrl+C/SIGTERMで終了。"
-            "M3-3、docs/adr/0020-runner-process-separation.md)"
+            "M3-3、docs/adr/0022-runner-process-separation.md)"
         ),
     )
     worker_parser.add_argument(

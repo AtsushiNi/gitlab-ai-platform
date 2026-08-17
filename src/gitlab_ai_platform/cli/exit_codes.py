@@ -17,7 +17,7 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)):
   そのままCLIの終了コードとして返す(構造化された結果がなく、パイプライン各段階の
   終了コードという概念自体が存在しないため)。
 - `EXIT_JOB_ERROR`(18)は`worker`サブコマンド(M3-3 [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93)、
-  `docs/adr/0020-runner-process-separation.md`)専用。個々のJobの処理失敗は`RunnerDispatcher`が
+  `docs/adr/0022-runner-process-separation.md`)専用。個々のJobの処理失敗は`RunnerDispatcher`が
   `JobRepository.fail`で処理し続行するため、ここに届くのは`SqliteJobRepository`の構築失敗や
   `claim`/`heartbeat`/`complete`/`fail`自体がJob Repository起因のエラー(`JobError`)を送出した
   場合(DB接続不良等、Dispatcher自身が継続できない異常)のみ。

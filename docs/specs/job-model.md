@@ -5,7 +5,7 @@
   [#92](https://github.com/AtsushiNi/gitlab-ai-platform/issues/92) (M3-2)、
   [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3、Runner Dispatcher側の実配線)
 - 関連ADR: [ADR-0016](../adr/0016-job-abstraction.md)、[ADR-0017](../adr/0017-job-queue.md)、
-  [ADR-0020](../adr/0020-runner-process-separation.md)
+  [ADR-0022](../adr/0022-runner-process-separation.md)
 - ステータス: 実装済み(Protocol定義 + SQLite実装 + 既存レビュー処理のJob化 [M3-1] +
   取得の排他・可視性タイムアウト・リトライ・デッドレター [M3-2] +
   Runner Dispatcherによる実配線 [M3-3])
@@ -20,7 +20,7 @@ Orchestrator)を具象実装から切り離す。M3-2で、複数Runner(M3-3で�
 Job Repositoryのメソッドとして追加した([ADR-0017](../adr/0017-job-queue.md))。M3-3で、
 `claim`/`heartbeat`/`complete`/`fail`を実際に呼び出すRunner Dispatcher(`cli/dispatcher.py`の
 `RunnerDispatcher`、`worker`サブコマンド)を追加し、Jobを別プロセス/別ホストで処理できるように
-なった([ADR-0020](../adr/0020-runner-process-separation.md)、詳細は[specs/cli.md](cli.md)の
+なった([ADR-0022](../adr/0022-runner-process-separation.md)、詳細は[specs/cli.md](cli.md)の
 `worker`サブコマンドの節)。
 
 ## 前提と非対象
@@ -40,13 +40,13 @@ Job Repositoryのメソッドとして追加した([ADR-0017](../adr/0017-job-qu
     経路として無改修のまま残っている。`claim`/`heartbeat`/`complete`/`fail`/
     `list_dead_letters`(M3-2)は、M3-3のRunner Dispatcher(`cli/dispatcher.py`の
     `RunnerDispatcher`、`worker`サブコマンド)が実際に呼び出す
-    ([ADR-0017](../adr/0017-job-queue.md)、[ADR-0020](../adr/0020-runner-process-separation.md))
+    ([ADR-0017](../adr/0017-job-queue.md)、[ADR-0022](../adr/0022-runner-process-separation.md))
 - 非対象:
   - `review`以外のJobType(`issue-analysis`/`design`/`implement`)の実際の実行(Runner
     Dispatcher側のhandler実装)はM4のスコープ。M3-1時点では値としての予約のみで、M3-3時点でも
     未実装種別をclaimすると`RunnerDispatcher`が`NotImplementedError`を送出し即座に
     デッドレター化する([ADR-0016](../adr/0016-job-abstraction.md)の契約、
-    [ADR-0020](../adr/0020-runner-process-separation.md))
+    [ADR-0022](../adr/0022-runner-process-separation.md))
   - 二重レビュー防止そのもの(State Storeの責務のまま)。Jobは「実行1回分のライフサイクル」の
     管理に専念する
   - 専用のバックグラウンドスレッド/定期実行による可視性タイムアウトの回収は行わない。
@@ -256,7 +256,7 @@ M3-3([#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93))でも**�
 ### Runner Dispatcherによる実配線(M3-3)
 
 実装場所: `src/gitlab_ai_platform/cli/dispatcher.py`。詳細は
-[ADR-0020](../adr/0020-runner-process-separation.md)、CLIオプション一覧は
+[ADR-0022](../adr/0022-runner-process-separation.md)、CLIオプション一覧は
 [specs/cli.md](cli.md)の`worker`サブコマンドの節を参照。
 
 `execute_review_job`とは別の経路として、`JobRepository.claim`でJobを取り出し続ける常駐/単発
@@ -311,7 +311,7 @@ class RunnerDispatcher:
   `max_attempts`)に委ねる。1件のJobの失敗は他のJobの処理を止めない
 - 排他は`claim`のアトミックなUPDATE文([ADR-0017](../adr/0017-job-queue.md))に委ね、`watch`の
   `ProcessLock`のような多重起動防止は行わない(同一`job_db_path`に対する複数`worker`プロセス
-  /複数ホストの同時稼働を前提とする設計そのもののため、[ADR-0020](../adr/0020-runner-process-separation.md))
+  /複数ホストの同時稼働を前提とする設計そのもののため、[ADR-0022](../adr/0022-runner-process-separation.md))
 - 合成ルート`run_dispatcher(config, ...)`は`run_single_review`/`run_watch`と同じ流儀で
   `config`から具象実装(`GitLabRestAdapter`/`build_workspace_manager`/
   `SubprocessClaudeCodeRunner`/`SqliteStateStore`/`SqliteJobRepository`)を組み立てる
@@ -472,7 +472,7 @@ review Jobの`payload`/`result`(`review/job.py`):
 - [architecture.md](../architecture.md) 「MVP → AI Platformへの成長パス」のJob抽象・状態機械の行
 - [ADR-0016: Job抽象・状態機械のインターフェース設計](../adr/0016-job-abstraction.md)
 - [ADR-0017: Job Queue(取得の排他・可視性タイムアウト・リトライ・デッドレター)の設計](../adr/0017-job-queue.md)
-- [ADR-0020: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0020-runner-process-separation.md)
+- [ADR-0022: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0022-runner-process-separation.md)
 - [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) — SQLite実装の
   ロック方針(`threading.RLock`)の前例、複数プロセス/ホストからの同時アクセスの検討経緯
 - [ADR-0003: State Store のインターフェースとスキーマ設計](../adr/0003-state-store-interface.md) —

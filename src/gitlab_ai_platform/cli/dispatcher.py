@@ -1,7 +1,7 @@
 """Runner Dispatcher: `JobRepository.claim`でJobを取り出し、別プロセスとして処理し続ける。
 
 方針(M3-3 [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93)、
-`docs/adr/0020-runner-process-separation.md`):
+`docs/adr/0022-runner-process-separation.md`):
 
 - `cli/single_run.py`の`execute_review_job`(`enqueue`直後に同一プロセス内で同期処理する経路)は
   変更しない。本モジュールはそれとは別の経路として、`JobRepository.claim`(M3-2、
@@ -23,10 +23,10 @@
   `fail(..., retry=False)`で即座にデッドレター化する。それ以外の例外は`fail(..., retry=True)`
   とし、リトライ上限判定は`JobRepository`(ADR-0017の`attempts`/`max_attempts`)に委ねる。
   1件のJobの失敗は他のJobの処理を止めない(`watch`の「想定外の例外はプロセスを落とす」方針
-  [ADR-0009]とは異なる。`worker`は無人・ヘッドレスな運用を前提とするため、ADR-0020参照)。
+  [ADR-0009]とは異なる。`worker`は無人・ヘッドレスな運用を前提とするため、ADR-0022参照)。
 - 排他は`JobRepository.claim`のアトミックなUPDATE文(ADR-0017)に委ね、`ProcessLock`
   (`cli/lock.py`)は使わない。複数の`worker`プロセス(将来は複数ホスト)が同一`job_db_path`に
-  対して同時に稼働することを前提とする設計そのものであるため(ADR-0020「決定」参照)。
+  対して同時に稼働することを前提とする設計そのものであるため(ADR-0022「決定」参照)。
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ from ..review import (
 )
 from ..runner import SubprocessClaudeCodeRunner
 from ..runner.protocol import ClaudeCodeRunner
-from ..store import SqliteStateStore
+from ..store import build_state_store
 from ..store.protocol import StateStore
 from ..workspace.protocol import WorkspaceManager
 from .single_run import build_workspace_manager, execute_review
@@ -66,10 +66,10 @@ _logger = get_logger(__name__)
 # claimが空振り(処理対象なし)した際、次のclaimまで待つ既定秒数
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 # Job処理中にリースを延長するためheartbeatを呼ぶ既定間隔(秒)。
-# DEFAULT_VISIBILITY_TIMEOUT_SECONDS(既定600秒)より十分短く保つ(ADR-0020)
+# DEFAULT_VISIBILITY_TIMEOUT_SECONDS(既定600秒)より十分短く保つ(ADR-0022)
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 120.0
 
-# JobType→処理関数のディスパッチテーブルの値の型(ADR-0020「Job受け渡しプロトコル」)。
+# JobType→処理関数のディスパッチテーブルの値の型(ADR-0022「Job受け渡しプロトコル」)。
 # `complete`にそのまま渡せる`result`(またはNone)を返す契約
 JobHandler = Callable[[Job], "dict[str, Any] | None"]
 
@@ -107,7 +107,7 @@ def build_job_handlers(
     store: StateStore,
     config: Config,
 ) -> dict[JobType, JobHandler]:
-    """`JobType` → `JobHandler`のディスパッチテーブルを組み立てる(ADR-0020)。
+    """`JobType` → `JobHandler`のディスパッチテーブルを組み立てる(ADR-0022)。
 
     現時点では`review`のみ実装済み。`issue-analysis`/`design`/`implement`(M4)は、対応する
     handlerをこの辞書に追加するだけで`RunnerDispatcher`側の変更なしに配線できる想定。
@@ -123,7 +123,7 @@ class RunnerDispatcher:
     """`JobRepository.claim`でJobを取り出し、対応する`JobHandler`で処理するループ本体。
 
     `job_repo`/`handlers`ともにProtocol型・関数のマッピングのみに依存し、`review`固有の
-    ロジックを知らない(ADR-0020)。
+    ロジックを知らない(ADR-0022)。
     """
 
     def __init__(
@@ -141,7 +141,7 @@ class RunnerDispatcher:
         self._handlers = dict(handlers)
         self._worker_id = worker_id
         # 未指定ならhandlersに登録済みの種別のみをclaim対象にする(未実装種別を誤って
-        # claimしてデッドレター化させないため、ADR-0020「決定」参照)
+        # claimしてデッドレター化させないため、ADR-0022「決定」参照)
         self._job_types: tuple[JobType, ...] = (
             tuple(job_types) if job_types is not None else tuple(self._handlers.keys())
         )
@@ -167,7 +167,7 @@ class RunnerDispatcher:
     def run_forever(self, stop_event: threading.Event) -> None:
         """`stop_event`がセットされるまで、claim→処理を繰り返す。
 
-        claimが空振りした場合のみ`poll_interval_seconds`だけ待つ(ADR-0020「決定」)。
+        claimが空振りした場合のみ`poll_interval_seconds`だけ待つ(ADR-0022「決定」)。
         """
         while not stop_event.is_set():
             processed = self.run_once()
@@ -175,7 +175,7 @@ class RunnerDispatcher:
                 stop_event.wait(self._poll_interval_seconds)
 
     def _process(self, job: Job) -> None:
-        """1件のJobを処理し、結果に応じて`complete`/`fail`を呼び分ける(ADR-0020)。
+        """1件のJobを処理し、結果に応じて`complete`/`fail`を呼び分ける(ADR-0022)。
 
         1件の失敗は他のJobの処理を止めない(例外を再送出しない)。`worker`は無人・ヘッドレスな
         運用を前提とするため、`watch`の「想定外の例外はプロセスを落とす」方針とは意図的に異なる。
@@ -222,7 +222,7 @@ class RunnerDispatcher:
             heartbeat_thread.join()
 
     def _heartbeat_loop(self, job_id: str, stop_event: threading.Event) -> None:
-        """`stop_event`がセットされるまで、一定間隔ごとにリースを延長する(ADR-0020)。"""
+        """`stop_event`がセットされるまで、一定間隔ごとにリースを延長する(ADR-0022)。"""
         while not stop_event.wait(self._heartbeat_interval_seconds):
             try:
                 self._job_repo.heartbeat(
@@ -262,18 +262,18 @@ def run_dispatcher(
     visibility_timeout_seconds: int = DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
     run_once: bool = False,
 ) -> None:
-    """`config`から具象実装を組み立て、Runner Dispatcherを起動する(合成ルート、ADR-0020)。
+    """`config`から具象実装を組み立て、Runner Dispatcherを起動する(合成ルート、ADR-0022)。
 
     `run_single_review`/`run_watch`と同じ流儀で`GitLabRestAdapter`/`build_workspace_manager`/
-    `SubprocessClaudeCodeRunner`/`SqliteStateStore`/`SqliteJobRepository`を組み立てる。
-    複数の`worker`プロセス(別ホストも可)が同一`config.job_db_path`に対して同時に起動される
-    ことを前提とする設計のため、`watch`と異なり`ProcessLock`は使わない(排他は
+    `SubprocessClaudeCodeRunner`/`StateStore`(M3-5、`build_state_store`)/`SqliteJobRepository`を
+    組み立てる。複数の`worker`プロセス(別ホストも可)が同一`config.job_db_path`に対して同時に
+    起動されることを前提とする設計のため、`watch`と異なり`ProcessLock`は使わない(排他は
     `JobRepository.claim`のアトミックなUPDATE文がプロセス/ホスト境界を越えて担保する)。
     """
     adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
     workspace = build_workspace_manager(config)
     runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
-    store = SqliteStateStore(config.state_db_path)
+    store = build_state_store(config)
     job_repo = SqliteJobRepository(config.job_db_path)
     try:
         handlers = build_job_handlers(adapter, workspace, runner, store, config)

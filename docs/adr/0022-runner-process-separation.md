@@ -1,4 +1,4 @@
-# ADR-0020: Runner のプロセス分離(Runner Dispatcher)の設計
+# ADR-0022: Runner のプロセス分離(Runner Dispatcher)の設計
 
 - Issue: [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3)
 - 状態: 決定
