@@ -32,6 +32,7 @@
 ### 動かす人向け (`operations/`)
 
 - [operations/setup-windows.md](operations/setup-windows.md) — Windowsセットアップ手順
+- [operations/docker-runtime.md](operations/docker-runtime.md) — Linux/Docker実行環境セットアップ手順(M3-4)
 - [operations/configuration.md](operations/configuration.md) — 設定リファレンス
 - [operations/security.md](operations/security.md) — 許可/禁止操作、トークン管理
 - [operations/troubleshooting.md](operations/troubleshooting.md) — トラブルシューティング

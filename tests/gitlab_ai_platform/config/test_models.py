@@ -18,6 +18,12 @@ def _valid_kwargs(**overrides):
         runner_timeout_seconds=1800,
         reviews_root="reviews",
         state_db_path="state.db",
+        store_backend="sqlite",
+        store_postgres_host="localhost",
+        store_postgres_port=5432,
+        store_postgres_dbname="gitlab_ai_platform",
+        store_postgres_user="gitlab_ai_platform",
+        store_postgres_password="",
         job_db_path="job.db",
         webhook_enabled=False,
         webhook_host="127.0.0.1",
@@ -45,6 +51,12 @@ def test_from_raw_builds_config_with_valid_values():
     assert config.runner_timeout_seconds == 1800
     assert config.reviews_root == "reviews"
     assert config.state_db_path == "state.db"
+    assert config.store_backend == "sqlite"
+    assert config.store_postgres_host == "localhost"
+    assert config.store_postgres_port == 5432
+    assert config.store_postgres_dbname == "gitlab_ai_platform"
+    assert config.store_postgres_user == "gitlab_ai_platform"
+    assert config.store_postgres_password == ""
     assert config.job_db_path == "job.db"
     assert config.webhook_enabled is False
     assert config.webhook_host == "127.0.0.1"
@@ -109,6 +121,13 @@ def test_from_raw_strips_whitespace_from_projects():
         {"runner_timeout_seconds": True},
         {"reviews_root": ""},
         {"state_db_path": ""},
+        {"store_backend": ""},
+        {"store_backend": "mysql"},
+        {"store_postgres_host": ""},
+        {"store_postgres_port": 0},
+        {"store_postgres_port": -1},
+        {"store_postgres_dbname": ""},
+        {"store_postgres_user": ""},
         {"job_db_path": ""},
         {"webhook_enabled": "true"},
         {"webhook_enabled": 1},
@@ -136,6 +155,23 @@ def test_from_raw_accepts_webhook_enabled_with_secret_token():
 
     assert config.webhook_enabled is True
     assert config.webhook_secret_token == "whsec-123"
+
+
+def test_from_raw_accepts_postgresql_backend():
+    config = Config.from_raw(**_valid_kwargs(store_backend="postgresql"))
+
+    assert config.store_backend == "postgresql"
+
+
+def test_repr_masks_store_postgres_password():
+    config = Config.from_raw(
+        **_valid_kwargs(
+            store_backend="postgresql", store_postgres_password="super-secret-pw"
+        )
+    )
+
+    assert "super-secret-pw" not in repr(config)
+    assert "***" in repr(config)
 
 
 def test_repr_masks_webhook_secret_token():

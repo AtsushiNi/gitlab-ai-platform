@@ -20,6 +20,10 @@ GITLAB_MCP_TOKEN_ENV_KEY = "GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP"
 # Webhook Secret Token(M3-6, docs/adr/0018-webhook-receiver.md)も同じ理由で.env/環境変数経由
 GITLAB_WEBHOOK_SECRET_ENV_KEY = "GITLAB_AI_PLATFORM_WEBHOOK_SECRET"
 
+# PostgreSQL State Store(M3-5, docs/adr/0021-state-store-postgresql.md)のパスワードも
+# 同じ理由で.env/環境変数経由。ホスト・ポート・DB名・ユーザー名はconfig.tomlに書く
+STORE_POSTGRES_PASSWORD_ENV_KEY = "GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD"
+
 DEFAULT_CONFIG_PATH = Path("config.toml")
 DEFAULT_ENV_PATH = Path(".env")
 
@@ -32,6 +36,12 @@ DEFAULT_RUNNER_LOG_DIR = "logs/runner"
 DEFAULT_RUNNER_TIMEOUT_SECONDS = 1800
 DEFAULT_REVIEWS_ROOT = "reviews"
 DEFAULT_STATE_DB_PATH = "state.db"
+# PostgreSQL対応(M3-5, docs/adr/0021-state-store-postgresql.md)。既定は従来通りSQLite
+DEFAULT_STORE_BACKEND = "sqlite"
+DEFAULT_STORE_POSTGRES_HOST = "localhost"
+DEFAULT_STORE_POSTGRES_PORT = 5432
+DEFAULT_STORE_POSTGRES_DBNAME = "gitlab_ai_platform"
+DEFAULT_STORE_POSTGRES_USER = "gitlab_ai_platform"
 DEFAULT_JOB_DB_PATH = "job.db"
 DEFAULT_WEBHOOK_ENABLED = False
 # 既定は全インターフェース待受(社内GitLabサーバーからの到達性を優先)。有効化自体が
@@ -91,6 +101,7 @@ def load_config(
     # 未設定なら自動実行系と同じトークンにフォールバックする(Config.from_raw側で解決)
     gitlab_token_mcp = env.get(GITLAB_MCP_TOKEN_ENV_KEY, "")
     webhook_secret_token = env.get(GITLAB_WEBHOOK_SECRET_ENV_KEY, "")
+    store_postgres_password = env.get(STORE_POSTGRES_PASSWORD_ENV_KEY, "")
 
     raw: dict = {}
     if config_path.is_file():
@@ -104,6 +115,7 @@ def load_config(
     runner_section = raw.get("runner", {})
     reviews_section = raw.get("reviews", {})
     store_section = raw.get("store", {})
+    store_postgres_section = store_section.get("postgres", {})
     job_section = raw.get("job", {})
     webhook_section = raw.get("webhook", {})
 
@@ -127,6 +139,20 @@ def load_config(
         ),
         reviews_root=reviews_section.get("root", DEFAULT_REVIEWS_ROOT),
         state_db_path=store_section.get("db_path", DEFAULT_STATE_DB_PATH),
+        store_backend=store_section.get("backend", DEFAULT_STORE_BACKEND),
+        store_postgres_host=store_postgres_section.get(
+            "host", DEFAULT_STORE_POSTGRES_HOST
+        ),
+        store_postgres_port=store_postgres_section.get(
+            "port", DEFAULT_STORE_POSTGRES_PORT
+        ),
+        store_postgres_dbname=store_postgres_section.get(
+            "dbname", DEFAULT_STORE_POSTGRES_DBNAME
+        ),
+        store_postgres_user=store_postgres_section.get(
+            "user", DEFAULT_STORE_POSTGRES_USER
+        ),
+        store_postgres_password=store_postgres_password,
         job_db_path=job_section.get("db_path", DEFAULT_JOB_DB_PATH),
         webhook_enabled=webhook_section.get("enabled", DEFAULT_WEBHOOK_ENABLED),
         webhook_host=webhook_section.get("host", DEFAULT_WEBHOOK_HOST),

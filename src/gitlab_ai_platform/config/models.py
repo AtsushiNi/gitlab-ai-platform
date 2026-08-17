@@ -29,6 +29,12 @@ class Config:
     runner_timeout_seconds: int
     reviews_root: str
     state_db_path: str
+    store_backend: str
+    store_postgres_host: str
+    store_postgres_port: int
+    store_postgres_dbname: str
+    store_postgres_user: str
+    store_postgres_password: str
     job_db_path: str
     webhook_enabled: bool
     webhook_host: str
@@ -37,8 +43,8 @@ class Config:
     webhook_secret_token: str
 
     def __repr__(self) -> str:
-        # gitlab_token/webhook_secret_tokenが誤ってログ・例外メッセージに出力されるのを
-        # 防ぐため、reprでマスクする
+        # gitlab_token/webhook_secret_token/store_postgres_passwordが誤ってログ・例外メッセージに
+        # 出力されるのを防ぐため、reprでマスクする
         return (
             f"Config(gitlab_url={self.gitlab_url!r}, gitlab_token='***', "
             f"gitlab_token_mcp='***', "
@@ -52,6 +58,12 @@ class Config:
             f"runner_timeout_seconds={self.runner_timeout_seconds!r}, "
             f"reviews_root={self.reviews_root!r}, "
             f"state_db_path={self.state_db_path!r}, "
+            f"store_backend={self.store_backend!r}, "
+            f"store_postgres_host={self.store_postgres_host!r}, "
+            f"store_postgres_port={self.store_postgres_port!r}, "
+            f"store_postgres_dbname={self.store_postgres_dbname!r}, "
+            f"store_postgres_user={self.store_postgres_user!r}, "
+            f"store_postgres_password='***', "
             f"job_db_path={self.job_db_path!r}, "
             f"webhook_enabled={self.webhook_enabled!r}, "
             f"webhook_host={self.webhook_host!r}, "
@@ -77,6 +89,12 @@ class Config:
         runner_timeout_seconds: object,
         reviews_root: object,
         state_db_path: object,
+        store_backend: object,
+        store_postgres_host: object,
+        store_postgres_port: object,
+        store_postgres_dbname: object,
+        store_postgres_user: object,
+        store_postgres_password: object,
         job_db_path: object,
         webhook_enabled: object,
         webhook_host: object,
@@ -129,6 +147,40 @@ class Config:
         clean_state_db_path = _require_nonempty_str(
             state_db_path, "store.db_path", errors
         )
+
+        # PostgreSQL対応(M3-5, docs/adr/0021-state-store-postgresql.md)。backendは
+        # "sqlite"(既定)か"postgresql"のいずれかのみ許可する
+        clean_store_backend = _require_nonempty_str(
+            store_backend, "store.backend", errors
+        )
+        if clean_store_backend and clean_store_backend not in (
+            "sqlite",
+            "postgresql",
+        ):
+            errors.append(
+                'store.backend は "sqlite" または "postgresql" のいずれかである必要があります'
+            )
+
+        clean_store_postgres_host = _require_nonempty_str(
+            store_postgres_host, "store.postgres.host", errors
+        )
+        clean_store_postgres_port = _require_positive_int(
+            store_postgres_port, "store.postgres.port", errors
+        )
+        clean_store_postgres_dbname = _require_nonempty_str(
+            store_postgres_dbname, "store.postgres.dbname", errors
+        )
+        clean_store_postgres_user = _require_nonempty_str(
+            store_postgres_user, "store.postgres.user", errors
+        )
+        # パスワードはGitLab PAT/Webhook Secretと同じ理由で.env/環境変数経由だが、必須にはしない
+        # (ADR-0021: ローカルDocker Compose等のtrust認証運用ではパスワード無しがありうるため)
+        clean_store_postgres_password = (
+            store_postgres_password.strip()
+            if isinstance(store_postgres_password, str)
+            else ""
+        )
+
         clean_job_db_path = _require_nonempty_str(job_db_path, "job.db_path", errors)
 
         clean_webhook_enabled = _require_bool(
@@ -169,6 +221,11 @@ class Config:
         assert clean_runner_timeout_seconds is not None
         assert clean_reviews_root is not None
         assert clean_state_db_path is not None
+        assert clean_store_backend is not None
+        assert clean_store_postgres_host is not None
+        assert clean_store_postgres_port is not None
+        assert clean_store_postgres_dbname is not None
+        assert clean_store_postgres_user is not None
         assert clean_job_db_path is not None
         assert clean_webhook_enabled is not None
         assert clean_webhook_host is not None
@@ -193,6 +250,12 @@ class Config:
             runner_timeout_seconds=clean_runner_timeout_seconds,
             reviews_root=clean_reviews_root,
             state_db_path=clean_state_db_path,
+            store_backend=clean_store_backend,
+            store_postgres_host=clean_store_postgres_host,
+            store_postgres_port=clean_store_postgres_port,
+            store_postgres_dbname=clean_store_postgres_dbname,
+            store_postgres_user=clean_store_postgres_user,
+            store_postgres_password=clean_store_postgres_password,
             job_db_path=clean_job_db_path,
             webhook_enabled=clean_webhook_enabled,
             webhook_host=clean_webhook_host,
