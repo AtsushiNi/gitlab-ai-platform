@@ -36,6 +36,7 @@
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN` | なし | 必須 | 自動実行系(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行)用のGitLab PAT。GitLab REST API認証(`PRIVATE-TOKEN`ヘッダ、`gitlab_adapter/rest.py`)、およびgit clone/fetch時のcredential helper経由のPAT供給(`cli/single_run.py`の`_build_workspace_manager`)に使う |
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN`と同じ値 | 省略可 | 対話型GitLab Adapter MCP Server(`adapter_mcp_server/main.py`)専用のGitLab PAT。書き込み操作(branch作成・push・MR/Issue作成等)を含む経路のため、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系、読み取り専用の想定)とは別のトークン・アカウントに分けることを推奨する([operations/security.md §4.1](security.md)、[ADR-0019](../adr/0019-gitlab-token-scoping.md))。未設定の場合は`GITLAB_AI_PLATFORM_GITLAB_TOKEN`にフォールバックする |
 | `GITLAB_AI_PLATFORM_WEBHOOK_SECRET` | なし | `webhook.enabled=true`の場合のみ必須 | Webhook受信サーバー(M3-6、[specs/webhook-receiver.md](../specs/webhook-receiver.md))がGitLab Webhookの`X-Gitlab-Token`ヘッダと突き合わせるSecret Token。GitLab側のWebhook設定画面の「Secret token」に同じ値を設定する。GitLab PATとは別の秘密であり、GitLab API認証には使わない |
+| `GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD` | なし | 省略可(`store.backend = "postgresql"`の場合に通常必要) | PostgreSQL State Store(M3-5、[specs/state-store.md](../specs/state-store.md)、[ADR-0020](../adr/0020-state-store-postgresql.md))の接続パスワード。ホスト・ポート・DB名・ユーザー名は`config.toml`の`[store.postgres]`に書く。`store.backend = "sqlite"`(既定)の場合は使われない。ローカルDocker Compose等のtrust認証運用ではパスワード無しもありうるため必須にはしていない |
 
 ## `config.toml`
 
@@ -84,9 +85,26 @@
 
 ### `[store]`
 
+M3-5([specs/state-store.md](../specs/state-store.md)、[ADR-0020](../adr/0020-state-store-postgresql.md))で
+PostgreSQLにも対応した。`backend`でSQLite/PostgreSQLを切り替える(既定はSQLiteのまま、
+Windows運用は無変更で動く)。
+
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
-| `db_path` | `"state.db"` | str | 省略可 | `SqliteStateStore`のDBファイルパス。レビュー実行状態(`RUNNING`/`DONE`/`FAILED`)を保持し、同一commitへの二重起票防止にも使う([specs/state-store.md](../specs/state-store.md)) |
+| `backend` | `"sqlite"` | str(`"sqlite"` \| `"postgresql"`) | 省略可 | `build_state_store`(`store/factory.py`)が構築する具象実装を選ぶ。`"postgresql"`にする場合は`psycopg`が必要(`pip install ".[postgres]"`) |
+| `db_path` | `"state.db"` | str | 省略可 | `backend = "sqlite"`の場合のみ使用。`SqliteStateStore`のDBファイルパス。レビュー実行状態(`RUNNING`/`DONE`/`FAILED`)を保持し、同一commitへの二重起票防止にも使う([specs/state-store.md](../specs/state-store.md))。`backend = "postgresql"`でも、`run_watch`の多重起動防止(`ProcessLock`)のロックファイルパスの元として引き続き使われる |
+
+#### `[store.postgres]`
+
+`backend = "postgresql"`の場合のみ使用。パスワードは`.env`/環境変数
+(`GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD`、前述)経由。
+
+| キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
+|---|---|---|---|---|
+| `host` | `"localhost"` | str | 省略可 | PostgreSQL接続先ホスト |
+| `port` | `5432` | int(正の整数) | 省略可 | PostgreSQL接続先ポート |
+| `dbname` | `"gitlab_ai_platform"` | str | 省略可 | 接続先DB名 |
+| `user` | `"gitlab_ai_platform"` | str | 省略可 | 接続ユーザー名 |
 
 ### `[job]`
 
@@ -142,6 +160,7 @@ timeout_seconds = 1800
 root = "reviews"
 
 [store]
+backend = "sqlite"
 db_path = "state.db"
 
 [job]
@@ -158,6 +177,23 @@ path = "/webhook"
 以外は省略してよい。`webhook.enabled = true`にする場合は`.env`に
 `GITLAB_AI_PLATFORM_WEBHOOK_SECRET`の設定も必要になる。
 
+`store.backend = "postgresql"`にする場合の例(M3以降のLinux/Docker運用を想定、
+[ADR-0020](../adr/0020-state-store-postgresql.md)):
+
+```toml
+[store]
+backend = "postgresql"
+
+[store.postgres]
+host = "localhost"
+port = 5432
+dbname = "gitlab_ai_platform"
+user = "gitlab_ai_platform"
+```
+
+この場合`psycopg`が必要(`pip install ".[postgres]"`)で、`.env`に
+`GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD`の設定も必要になることが多い。
+
 ## `.env`の例
 
 ```text
@@ -168,6 +204,8 @@ GITLAB_AI_PLATFORM_GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
 GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP=glpat-yyyyyyyyyyyyyyyyyyyy
 # webhook.enabled = true にする場合のみ必要(GitLab側Webhook設定のSecret tokenと同じ値)
 GITLAB_AI_PLATFORM_WEBHOOK_SECRET=whsec-xxxxxxxxxxxxxxxxxxxx
+# store.backend = "postgresql" にする場合のみ通常必要
+GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD=xxxxxxxxxxxxxxxxxxxx
 ```
 
 雛形は`.env.example`(リポジトリ直下)を参照。PATのスコープ・アカウント分離・トークン管理の

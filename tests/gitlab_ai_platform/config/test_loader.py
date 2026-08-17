@@ -6,6 +6,7 @@ from gitlab_ai_platform.config import (
     GITLAB_MCP_TOKEN_ENV_KEY,
     GITLAB_TOKEN_ENV_KEY,
     GITLAB_WEBHOOK_SECRET_ENV_KEY,
+    STORE_POSTGRES_PASSWORD_ENV_KEY,
     ConfigError,
     load_config,
 )
@@ -36,6 +37,13 @@ root = "custom-reviews"
 
 [store]
 db_path = "custom-state.db"
+backend = "postgresql"
+
+[store.postgres]
+host = "db.example.com"
+port = 5433
+dbname = "custom-db"
+user = "custom-user"
 
 [job]
 db_path = "custom-job.db"
@@ -85,7 +93,8 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
         tmp_path / ".env",
         f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n"
         f"{GITLAB_MCP_TOKEN_ENV_KEY}=mcp-from-dotenv\n"
-        f"{GITLAB_WEBHOOK_SECRET_ENV_KEY}=whsec-from-dotenv\n",
+        f"{GITLAB_WEBHOOK_SECRET_ENV_KEY}=whsec-from-dotenv\n"
+        f"{STORE_POSTGRES_PASSWORD_ENV_KEY}=pgpw-from-dotenv\n",
     )
 
     config = load_config(config_path=config_path, env_path=env_path)
@@ -103,6 +112,12 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
     assert config.runner_timeout_seconds == 900
     assert config.reviews_root == "custom-reviews"
     assert config.state_db_path == "custom-state.db"
+    assert config.store_backend == "postgresql"
+    assert config.store_postgres_host == "db.example.com"
+    assert config.store_postgres_port == 5433
+    assert config.store_postgres_dbname == "custom-db"
+    assert config.store_postgres_user == "custom-user"
+    assert config.store_postgres_password == "pgpw-from-dotenv"
     assert config.job_db_path == "custom-job.db"
     assert config.webhook_enabled is True
     assert config.webhook_host == "127.0.0.1"
@@ -166,6 +181,12 @@ def test_load_config_applies_defaults_when_optional_sections_missing(
     assert config.runner_timeout_seconds == 1800
     assert config.reviews_root == "reviews"
     assert config.state_db_path == "state.db"
+    assert config.store_backend == "sqlite"
+    assert config.store_postgres_host == "localhost"
+    assert config.store_postgres_port == 5432
+    assert config.store_postgres_dbname == "gitlab_ai_platform"
+    assert config.store_postgres_user == "gitlab_ai_platform"
+    assert config.store_postgres_password == ""
     assert config.job_db_path == "job.db"
     assert config.webhook_enabled is False
     assert config.webhook_host == "0.0.0.0"
