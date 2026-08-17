@@ -10,7 +10,7 @@
 - `execute_review`はGitLab Adapter(`GitLabReader`)・Workspace Manager・Claude Code
   Runner・State Storeの4つをProtocol型の引数として受け取る「パイプライン本体」で、
   `MrPoller`(`poller/poller.py`)と同じくテスト時は手書きフェイクを注入できる。
-  `run_single_review`はそれらの具象実装(REST/git/subprocess/SQLite)を`config`から
+  `run_single_review`はそれらの具象実装(REST/git/subprocess/SQLiteまたはPostgreSQL)を`config`から
   組み立てる「合成ルート」で、CLI(`cli.main`)から呼ばれる想定。
 - 各段階の例外(`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)は変換せずそのまま呼び出し側(`cli.main`)へ伝播させる。呼び出し側が
@@ -67,7 +67,7 @@ from ..review import (
 )
 from ..runner import ReviewContext, RunResult, SubprocessClaudeCodeRunner, build_prompt
 from ..runner.protocol import ClaudeCodeRunner
-from ..store import DuplicateReviewError, ReviewStatus, SqliteStateStore
+from ..store import DuplicateReviewError, ReviewStatus, build_state_store
 from ..store.errors import StateStoreError
 from ..store.protocol import StateStore
 from ..workspace import GitWorkspaceManager
@@ -111,13 +111,13 @@ def run_single_review(
     """指定した`project`/`mr_iid`を1本レビューする(合成ルート)。
 
     `config`からGitLab Adapter・Workspace Manager・Claude Code Runner・State Store・
-    Job Repositoryの具象実装(REST/git/subprocess/SQLite)を組み立て、
+    Job Repositoryの具象実装(REST/git/subprocess/SQLiteまたはPostgreSQL)を組み立て、
     `execute_review_job`(review Jobとしてラップした`execute_review`、M3-1)に委譲する。
     """
     adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
     workspace = build_workspace_manager(config)
     runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
-    store = SqliteStateStore(config.state_db_path)
+    store = build_state_store(config)
     job_repo = SqliteJobRepository(config.job_db_path)
     try:
         return execute_review_job(
@@ -157,7 +157,7 @@ def execute_review(
     """指定した`project`/`mr_iid`を1本レビューする(パイプライン本体)。
 
     `adapter`/`workspace`/`runner`/`store`はいずれもProtocol型の引数として受け取り、
-    具象実装(REST/git/subprocess/SQLite)には依存しない。State Storeには実行開始時点で
+    具象実装(REST/git/subprocess/SQLiteまたはPostgreSQL)には依存しない。State Storeには実行開始時点で
     `RUNNING`として記録し、Workspace Manager以降のいずれかの段階で例外が発生した場合は
     `FAILED`に更新してから例外を再送出する。全段階が成功した場合のみ`DONE`に更新する。
     `config`は`runner_log_dir`等ではなく`runner_timeout_seconds`/`reviews_root`の

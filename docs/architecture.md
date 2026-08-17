@@ -143,7 +143,7 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 | Workspace Manager | Windows上でbare clone+worktree | Linux/Docker上でも同じ抽象で動く(M3-4) | bare clone + MR単位worktreeというモデルそのもの |
 | Claude Code Runner | Poller/CLIから直接同期呼び出し | Jobとして扱われ(M3-1)、別プロセス/別ホストに分離される(M3-3) | worktree上でheadless実行し、コンテキストを渡すロジック本体 |
 | Review pipeline | プロンプト・出力スキーマの唯一の用途 | Job種別の1つ(`review`)になる。`issue-analysis`/`design`/`implement`が並ぶ(M4) | プロンプト設計・出力スキーマ・保存レイアウト |
-| State Store | SQLite | バックエンドがPostgreSQLに移行(M3-5)。リポジトリ層抽象化のおかげでAPIは不変 | `(project, mr_iid, commit_sha)` による一意制約という設計 |
+| State Store | SQLite | PostgreSQLにも対応し、設定(`store.backend`)で切り替え可能になった(M3-5実装済み)。リポジトリ層抽象化のおかげでAPIは不変 | `(project, mr_iid, commit_sha)` による一意制約という設計 |
 | MR Poller | Runnerを直接起動 | Webhookと共存可能になった(M3-6実装済み)。起票先がJob Queueへの投入に変わるのはM3-2 | ラベル走査・未処理commit検出のロジック |
 | CLI | 単発実行/watchの唯一の入口 | 人間が操作する入口として残る(オーケストレーション自体はCLIの責務にしない) | 単発デバッグ・watch常駐という2つのモード |
 

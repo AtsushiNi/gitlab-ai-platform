@@ -13,7 +13,7 @@ M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
   担う(オーケストレーションはしない、`docs/architecture.md`のCLIの境界)。
 - `run_watch_loop`(パイプライン本体)は`execute_review_job`と同じくGitLab Adapter/Workspace
   Manager/Claude Code Runner/State Store/Job RepositoryをすべてProtocol型の引数として受け取り、
-  `run_watch`(合成ルート)がそれらの具象実装(REST/git/subprocess/SQLite)を`config`から
+  `run_watch`(合成ルート)がそれらの具象実装(REST/git/subprocess/SQLiteまたはPostgreSQL)を`config`から
   組み立てて委譲する(`ADR-0008`が確立した「パイプライン本体と合成ルートを分離する」パターンを
   そのまま踏襲。テストは手書きフェイクを注入して行い、実サービスには繋がない)。
 - M2-1: 検出された各MRのレビューは`ReviewWorkerPool`(`cli/worker_pool.py`)経由で
@@ -69,7 +69,7 @@ from ..review.errors import ReviewError
 from ..runner import SubprocessClaudeCodeRunner
 from ..runner.errors import RunnerError
 from ..runner.protocol import ClaudeCodeRunner
-from ..store import SqliteStateStore
+from ..store import build_state_store
 from ..store.errors import StateStoreError
 from ..store.protocol import StateStore
 from ..webhook import WebhookServer
@@ -95,7 +95,7 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
 
     `stop_event`がセットされるまでブロックする(省略時は呼び出し側が別途プロセスを
     止める手段を用意する必要がある)。`config`からGitLab Adapter・Workspace Manager・
-    Claude Code Runner・State Store・Job Repositoryの具象実装(REST/git/subprocess/SQLite)を
+    Claude Code Runner・State Store・Job Repositoryの具象実装(REST/git/subprocess/SQLiteまたはPostgreSQL)を
     組み立て、`run_watch_loop`に委譲する。同一`state_db_path`に対する多重起動は
     `ProcessLock.acquire`が`AlreadyRunningError`を送出することで防ぐ。
     """
@@ -104,7 +104,7 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
         adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
         workspace = build_workspace_manager(config)
         runner = SubprocessClaudeCodeRunner(config.runner_log_dir)
-        store = SqliteStateStore(config.state_db_path)
+        store = build_state_store(config)
         job_repo = SqliteJobRepository(config.job_db_path)
         try:
             run_watch_loop(
