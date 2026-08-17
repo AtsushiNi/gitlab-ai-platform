@@ -41,10 +41,13 @@ class Config:
     webhook_port: int
     webhook_path: str
     webhook_secret_token: str
+    api_host: str
+    api_port: int
+    api_token: str
 
     def __repr__(self) -> str:
-        # gitlab_token/webhook_secret_token/store_postgres_passwordが誤ってログ・例外メッセージに
-        # 出力されるのを防ぐため、reprでマスクする
+        # gitlab_token/webhook_secret_token/store_postgres_password/api_tokenが誤ってログ・
+        # 例外メッセージに出力されるのを防ぐため、reprでマスクする
         return (
             f"Config(gitlab_url={self.gitlab_url!r}, gitlab_token='***', "
             f"gitlab_token_mcp='***', "
@@ -69,7 +72,10 @@ class Config:
             f"webhook_host={self.webhook_host!r}, "
             f"webhook_port={self.webhook_port!r}, "
             f"webhook_path={self.webhook_path!r}, "
-            f"webhook_secret_token='***')"
+            f"webhook_secret_token='***', "
+            f"api_host={self.api_host!r}, "
+            f"api_port={self.api_port!r}, "
+            f"api_token='***')"
         )
 
     @classmethod
@@ -101,6 +107,9 @@ class Config:
         webhook_port: object,
         webhook_path: object,
         webhook_secret_token: object,
+        api_host: object,
+        api_port: object,
+        api_token: object,
     ) -> Config:
         """未検証の生値からConfigを組み立てる。不正な値があれば ConfigError をまとめて送出する。"""
         errors: list[str] = []
@@ -206,6 +215,15 @@ class Config:
                 "(.envのGITLAB_AI_PLATFORM_WEBHOOK_SECRET)が必要です"
             )
 
+        # HTTP API(M3-7, docs/adr/0023-http-api.md)。`api`サブコマンドの起動有無で
+        # 必須/省略可が切り替わる`webhook_enabled`と異なり、Config自体には有効/無効の
+        # フラグを持たない(サブコマンドの実行そのものが有効化を意味するため)。トークンの
+        # 必須チェックは`api`サブコマンドの合成ルート(`cli/api_server.py`)側で行う
+        clean_api_host = _require_nonempty_str(api_host, "api.host", errors)
+        clean_api_port = _require_positive_int(api_port, "api.port", errors)
+        # Secret Token/PostgreSQLパスワードと同じ理由でconfig.tomlではなく.env/環境変数経由
+        clean_api_token = api_token.strip() if isinstance(api_token, str) else ""
+
         if errors:
             raise ConfigError("; ".join(errors))
 
@@ -231,6 +249,8 @@ class Config:
         assert clean_webhook_host is not None
         assert clean_webhook_port is not None
         assert clean_webhook_path is not None
+        assert clean_api_host is not None
+        assert clean_api_port is not None
 
         # MCP用PATが未設定(空文字列)なら自動実行系と同じトークンにフォールバックする
         # (用途別トークンの分離は運用者が任意に導入できるオプションであり必須ではない)
@@ -262,6 +282,9 @@ class Config:
             webhook_port=clean_webhook_port,
             webhook_path=clean_webhook_path,
             webhook_secret_token=clean_webhook_secret_token,
+            api_host=clean_api_host,
+            api_port=clean_api_port,
+            api_token=clean_api_token,
         )
 
 

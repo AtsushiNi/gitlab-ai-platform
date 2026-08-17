@@ -61,6 +61,8 @@
   デッドレター(M3-2)を含む
 - [specs/webhook-receiver.md](specs/webhook-receiver.md) — Webhook受信対応(M3-6、任意有効化)の
   仕様。MR Pollerと共存し、二重起票防止ロジック(`ticket_if_unprocessed`)を共有する
+- [specs/http-api.md](specs/http-api.md) — 最小限のHTTP API(M3-7)の仕様。`JobRepository`への
+  Job投入・状態/結果参照・一覧取得を提供する独立した`api`サブコマンド
 
 ## 更新ルール
 

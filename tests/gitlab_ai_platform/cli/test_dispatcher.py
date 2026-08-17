@@ -59,6 +59,9 @@ def _config(tmp_path: Path, **overrides) -> Config:
         store_postgres_dbname="gitlab_ai_platform",
         store_postgres_user="gitlab_ai_platform",
         store_postgres_password="",
+        api_host="127.0.0.1",
+        api_port=8090,
+        api_token="",
     )
     kwargs.update(overrides)
     return Config.from_raw(**kwargs)

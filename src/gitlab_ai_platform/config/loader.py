@@ -20,6 +20,9 @@ GITLAB_MCP_TOKEN_ENV_KEY = "GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP"
 # Webhook Secret Token(M3-6, docs/adr/0018-webhook-receiver.md)も同じ理由で.env/環境変数経由
 GITLAB_WEBHOOK_SECRET_ENV_KEY = "GITLAB_AI_PLATFORM_WEBHOOK_SECRET"
 
+# HTTP APIのトークン(M3-7, docs/adr/0023-http-api.md)も同じ理由で.env/環境変数経由
+API_TOKEN_ENV_KEY = "GITLAB_AI_PLATFORM_API_TOKEN"
+
 # PostgreSQL State Store(M3-5, docs/adr/0021-state-store-postgresql.md)のパスワードも
 # 同じ理由で.env/環境変数経由。ホスト・ポート・DB名・ユーザー名はconfig.tomlに書く
 STORE_POSTGRES_PASSWORD_ENV_KEY = "GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD"
@@ -49,6 +52,11 @@ DEFAULT_WEBHOOK_ENABLED = False
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"
 DEFAULT_WEBHOOK_PORT = 8088
 DEFAULT_WEBHOOK_PATH = "/webhook"
+# HTTP API(M3-7, docs/adr/0023-http-api.md)。Webhookと異なり社内GitLabからの外部到達性は
+# 不要で、`api`サブコマンドを明示実行した運用者が意図的にhostを変えない限り外部に晒さない
+# ((docs/adr/0023-http-api.md)「決定」参照)
+DEFAULT_API_HOST = "127.0.0.1"
+DEFAULT_API_PORT = 8090
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -102,6 +110,7 @@ def load_config(
     gitlab_token_mcp = env.get(GITLAB_MCP_TOKEN_ENV_KEY, "")
     webhook_secret_token = env.get(GITLAB_WEBHOOK_SECRET_ENV_KEY, "")
     store_postgres_password = env.get(STORE_POSTGRES_PASSWORD_ENV_KEY, "")
+    api_token = env.get(API_TOKEN_ENV_KEY, "")
 
     raw: dict = {}
     if config_path.is_file():
@@ -118,6 +127,7 @@ def load_config(
     store_postgres_section = store_section.get("postgres", {})
     job_section = raw.get("job", {})
     webhook_section = raw.get("webhook", {})
+    api_section = raw.get("api", {})
 
     return Config.from_raw(
         gitlab_url=gitlab_section.get("url", ""),
@@ -159,4 +169,7 @@ def load_config(
         webhook_port=webhook_section.get("port", DEFAULT_WEBHOOK_PORT),
         webhook_path=webhook_section.get("path", DEFAULT_WEBHOOK_PATH),
         webhook_secret_token=webhook_secret_token,
+        api_host=api_section.get("host", DEFAULT_API_HOST),
+        api_port=api_section.get("port", DEFAULT_API_PORT),
+        api_token=api_token,
     )
