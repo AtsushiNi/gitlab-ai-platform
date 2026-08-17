@@ -18,6 +18,11 @@ def _valid_kwargs(**overrides):
         reviews_root="reviews",
         state_db_path="state.db",
         job_db_path="job.db",
+        webhook_enabled=False,
+        webhook_host="127.0.0.1",
+        webhook_port=8088,
+        webhook_path="/webhook",
+        webhook_secret_token="",
     )
     kwargs.update(overrides)
     return kwargs
@@ -39,6 +44,11 @@ def test_from_raw_builds_config_with_valid_values():
     assert config.reviews_root == "reviews"
     assert config.state_db_path == "state.db"
     assert config.job_db_path == "job.db"
+    assert config.webhook_enabled is False
+    assert config.webhook_host == "127.0.0.1"
+    assert config.webhook_port == 8088
+    assert config.webhook_path == "/webhook"
+    assert config.webhook_secret_token == ""
 
 
 def test_from_raw_strips_trailing_slash_from_url():
@@ -81,11 +91,41 @@ def test_from_raw_strips_whitespace_from_projects():
         {"reviews_root": ""},
         {"state_db_path": ""},
         {"job_db_path": ""},
+        {"webhook_enabled": "true"},
+        {"webhook_enabled": 1},
+        {"webhook_host": ""},
+        {"webhook_port": 0},
+        {"webhook_port": -1},
+        {"webhook_path": ""},
+        {"webhook_path": "webhook"},
     ],
 )
 def test_from_raw_rejects_invalid_values(overrides):
     with pytest.raises(ConfigError):
         Config.from_raw(**_valid_kwargs(**overrides))
+
+
+def test_from_raw_requires_secret_token_when_webhook_enabled():
+    with pytest.raises(ConfigError, match="Secret Token"):
+        Config.from_raw(**_valid_kwargs(webhook_enabled=True, webhook_secret_token=""))
+
+
+def test_from_raw_accepts_webhook_enabled_with_secret_token():
+    config = Config.from_raw(
+        **_valid_kwargs(webhook_enabled=True, webhook_secret_token="whsec-123")
+    )
+
+    assert config.webhook_enabled is True
+    assert config.webhook_secret_token == "whsec-123"
+
+
+def test_repr_masks_webhook_secret_token():
+    config = Config.from_raw(
+        **_valid_kwargs(webhook_enabled=True, webhook_secret_token="whsec-super-secret")
+    )
+
+    assert "whsec-super-secret" not in repr(config)
+    assert "***" in repr(config)
 
 
 def test_repr_masks_gitlab_token():

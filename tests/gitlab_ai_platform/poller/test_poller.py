@@ -3,7 +3,12 @@ import threading
 import pytest
 
 from gitlab_ai_platform.gitlab_adapter import GitLabApiError, MergeRequest
-from gitlab_ai_platform.poller import DetectedReview, MrPoller, PollError
+from gitlab_ai_platform.poller import (
+    DetectedReview,
+    MrPoller,
+    PollError,
+    ticket_if_unprocessed,
+)
 from gitlab_ai_platform.store import (
     DuplicateReviewError,
     ReviewRecord,
@@ -321,3 +326,52 @@ def test_run_propagates_exception_from_on_detected():
 
     with pytest.raises(RuntimeError, match="boom"):
         poller.run(interval_seconds=0, on_detected=_on_detected)
+
+
+# M3-6(#96, docs/adr/0017-webhook-receiver.md): `ticket_if_unprocessed`は
+# MrPoller.poll_once・Webhook受信サーバー(webhook/server.py)の両方から共通で呼ばれる
+# モジュール関数として切り出したもの。MrPoller経由の挙動は上記テストで既に検証済みのため、
+# ここでは関数を直接呼び出して契約(戻り値・State Storeとのやり取り)そのものを検証する。
+def test_ticket_if_unprocessed_creates_record_and_returns_detected_review():
+    store = _FakeStateStore()
+
+    outcome = ticket_if_unprocessed(store, "group/project", 1, "sha-1")
+
+    assert outcome == DetectedReview(
+        project="group/project", mr_iid=1, commit_sha="sha-1"
+    )
+    assert store.create_calls == [("group/project", 1, "sha-1")]
+
+
+def test_ticket_if_unprocessed_returns_none_when_already_recorded():
+    store = _FakeStateStore(existing={("group/project", 1, "sha-1")})
+
+    outcome = ticket_if_unprocessed(store, "group/project", 1, "sha-1")
+
+    assert outcome is None
+    assert store.create_calls == []
+
+
+def test_ticket_if_unprocessed_ignores_duplicate_review_error_from_concurrent_caller():
+    # Poller・Webhookが同じ(project, mr_iid, commit_sha)をほぼ同時に検出した場合の競合
+    store = _FakeStateStore(
+        create_side_effects={
+            ("group/project", 1, "sha-1"): DuplicateReviewError("既に存在します")
+        }
+    )
+
+    outcome = ticket_if_unprocessed(store, "group/project", 1, "sha-1")
+
+    assert outcome is None
+
+
+def test_ticket_if_unprocessed_returns_poll_error_on_state_store_failure():
+    store = _FakeStateStore(
+        create_side_effects={
+            ("group/project", 1, "sha-1"): StateStoreError("DBロック中")
+        }
+    )
+
+    outcome = ticket_if_unprocessed(store, "group/project", 1, "sha-1")
+
+    assert outcome == PollError(project="group/project", mr_iid=1, message="DBロック中")

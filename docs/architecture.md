@@ -81,7 +81,8 @@ flowchart TD
 |---|---|---|---|---|
 | GitLab Adapter | `gitlab_adapter/` | GitLabとのやりとりを一手に引き受ける唯一の窓口。read/write操作をProtocol/ABCで抽象化し、REST実装を差し替え可能にする(将来のMCP実装を同じ口に嵌める前提)。書き込みは許可リスト方式(read/branch作成/push/MR作成/コメントのみ)で、merge・protected branchへの直push・branch削除・管理操作を機構として禁止する | プロンプトの約束事だけに頼った制限はしない。GitLab以外の外部システムは扱わない | M1-1, M1-2, M1-3 |
 | State Store | `store/` | `(project, mr_iid, commit_sha)` 単位でレビュー状態(`status` / `reviewed_at` / 結果パス)を記録し、二重レビューを防ぐ。リポジトリ層を抽象化しSQLite/PostgreSQL両対応にする | ビジネスロジック(レビューするか否かの判断)は持たない。単なる状態の記録・照会 | M1-4 |
-| MR Poller | `poller/` | 30〜60秒間隔で対象プロジェクトを走査し、`レビュー待ち` ラベルのMRを抽出、State Storeと突き合わせて未処理commitを検出、レビューを起票する | Webhookは当面採用しない(MVP時点)。GitLabへの書き込みはしない | M1-5 |
+| MR Poller | `poller/` | 30〜60秒間隔で対象プロジェクトを走査し、`レビュー待ち` ラベルのMRを抽出、State Storeと突き合わせて未処理commitを検出、レビューを起票する | GitLabへの書き込みはしない | M1-5 |
+| Webhook Receiver | `webhook/` | GitLab Merge Request Hookを受信し、MR Pollerと共通の二重起票防止ロジック(`ticket_if_unprocessed`)でレビューを起票する。任意有効化(既定OFF)で`watch`サブコマンドに統合される | Push Hookは扱わない。MR Pollerを置き換えない(併存が前提)。HMAC署名検証はしない(Secret Token方式のみ) | M3-6 |
 | Workspace Manager | `workspace/` | プロジェクトごとのbare clone、MR単位のworktree作成/更新/破棄、ディスク上限とGCを管理する。並列レビューでworking treeを共有しない | git操作以外(ビルド・テスト実行など)はしない | M1-6 |
 | Claude Code Runner | `runner/` | worktree上でClaude Codeをヘッドレス実行し、MRタイトル・説明・コメント・diffをコンテキストとして渡す。タイムアウト・異常終了のハンドリング、実行ログ保存を行う | レビュー観点の判断そのもの(何を重大とするか)はプロンプト側の責務であり、Runnerは実行制御のみ | M1-7 |
 | Review | `review/` | レビュープロンプトの設計(`docs/specs/prompts.md`)と、結果スキーマ(重要度/ファイル/行/根拠/提案)の定義。JSON(機械可読)とMarkdown(人間可読)の両方を出力する | GitLabへの自動投稿はしない。最終判断は人間 | M1-8, M1-9 |
@@ -140,7 +141,7 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 | Claude Code Runner | Poller/CLIから直接同期呼び出し | Jobとして扱われ(M3-1)、別プロセス/別ホストに分離される(M3-3) | worktree上でheadless実行し、コンテキストを渡すロジック本体 |
 | Review pipeline | プロンプト・出力スキーマの唯一の用途 | Job種別の1つ(`review`)になる。`issue-analysis`/`design`/`implement`が並ぶ(M4) | プロンプト設計・出力スキーマ・保存レイアウト |
 | State Store | SQLite | バックエンドがPostgreSQLに移行(M3-5)。リポジトリ層抽象化のおかげでAPIは不変 | `(project, mr_iid, commit_sha)` による一意制約という設計 |
-| MR Poller | Runnerを直接起動 | 起票先がJob Queueへの投入に変わる。Webhookと共存可能になる(M3-6) | ラベル走査・未処理commit検出のロジック |
+| MR Poller | Runnerを直接起動 | Webhookと共存可能になった(M3-6実装済み)。起票先がJob Queueへの投入に変わるのはM3-2 | ラベル走査・未処理commit検出のロジック |
 | CLI | 単発実行/watchの唯一の入口 | 人間が操作する入口として残る(オーケストレーション自体はCLIの責務にしない) | 単発デバッグ・watch常駐という2つのモード |
 
 新規に追加されるレイヤー:
@@ -164,6 +165,11 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
   ([ADR-0002](adr/0002-gitlab-adapter-interface.md)、M1-1で正式化済み)
 - **Webhookではなくポーリングを選ぶ**: 社内GitLab側の設定変更を避けたいこと、MVPとしての
   シンプルさを優先。将来M3-6でWebhookとの併用へ拡張可能な形にしておく(M1-5で正式化)
+- **Webhook受信は`watch`常駐モードへの任意有効化(既定OFF)として追加し、Pollerを置き換えない**:
+  検出後の実行経路(ワーカープール・Job起票)をPoller/Webhookで完全に共有し、二重起票防止も
+  同じState Store一意制約ダンス(`ticket_if_unprocessed`)を共有する。新規サーバー依存
+  (Flask等)は追加せず標準ライブラリ`http.server`で実装([ADR-0018](adr/0018-webhook-receiver.md)、
+  M3-6で正式化)
 - **書き込み操作は許可リスト方式でAdapter層が機構として禁止する**: プロンプト上の約束事だけに
   依存しない。merge・protected branchへの直push・branch削除・管理操作用のメソッドは
   インターフェース側に存在しない([ADR-0002](adr/0002-gitlab-adapter-interface.md))。

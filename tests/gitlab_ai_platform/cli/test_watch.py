@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
+import http.client
 import json
+import socket
 import threading
 import time
 from pathlib import Path
@@ -48,9 +50,23 @@ def _config(tmp_path: Path, **overrides) -> Config:
         reviews_root=str(tmp_path / "reviews"),
         state_db_path=":memory:",
         job_db_path=":memory:",
+        webhook_enabled=False,
+        webhook_host="127.0.0.1",
+        webhook_port=8088,
+        webhook_path="/webhook",
+        webhook_secret_token="",
     )
     kwargs.update(overrides)
     return Config.from_raw(**kwargs)
+
+
+def _free_port() -> int:
+    # OSに空きポートを割り当てさせてから即座に閉じる(テスト用のWebhookサーバーの待受先)。
+    # 割り当てから実際のbindまでの間に他プロセスに奪われる可能性はゼロではないが、
+    # テスト実行環境でのポート衝突を避けるための簡便な方法として許容する
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 def _mr(iid: int, sha: str) -> MergeRequest:
@@ -113,6 +129,18 @@ class _FakeGitLabReaderDriftingSha(_FakeGitLabReader):
     def get_merge_request(self, project: str, mr_iid: int) -> MergeRequest:
         mr = super().get_merge_request(project, mr_iid)
         return dataclasses.replace(mr, sha=self._drifted_sha)
+
+
+class _FakeGitLabReaderWebhookOnly(_FakeGitLabReader):
+    """`list_merge_requests`は常に空を返す(MR PollerからはMRが見えない)が、
+    `get_merge_request`等は通常通り応答するフェイク(M3-6のWebhook経由検出テスト用。
+    `execute_review`はWebhookが検出したcommitに対して`get_merge_request`等を直接呼ぶため、
+    Pollerに検出させずにWebhook経由の検出だけを再現できる)。"""
+
+    def list_merge_requests(
+        self, project: str, *, labels: tuple[str, ...] = (), state: str = "opened"
+    ) -> list[MergeRequest]:
+        return []
 
 
 class _FakeWorkspaceManager:
@@ -471,6 +499,117 @@ def test_run_watch_loop_isolates_worker_failure_from_other_reviews(tmp_path):
         assert store.find(_PROJECT, 2, "sha-2").status == ReviewStatus.FAILED
         assert store.find(_PROJECT, 3, "sha-3").status == ReviewStatus.DONE
     finally:
+        job_repo.close()
+        store.close()
+
+
+def test_run_watch_loop_does_not_start_webhook_server_when_disabled(tmp_path):
+    # webhook.enabled=false(既定)なら、run_watch_loopはWebhookサーバーを一切起動しない
+    # (「片方だけでも動く」、docs/adr/0017-webhook-receiver.md)。ポートを予約だけしておき、
+    # そのポートへの接続が拒否される(誰も待ち受けていない)ことで確認する
+    port = _free_port()
+    config = _config(tmp_path, webhook_enabled=False, webhook_port=port)
+    adapter = _FakeGitLabReader([])
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path)
+    store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
+    stop_event = threading.Event()
+    stop_event.set()
+
+    try:
+        run_watch_loop(
+            adapter, workspace, runner, store, job_repo, config, stop_event=stop_event
+        )
+
+        with pytest.raises(ConnectionRefusedError):
+            http.client.HTTPConnection("127.0.0.1", port, timeout=1).connect()
+    finally:
+        job_repo.close()
+        store.close()
+
+
+def test_run_watch_loop_processes_webhook_detected_review_via_same_pipeline(tmp_path):
+    # webhook.enabled=trueの場合、Webhook経由で検出されたMRもPollerと同じ実行経路
+    # (ReviewWorkerPool→execute_review_job)で処理され、State Storeが更新されることを検証する
+    # (docs/adr/0017-webhook-receiver.md「検出後の実行経路を完全に共有する」)。
+    port = _free_port()
+    secret = "whsec-test-secret"
+    config = _config(
+        tmp_path,
+        poll_interval_seconds=1,
+        webhook_enabled=True,
+        webhook_host="127.0.0.1",
+        webhook_port=port,
+        webhook_secret_token=secret,
+    )
+    # Pollerには見せず(list_merge_requestsは常に空)、Webhook経由でのみ検出させる。
+    # `execute_review`が検出後に呼ぶget_merge_request等はMR1に応答できる必要がある
+    adapter = _FakeGitLabReaderWebhookOnly([_mr(1, "sha-1")])
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path)
+    store = SqliteStateStore(":memory:")
+    job_repo = SqliteJobRepository(":memory:")
+    stop_event = threading.Event()
+
+    thread = threading.Thread(
+        target=run_watch_loop,
+        args=(adapter, workspace, runner, store, job_repo, config),
+        kwargs={"stop_event": stop_event},
+    )
+    thread.start()
+    try:
+        payload = json.dumps(
+            {
+                "object_kind": "merge_request",
+                "object_attributes": {
+                    "iid": 1,
+                    "state": "opened",
+                    "last_commit": {"id": "sha-1"},
+                },
+                "project": {"path_with_namespace": _PROJECT},
+                "labels": [{"title": _LABEL}],
+            }
+        ).encode("utf-8")
+
+        status = None
+        for _ in range(50):  # サーバー起動を待つ(最大約2.5秒)
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                conn.request(
+                    "POST",
+                    "/webhook",
+                    body=payload,
+                    headers={
+                        "X-Gitlab-Event": "Merge Request Hook",
+                        "X-Gitlab-Token": secret,
+                    },
+                )
+                response = conn.getresponse()
+                status = response.status
+                response.read()
+                conn.close()
+                break
+            except ConnectionRefusedError:
+                time.sleep(0.05)
+        assert status == 202
+
+        for _ in range(50):  # ワーカースレッドでの処理完了を待つ(最大約2.5秒)
+            record = store.find(_PROJECT, 1, "sha-1")
+            if record is not None and record.status == ReviewStatus.DONE:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("Webhook経由のレビューが時間内に完了しなかった")
+
+        assert runner.run_calls == [(_PROJECT, 1)]
+    finally:
+        stop_event.set()
+        thread.join(timeout=5)
         job_repo.close()
         store.close()
 

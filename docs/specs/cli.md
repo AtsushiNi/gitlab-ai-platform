@@ -25,7 +25,11 @@
 - `watch`: MR Poller(M1-5)で対象プロジェクトを定期走査し、検出したMRごとに`review`と
   同じレビュー実行パイプラインを呼び出し続ける常駐モード。検出した複数MRのレビューは
   `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、[ADR-0015](../adr/0015-parallel-review-execution.md))。
-  Ctrl+C(SIGINT)/SIGTERMでgraceful shutdownし、同一設定に対する多重起動を防ぐ
+  Ctrl+C(SIGINT)/SIGTERMでgraceful shutdownし、同一設定に対する多重起動を防ぐ。
+  `config.webhook_enabled=true`(任意有効化、既定false)の場合、GitLab Merge Request Hookを
+  受信するWebhookサーバーも背景スレッドで起動し、MR Pollerと同じ実行経路
+  (`ReviewWorkerPool`)・二重起票防止ロジック(`poller.ticket_if_unprocessed`)を共有する
+  (M3-6、[ADR-0018](../adr/0018-webhook-receiver.md)、[specs/webhook-receiver.md](webhook-receiver.md))
 - `decompose`: 指定した1つのprojectに対し、GitLab Adapter MCP Server(M2-12、
   `adapter_mcp_server`)を`--mcp-config`で登録した**対話型**の`claude`セッションを起動する
   (M2-11、`docs/requirements.md` 3-C)。`review`/`watch`のheadless実行(`-p`付き、標準出力の
@@ -244,7 +248,9 @@ def run_watch_loop(
     処理は`ReviewWorkerPool(config.max_parallel, stop_event)`へ投入し、並行実行する
     (M2-1)。`stop_event`を省略した場合はここで生成し、`MrPoller.run`とプールの両方に
     同じオブジェクトを渡す(ワーカースレッドの想定外の例外がポーリングループの早期終了に
-    反映されるようにするため)。"""
+    反映されるようにするため)。`config.webhook_enabled`が真の場合(M3-6)、`WebhookServer`
+    (`webhook/server.py`)も同じプールへの投入ラッパーを`on_detected`として起動し、
+    `finally`節で停止する([ADR-0018](../adr/0018-webhook-receiver.md))。"""
 
 
 def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> None:
@@ -496,6 +502,10 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   - `run_watch`: `ProcessLock`を取得・解放すること、ロック取得済みの状態で呼ぶと
     `AlreadyRunningError`を送出すること、`state_db_path`が`":memory:"`でもロックファイル名が
     不正にならず起動できること(`_lock_path_for`の`":memory:"`特別扱い)
+  - M3-6: `config.webhook_enabled=false`(既定)では`run_watch_loop`がWebhookサーバーを
+    起動しないこと、`true`の場合は実際にHTTPリクエストを送ってPollerと同じ
+    `execute_review_job`パイプラインで処理されState Storeが`DONE`になることを検証する
+    ([specs/webhook-receiver.md](webhook-receiver.md)参照)
 - `test_worker_pool.py`: `ReviewWorkerPool`を検証する。投入したジョブがバックグラウンド
   スレッドで実行されること、同時実行数が`max_workers`を超えないこと、想定外の例外を
   送出したジョブが`stop_event`をセットし`shutdown_and_reraise`で再送出されること、
@@ -537,6 +547,9 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   `watch`の`ReviewWorkerPool`による並列実行の設計判断
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
+- [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信
+  サーバー(M3-6)の仕様
+- [ADR-0018: Webhook 受信対応(任意有効化)の設計](../adr/0018-webhook-receiver.md)
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /
   [claude-code-runner.md](claude-code-runner.md) / [review-output.md](review-output.md) /
   [state-store.md](state-store.md) / [job-model.md](job-model.md) —

@@ -57,6 +57,8 @@
   対話型Claude CodeがGitLab Adapterの許可された操作をツールとして呼び出すための経路
 - [specs/job-model.md](specs/job-model.md) — Job抽象・状態機械(M3-1)の仕様。既存レビュー処理を
   `review`種別のJobとして再構成する経路を含む
+- [specs/webhook-receiver.md](specs/webhook-receiver.md) — Webhook受信対応(M3-6、任意有効化)の
+  仕様。MR Pollerと共存し、二重起票防止ロジック(`ticket_if_unprocessed`)を共有する
 
 ## 更新ルール
 

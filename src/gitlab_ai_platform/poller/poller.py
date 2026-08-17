@@ -24,6 +24,11 @@
   Managerの例外型等)を一切知らなくてよい。
 - Webhookは当面採用しない(MVP時点)。走査対象プロジェクトは構築時に渡された一覧固定で、
   実行中の動的な追加/削除は扱わない。
+- M3-6([#96](https://github.com/AtsushiNi/gitlab-ai-platform/issues/96)、
+  `docs/adr/0018-webhook-receiver.md`): 上記の「State Storeの`find`→`create`ダンス」は
+  モジュール関数`ticket_if_unprocessed`として切り出し、Webhook受信サーバー
+  (`webhook/server.py`)からも同じ実装を呼ぶ。二重起票防止のロジックをPoller/Webhookの
+  どちらの検出経路であっても複製しないための共有ポイント。
 """
 
 from __future__ import annotations
@@ -76,7 +81,7 @@ class MrPoller:
                 continue
 
             for mr in merge_requests:
-                outcome = self._ticket_if_unprocessed(mr.project, mr.iid, mr.sha)
+                outcome = ticket_if_unprocessed(self._store, mr.project, mr.iid, mr.sha)
                 if isinstance(outcome, DetectedReview):
                     created.append(outcome)
                 elif isinstance(outcome, PollError):
@@ -117,37 +122,47 @@ class MrPoller:
                     on_detected(review)
             stop_event.wait(interval_seconds)
 
-    def _ticket_if_unprocessed(
-        self, project: str, mr_iid: int, commit_sha: str
-    ) -> DetectedReview | PollError | None:
-        try:
-            if self._store.find(project, mr_iid, commit_sha) is not None:
-                return None
-            self._store.create(project, mr_iid, commit_sha)
-        except DuplicateReviewError:
-            # findからcreateまでの間の競合(複数Poller稼働時等)。二重起票にはならないため無視する
-            _logger.debug(
-                "poller.duplicate_review_ignored",
-                extra={"project": project, "mr_iid": mr_iid, "commit_sha": commit_sha},
-            )
-            return None
-        except StateStoreError as exc:
-            _logger.error(
-                "poller.ticket_creation_failed",
-                extra={
-                    "project": project,
-                    "mr_iid": mr_iid,
-                    "commit_sha": commit_sha,
-                    "error": str(exc),
-                },
-            )
-            return PollError(project=project, mr_iid=mr_iid, message=str(exc))
 
-        _logger.info(
-            "poller.review_ticketed",
+def ticket_if_unprocessed(
+    store: StateStore, project: str, mr_iid: int, commit_sha: str
+) -> DetectedReview | PollError | None:
+    """`(project, mr_iid, commit_sha)`が未処理ならState Storeに起票し、`DetectedReview`を返す。
+
+    `MrPoller.poll_once`とWebhook受信サーバー(M3-6, `webhook/server.py`、
+    `docs/adr/0018-webhook-receiver.md`)の両方の検出経路から共通で呼ばれる、二重起票防止
+    (State Storeの一意制約)の中核ロジック。`find`から`create`までの間に別プロセス/別経路
+    (複数Poller稼働時、PollerとWebhookの競合等)が同じレコードを作っていた場合は、`create`が
+    送出する`DuplicateReviewError`を「既に起票済み」として無視する。
+    """
+    try:
+        if store.find(project, mr_iid, commit_sha) is not None:
+            return None
+        store.create(project, mr_iid, commit_sha)
+    except DuplicateReviewError:
+        # findからcreateまでの間の競合(複数Poller稼働時、PollerとWebhookの競合等)。
+        # 二重起票にはならないため無視する
+        _logger.debug(
+            "poller.duplicate_review_ignored",
             extra={"project": project, "mr_iid": mr_iid, "commit_sha": commit_sha},
         )
-        return DetectedReview(project=project, mr_iid=mr_iid, commit_sha=commit_sha)
+        return None
+    except StateStoreError as exc:
+        _logger.error(
+            "poller.ticket_creation_failed",
+            extra={
+                "project": project,
+                "mr_iid": mr_iid,
+                "commit_sha": commit_sha,
+                "error": str(exc),
+            },
+        )
+        return PollError(project=project, mr_iid=mr_iid, message=str(exc))
+
+    _logger.info(
+        "poller.review_ticketed",
+        extra={"project": project, "mr_iid": mr_iid, "commit_sha": commit_sha},
+    )
+    return DetectedReview(project=project, mr_iid=mr_iid, commit_sha=commit_sha)
 
 
-__all__ = ["MrPoller"]
+__all__ = ["MrPoller", "ticket_if_unprocessed"]

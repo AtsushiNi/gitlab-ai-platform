@@ -52,6 +52,11 @@ def _config(tmp_path: Path, **overrides) -> Config:
         reviews_root=str(tmp_path / "reviews"),
         state_db_path=":memory:",
         job_db_path=":memory:",
+        webhook_enabled=False,
+        webhook_host="127.0.0.1",
+        webhook_port=8088,
+        webhook_path="/webhook",
+        webhook_secret_token="",
     )
     kwargs.update(overrides)
     return Config.from_raw(**kwargs)

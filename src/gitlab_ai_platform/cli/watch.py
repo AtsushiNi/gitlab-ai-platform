@@ -40,6 +40,14 @@ M2-1 [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80)、
   `cli/main.py`の責務)と、実行中のサイクルの完了後に停止する。
 - 多重起動防止: `ProcessLock`(`cli/lock.py`)で`state_db_path`に対応するロックファイルを
   排他ロックし、同一設定に対する多重起動を防ぐ。
+- Webhook受信(M3-6 [#96](https://github.com/AtsushiNi/gitlab-ai-platform/issues/96)、
+  `docs/adr/0018-webhook-receiver.md`): `config.webhook_enabled`が真の場合のみ、
+  `webhook.WebhookServer`を背景スレッドで起動する(任意有効化。既定は無効で、
+  Pollerのみ従来通り動く)。WebhookサーバーもPollerと同じ`on_detected`ラッパー
+  (`pool.submit`)を共有するため、検出後の実行経路(並列数制御・エラー処理・ログ)は
+  完全に共通。重複起票の防止は`poller.ticket_if_unprocessed`をWebhookサーバー内部から
+  呼ぶことで(State Storeの一意制約に頼る形で)実現しており、このモジュールは
+  Webhookサーバーの起動/停止のライフサイクル管理だけを担う。
 """
 
 from __future__ import annotations
@@ -64,6 +72,7 @@ from ..runner.protocol import ClaudeCodeRunner
 from ..store import SqliteStateStore
 from ..store.errors import StateStoreError
 from ..store.protocol import StateStore
+from ..webhook import WebhookServer
 from ..workspace.errors import WorkspaceError
 from ..workspace.protocol import WorkspaceManager
 from .lock import ProcessLock
@@ -134,23 +143,54 @@ def run_watch_loop(
     場合、ここで作る`threading.Event`を`MrPoller.run`とワーカープールの両方に渡す。同じ
     オブジェクトを共有することで、ワーカースレッド内の想定外の例外がポーリングループの
     早期終了(`stop_event.set()`)にそのまま反映される。
+
+    `config.webhook_enabled`が真の場合(M3-6、`docs/adr/0018-webhook-receiver.md`)、
+    `WebhookServer`を背景スレッドで起動し、同じ`ReviewWorkerPool`への投入ラッパーを
+    `on_detected`として渡す(Poller/Webhook間で検出後の実行経路を完全に共有する)。
     """
     effective_stop_event = stop_event if stop_event is not None else threading.Event()
     poller = MrPoller(adapter, store, config.projects, review_label=config.review_label)
     review_job = build_on_detected(adapter, workspace, runner, store, job_repo, config)
     pool = ReviewWorkerPool(config.max_parallel, effective_stop_event)
+
+    def _submit_to_pool(review: DetectedReview) -> None:
+        pool.submit(functools.partial(review_job, review))
+
+    webhook_server = _build_webhook_server(store, config, on_detected=_submit_to_pool)
+    if webhook_server is not None:
+        webhook_server.start()
     try:
         poller.run(
             interval_seconds=config.poll_interval_seconds,
             stop_event=effective_stop_event,
-            on_detected=lambda review: pool.submit(
-                functools.partial(review_job, review)
-            ),
+            on_detected=_submit_to_pool,
         )
     finally:
+        if webhook_server is not None:
+            webhook_server.stop()
         # 実行中のジョブの完了を待ってから、ワーカースレッドで発生した想定外の例外
         # (あれば)をここで再送出する(`run_watch`→`cli.main`へそのまま伝播させる)
         pool.shutdown_and_reraise()
+
+
+def _build_webhook_server(
+    store: StateStore,
+    config: Config,
+    *,
+    on_detected: Callable[[DetectedReview], None],
+) -> WebhookServer | None:
+    """`config.webhook_enabled`が真の場合のみ`WebhookServer`を組み立てる(任意有効化)。"""
+    if not config.webhook_enabled:
+        return None
+    return WebhookServer(
+        store,
+        review_label=config.review_label,
+        secret_token=config.webhook_secret_token,
+        host=config.webhook_host,
+        port=config.webhook_port,
+        path=config.webhook_path,
+        on_detected=on_detected,
+    )
 
 
 def build_on_detected(

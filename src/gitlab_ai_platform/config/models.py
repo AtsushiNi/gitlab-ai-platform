@@ -27,9 +27,15 @@ class Config:
     reviews_root: str
     state_db_path: str
     job_db_path: str
+    webhook_enabled: bool
+    webhook_host: str
+    webhook_port: int
+    webhook_path: str
+    webhook_secret_token: str
 
     def __repr__(self) -> str:
-        # gitlab_tokenが誤ってログ・例外メッセージに出力されるのを防ぐため、reprでマスクする
+        # gitlab_token/webhook_secret_tokenが誤ってログ・例外メッセージに出力されるのを
+        # 防ぐため、reprでマスクする
         return (
             f"Config(gitlab_url={self.gitlab_url!r}, gitlab_token='***', "
             f"projects={self.projects!r}, "
@@ -42,7 +48,12 @@ class Config:
             f"runner_timeout_seconds={self.runner_timeout_seconds!r}, "
             f"reviews_root={self.reviews_root!r}, "
             f"state_db_path={self.state_db_path!r}, "
-            f"job_db_path={self.job_db_path!r})"
+            f"job_db_path={self.job_db_path!r}, "
+            f"webhook_enabled={self.webhook_enabled!r}, "
+            f"webhook_host={self.webhook_host!r}, "
+            f"webhook_port={self.webhook_port!r}, "
+            f"webhook_path={self.webhook_path!r}, "
+            f"webhook_secret_token='***')"
         )
 
     @classmethod
@@ -62,6 +73,11 @@ class Config:
         reviews_root: object,
         state_db_path: object,
         job_db_path: object,
+        webhook_enabled: object,
+        webhook_host: object,
+        webhook_port: object,
+        webhook_path: object,
+        webhook_secret_token: object,
     ) -> Config:
         """未検証の生値からConfigを組み立てる。不正な値があれば ConfigError をまとめて送出する。"""
         errors: list[str] = []
@@ -105,6 +121,29 @@ class Config:
         )
         clean_job_db_path = _require_nonempty_str(job_db_path, "job.db_path", errors)
 
+        clean_webhook_enabled = _require_bool(
+            webhook_enabled, "webhook.enabled", errors
+        )
+        clean_webhook_host = _require_nonempty_str(webhook_host, "webhook.host", errors)
+        clean_webhook_port = _require_positive_int(webhook_port, "webhook.port", errors)
+        clean_webhook_path = _require_nonempty_str(webhook_path, "webhook.path", errors)
+        if clean_webhook_path and not clean_webhook_path.startswith("/"):
+            errors.append('webhook.path は "/" から始まる必要があります')
+
+        # Secret TokenはGitLab PATと同じ理由でconfig.tomlではなく.env/環境変数経由で渡す
+        # (`config/loader.py`のGITLAB_AI_PLATFORM_WEBHOOK_SECRET)。webhook.enabled=falseの
+        # 場合は値が空でも構わない(Webhookサーバー自体を起動しないため)
+        clean_webhook_secret_token = (
+            webhook_secret_token.strip()
+            if isinstance(webhook_secret_token, str)
+            else ""
+        )
+        if clean_webhook_enabled and not clean_webhook_secret_token:
+            errors.append(
+                "webhook.enabled=true の場合、Secret Token"
+                "(.envのGITLAB_AI_PLATFORM_WEBHOOK_SECRET)が必要です"
+            )
+
         if errors:
             raise ConfigError("; ".join(errors))
 
@@ -120,6 +159,10 @@ class Config:
         assert clean_reviews_root is not None
         assert clean_state_db_path is not None
         assert clean_job_db_path is not None
+        assert clean_webhook_enabled is not None
+        assert clean_webhook_host is not None
+        assert clean_webhook_port is not None
+        assert clean_webhook_path is not None
 
         return cls(
             gitlab_url=clean_url.rstrip("/"),
@@ -135,6 +178,11 @@ class Config:
             reviews_root=clean_reviews_root,
             state_db_path=clean_state_db_path,
             job_db_path=clean_job_db_path,
+            webhook_enabled=clean_webhook_enabled,
+            webhook_host=clean_webhook_host,
+            webhook_port=clean_webhook_port,
+            webhook_path=clean_webhook_path,
+            webhook_secret_token=clean_webhook_secret_token,
         )
 
 
@@ -145,6 +193,13 @@ def _require_nonempty_str(
         errors.append(f"{field_name} は空でない文字列である必要があります")
         return None
     return value.strip()
+
+
+def _require_bool(value: object, field_name: str, errors: list[str]) -> bool | None:
+    if not isinstance(value, bool):
+        errors.append(f"{field_name} は真偽値である必要があります")
+        return None
+    return value
 
 
 def _require_positive_int(

@@ -12,6 +12,9 @@ from .models import Config
 # コミットされうる)には置かない
 GITLAB_TOKEN_ENV_KEY = "GITLAB_AI_PLATFORM_GITLAB_TOKEN"
 
+# Webhook Secret Token(M3-6, docs/adr/0018-webhook-receiver.md)も同じ理由で.env/環境変数経由
+GITLAB_WEBHOOK_SECRET_ENV_KEY = "GITLAB_AI_PLATFORM_WEBHOOK_SECRET"
+
 DEFAULT_CONFIG_PATH = Path("config.toml")
 DEFAULT_ENV_PATH = Path(".env")
 
@@ -25,6 +28,12 @@ DEFAULT_RUNNER_TIMEOUT_SECONDS = 1800
 DEFAULT_REVIEWS_ROOT = "reviews"
 DEFAULT_STATE_DB_PATH = "state.db"
 DEFAULT_JOB_DB_PATH = "job.db"
+DEFAULT_WEBHOOK_ENABLED = False
+# 既定は全インターフェース待受(社内GitLabサーバーからの到達性を優先)。有効化自体が
+# 既定OFFのオプション機能であり、有効化する運用者が`webhook.host`で明示的に絞り込める
+DEFAULT_WEBHOOK_HOST = "0.0.0.0"
+DEFAULT_WEBHOOK_PORT = 8088
+DEFAULT_WEBHOOK_PATH = "/webhook"
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -74,6 +83,7 @@ def load_config(
 
     env = _load_env(env_path)
     gitlab_token = env.get(GITLAB_TOKEN_ENV_KEY, "")
+    webhook_secret_token = env.get(GITLAB_WEBHOOK_SECRET_ENV_KEY, "")
 
     raw: dict = {}
     if config_path.is_file():
@@ -88,6 +98,7 @@ def load_config(
     reviews_section = raw.get("reviews", {})
     store_section = raw.get("store", {})
     job_section = raw.get("job", {})
+    webhook_section = raw.get("webhook", {})
 
     return Config.from_raw(
         gitlab_url=gitlab_section.get("url", ""),
@@ -109,4 +120,9 @@ def load_config(
         reviews_root=reviews_section.get("root", DEFAULT_REVIEWS_ROOT),
         state_db_path=store_section.get("db_path", DEFAULT_STATE_DB_PATH),
         job_db_path=job_section.get("db_path", DEFAULT_JOB_DB_PATH),
+        webhook_enabled=webhook_section.get("enabled", DEFAULT_WEBHOOK_ENABLED),
+        webhook_host=webhook_section.get("host", DEFAULT_WEBHOOK_HOST),
+        webhook_port=webhook_section.get("port", DEFAULT_WEBHOOK_PORT),
+        webhook_path=webhook_section.get("path", DEFAULT_WEBHOOK_PATH),
+        webhook_secret_token=webhook_secret_token,
     )

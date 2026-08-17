@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY, ConfigError, load_config
+from gitlab_ai_platform.config import (
+    GITLAB_TOKEN_ENV_KEY,
+    GITLAB_WEBHOOK_SECRET_ENV_KEY,
+    ConfigError,
+    load_config,
+)
 from gitlab_ai_platform.config.loader import parse_env_file
 
 VALID_CONFIG_TOML = """
@@ -33,6 +38,12 @@ db_path = "custom-state.db"
 
 [job]
 db_path = "custom-job.db"
+
+[webhook]
+enabled = true
+host = "127.0.0.1"
+port = 9090
+path = "/gitlab/webhook"
 """
 
 
@@ -69,7 +80,11 @@ def test_parse_env_file_returns_empty_dict_when_missing(tmp_path):
 
 def test_load_config_merges_config_file_and_env_file(tmp_path):
     config_path = _write(tmp_path / "config.toml", VALID_CONFIG_TOML)
-    env_path = _write(tmp_path / ".env", f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n")
+    env_path = _write(
+        tmp_path / ".env",
+        f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n"
+        f"{GITLAB_WEBHOOK_SECRET_ENV_KEY}=whsec-from-dotenv\n",
+    )
 
     config = load_config(config_path=config_path, env_path=env_path)
 
@@ -86,11 +101,20 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
     assert config.reviews_root == "custom-reviews"
     assert config.state_db_path == "custom-state.db"
     assert config.job_db_path == "custom-job.db"
+    assert config.webhook_enabled is True
+    assert config.webhook_host == "127.0.0.1"
+    assert config.webhook_port == 9090
+    assert config.webhook_path == "/gitlab/webhook"
+    assert config.webhook_secret_token == "whsec-from-dotenv"
 
 
 def test_load_config_prefers_real_env_var_over_dotenv_file(tmp_path, monkeypatch):
     config_path = _write(tmp_path / "config.toml", VALID_CONFIG_TOML)
-    env_path = _write(tmp_path / ".env", f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n")
+    env_path = _write(
+        tmp_path / ".env",
+        f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n"
+        f"{GITLAB_WEBHOOK_SECRET_ENV_KEY}=whsec-from-dotenv\n",
+    )
     monkeypatch.setenv(GITLAB_TOKEN_ENV_KEY, "from-real-env")
 
     config = load_config(config_path=config_path, env_path=env_path)
@@ -123,6 +147,11 @@ def test_load_config_applies_defaults_when_optional_sections_missing(
     assert config.reviews_root == "reviews"
     assert config.state_db_path == "state.db"
     assert config.job_db_path == "job.db"
+    assert config.webhook_enabled is False
+    assert config.webhook_host == "0.0.0.0"
+    assert config.webhook_port == 8088
+    assert config.webhook_path == "/webhook"
+    assert config.webhook_secret_token == ""
 
 
 def test_load_config_raises_without_leaking_token_when_other_fields_invalid(
@@ -160,3 +189,24 @@ def test_load_config_raises_when_config_file_missing(tmp_path, monkeypatch):
             config_path=tmp_path / "missing-config.toml",
             env_path=tmp_path / "missing.env",
         )
+
+
+def test_load_config_raises_when_webhook_enabled_without_secret_token(
+    tmp_path, monkeypatch
+):
+    config_path = _write(
+        tmp_path / "config.toml",
+        """
+        [gitlab]
+        url = "https://gitlab.example.com"
+        projects = ["group/project-a"]
+
+        [webhook]
+        enabled = true
+        """,
+    )
+    monkeypatch.setenv(GITLAB_TOKEN_ENV_KEY, "token")
+    monkeypatch.delenv(GITLAB_WEBHOOK_SECRET_ENV_KEY, raising=False)
+
+    with pytest.raises(ConfigError, match="Secret Token"):
+        load_config(config_path=config_path, env_path=tmp_path / "missing.env")
