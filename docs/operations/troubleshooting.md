@@ -59,14 +59,16 @@
 1. エラーメッセージに`401`/`403`相当の文言(GitLabのエラー本文)が含まれるか確認する
 2. 社内GitLabの `User Settings > Access Tokens` で新しいPATを発行する
    ([setup-windows.md §2](setup-windows.md#2-gitlab-personal-access-tokenpatの発行))。
-   スコープは用途に応じて`read_api`(読み取りのみ)または`api`(書き込みも含む)を選ぶ
+   `review`/`watch`サブコマンドは自動実行系用アカウント(`read_api`スコープの想定)を使う
+   経路のため、通常は同じ用途・スコープで再発行する
 3. `.env`の`GITLAB_AI_PLATFORM_GITLAB_TOKEN`を新しい値に更新する
    ([configuration.md](configuration.md)「シークレット」節)。OS環境変数で上書きしている
-   場合はそちらも更新する
+   場合はそちらも更新する。対話型GitLab Adapter MCP Serverが同様のエラーを返す場合は、
+   代わりに`GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`(未設定なら上記と同じ値)を確認・更新する
 4. 同じコマンドを再実行する
 
-トークンのスコープ設計・ローテーション方針そのものは
-[security.md §4.1](security.md#41-gitlab-pat)を参照。
+トークンのスコープ設計・アカウント分離・ローテーション方針そのものは
+[security.md §4.1](security.md#41-gitlab-pat)・[ADR-0019](../adr/0019-gitlab-token-scoping.md)を参照。
 
 ### 2.2 worktree破損・ディスク上限超過 — 終了コード`12`
 

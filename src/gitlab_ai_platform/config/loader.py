@@ -12,6 +12,11 @@ from .models import Config
 # コミットされうる)には置かない
 GITLAB_TOKEN_ENV_KEY = "GITLAB_AI_PLATFORM_GITLAB_TOKEN"
 
+# 対話型GitLab Adapter MCP Server専用のPAT(M3-8, docs/adr/0019-gitlab-token-scoping.md)。
+# 未設定の場合はGITLAB_AI_PLATFORM_GITLAB_TOKENにフォールバックする(後方互換。用途別トークンの
+# 分離は運用者が任意に導入できるオプションであり、必須ではない)
+GITLAB_MCP_TOKEN_ENV_KEY = "GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP"
+
 # Webhook Secret Token(M3-6, docs/adr/0018-webhook-receiver.md)も同じ理由で.env/環境変数経由
 GITLAB_WEBHOOK_SECRET_ENV_KEY = "GITLAB_AI_PLATFORM_WEBHOOK_SECRET"
 
@@ -83,6 +88,8 @@ def load_config(
 
     env = _load_env(env_path)
     gitlab_token = env.get(GITLAB_TOKEN_ENV_KEY, "")
+    # 未設定なら自動実行系と同じトークンにフォールバックする(Config.from_raw側で解決)
+    gitlab_token_mcp = env.get(GITLAB_MCP_TOKEN_ENV_KEY, "")
     webhook_secret_token = env.get(GITLAB_WEBHOOK_SECRET_ENV_KEY, "")
 
     raw: dict = {}
@@ -103,6 +110,7 @@ def load_config(
     return Config.from_raw(
         gitlab_url=gitlab_section.get("url", ""),
         gitlab_token=gitlab_token,
+        gitlab_token_mcp=gitlab_token_mcp,
         projects=gitlab_section.get("projects", []),
         poll_interval_seconds=poller_section.get(
             "interval_seconds", DEFAULT_POLL_INTERVAL_SECONDS

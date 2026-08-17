@@ -16,6 +16,9 @@ class ConfigError(ValueError):
 class Config:
     gitlab_url: str
     gitlab_token: str
+    # 対話型GitLab Adapter MCP Server専用のPAT(M3-8, docs/adr/0019-gitlab-token-scoping.md)。
+    # 用途別トークンを分けない運用では、from_rawがgitlab_tokenと同じ値にフォールバックする
+    gitlab_token_mcp: str
     projects: tuple[str, ...]
     poll_interval_seconds: int
     max_parallel: int
@@ -38,6 +41,7 @@ class Config:
         # 防ぐため、reprでマスクする
         return (
             f"Config(gitlab_url={self.gitlab_url!r}, gitlab_token='***', "
+            f"gitlab_token_mcp='***', "
             f"projects={self.projects!r}, "
             f"poll_interval_seconds={self.poll_interval_seconds!r}, "
             f"max_parallel={self.max_parallel!r}, "
@@ -62,6 +66,7 @@ class Config:
         *,
         gitlab_url: object,
         gitlab_token: object,
+        gitlab_token_mcp: object = "",
         projects: object,
         poll_interval_seconds: object,
         max_parallel: object,
@@ -94,6 +99,11 @@ class Config:
             errors.append(
                 "GitLab PAT が設定されていません(.env の GitLab トークン用の値を確認してください)"
             )
+
+        # MCP用PATは未設定を許容する(gitlab_tokenへフォールバックするため必須ではない)。
+        # 型が違う場合のみエラーにする
+        if not isinstance(gitlab_token_mcp, str):
+            errors.append("GitLab PAT(MCP用)は文字列である必要があります")
 
         clean_projects = _require_project_list(projects, errors)
         clean_interval = _require_positive_int(
@@ -149,6 +159,7 @@ class Config:
 
         assert clean_url is not None
         assert isinstance(gitlab_token, str)
+        assert isinstance(gitlab_token_mcp, str)
         assert clean_interval is not None
         assert clean_max_parallel is not None
         assert clean_label is not None
@@ -164,9 +175,14 @@ class Config:
         assert clean_webhook_port is not None
         assert clean_webhook_path is not None
 
+        # MCP用PATが未設定(空文字列)なら自動実行系と同じトークンにフォールバックする
+        # (用途別トークンの分離は運用者が任意に導入できるオプションであり必須ではない)
+        clean_gitlab_token_mcp = gitlab_token_mcp.strip() or gitlab_token.strip()
+
         return cls(
             gitlab_url=clean_url.rstrip("/"),
             gitlab_token=gitlab_token.strip(),
+            gitlab_token_mcp=clean_gitlab_token_mcp,
             projects=clean_projects,
             poll_interval_seconds=clean_interval,
             max_parallel=clean_max_parallel,

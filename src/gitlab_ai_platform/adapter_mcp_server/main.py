@@ -10,6 +10,10 @@
 - GitLab PAT等の認証情報は、既存の`config.load_config`(`.env`または実環境変数経由)を
   再利用して取得する。このモジュール自身がコマンドライン引数や環境変数を直接パースして
   認証情報を扱うことはしない(`config`層への一本化)。
+- この経路は`GitLabWriter`(書き込み)まで使う対話型経路のため、`config.gitlab_token`
+  (自動実行系向け、`read_api`スコープを推奨)ではなく`config.gitlab_token_mcp`
+  (`api`スコープが必要)を使う。用途別トークンを分けない運用では`config`層が
+  `config.gitlab_token`と同じ値へフォールバックする(M3-8, `docs/adr/0019-gitlab-token-scoping.md`)。
 """
 
 from __future__ import annotations
@@ -43,7 +47,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"設定エラー: {exc}", file=sys.stderr)
         return EXIT_CONFIG_ERROR
 
-    adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token)
+    # 対話型MCP用トークン(config.gitlab_token_mcp)を使う。用途別トークンを分けない運用では
+    # config層で自動実行系(config.gitlab_token)と同じ値にフォールバック済み
+    # (M3-8, docs/adr/0019-gitlab-token-scoping.md)
+    adapter = GitLabRestAdapter(config.gitlab_url, config.gitlab_token_mcp)
     # 起動時のカレントディレクトリのgit remoteから、project引数省略時のデフォルトを解決する
     # (#69)。解決できなくてもエラーにはせず、project未指定のツール呼び出し時にのみ失敗させる。
     default_project = resolve_default_project()

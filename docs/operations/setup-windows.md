@@ -69,23 +69,31 @@ State Store・Workspace Manager・Claude Code Runner・Review・MR Poller・CLI�
 
 ## 2. GitLab Personal Access Token(PAT)の発行
 
-参照: [spike-S2-gitlab-rest-api.md](../../references/spike-S2-gitlab-rest-api.md) §3。
+参照: [spike-S2-gitlab-rest-api.md](../../references/spike-S2-gitlab-rest-api.md) §3、
+アカウント・トークンスコープの設計は[ADR-0019](../adr/0019-gitlab-token-scoping.md)(M3-8)。
 
-1. 社内GitLabの `User Settings > Access Tokens` からPATを発行する。
-2. スコープは用途に応じて選ぶ:
-   - **MRの一覧・詳細・diff・コメント取得のみ(現時点のM1の範囲)**: `read_api` で足りる
-   - 将来MR作成・コメント投稿など書き込み操作(M2以降)が必要になったら `api` スコープに
-     切り替える。`api`は常に読み書き全体を含み、GitLab側のスコープだけでは
-     「コメントは許可するがmergeは禁止」のような細かい制御はできない点に注意
-     (書き込み操作の許可制御はAdapter層のコードで機構的に絞り込む設計になっている)
+**推奨構成は、用途別に2つのAI用GitLabアカウント・PATを用意すること**
+([security.md §4.1](security.md)):
+
+| 用途 | ロール | PATスコープ | `.env`のキー |
+|---|---|---|---|
+| 自動実行系(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行) | Reporter | `read_api` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN` |
+| 対話型GitLab Adapter MCP Server | Developer | `api` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`(省略可。未設定なら上記にフォールバック) |
+
+1. 社内GitLabの `User Settings > Access Tokens` から、用途ごとのアカウントでPATを発行する
+   (対話型MCPを使わない最小構成なら、自動実行系用の1トークンのみでも動作する。
+   その場合`GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`は未設定のままでよい)。
+2. スコープは上表の通り選ぶ。`api`は常に読み書き全体を含み、GitLab側のスコープだけでは
+   「コメントは許可するがmergeは禁止」のような細かい制御はできない点に注意
+   (書き込み操作の許可制御はAdapter層のコードで機構的に絞り込む設計になっている)。
 3. 発行したトークンの値はこの時にしか表示されない。安全な場所に控える
    (Gitに含めない、Slack等に平文で貼らない)。
-4. 可能であればAI用GitLabアカウントのロールをMaintainer未満(Developer等)に
-   留めておくと、Adapter層の制御をすり抜けた場合でもGitLab側でmergeが拒否される
-   二重の防御になる。
+4. AI用GitLabアカウントのロールは上表の通り、必要以上に強くしない。特に自動実行系用
+   アカウントをReporterに留めておくと、PATスコープの設定を誤った場合でもGitLab側で
+   書き込みAPIそのものが拒否される二重の防御になる。
 
-トークン自体の運用ルール(禁止/許可操作、ローテーション等)は
-[docs/operations/security.md](security.md)を参照(未着手の場合はスコープ外)。
+トークン自体の運用ルール(禁止/許可操作、棚卸し、ローテーション、漏洩時の対応等)は
+[docs/operations/security.md](security.md)を参照。
 
 ## 3. Claude Code CLI と Amazon Bedrock認証の設定
 
@@ -161,14 +169,16 @@ setx ANTHROPIC_DEFAULT_SONNET_MODEL <固定したいモデルのバージョン�
 ### .env
 
 リポジトリルートに`.env`を作成し、GitLab PATを書く(キー名は
-`config/loader.py`の`GITLAB_TOKEN_ENV_KEY`と一致させる必要がある):
+`config/loader.py`の`GITLAB_TOKEN_ENV_KEY`/`GITLAB_MCP_TOKEN_ENV_KEY`と一致させる必要がある):
 
 ```text
-GITLAB_AI_PLATFORM_GITLAB_TOKEN=<発行したPAT>
+GITLAB_AI_PLATFORM_GITLAB_TOKEN=<自動実行系用に発行したPAT>
+# 対話型GitLab Adapter MCP Serverを使う場合のみ(省略時は上記にフォールバック)
+GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP=<対話型MCP用に発行したPAT>
 ```
 
-`.env`から読み込まれるのはこのキーのみ(§3.2の注意点を参照)。`.env`が存在しない場合は
-空として扱われ、実際の環境変数(`setx`等で設定済みのもの)で上書きされる
+`.env`から読み込まれるのはGitLab PAT関連のキーのみ(§3.2の注意点を参照)。`.env`が存在しない
+場合は空として扱われ、実際の環境変数(`setx`等で設定済みのもの)で上書きされる
 (`config/loader.py`の`_load_env`)。CI・本番実行では環境変数を、ローカル開発では`.env`を
 使う想定。
 
@@ -263,6 +273,7 @@ Review=14, State Store=15, 中断=130)。詳細なトラブルシューティン
 ## 関連ドキュメント
 
 - [docs/adr/0001-repository-structure.md](../adr/0001-repository-structure.md) — Python環境構築方針の決定
+- [docs/adr/0019-gitlab-token-scoping.md](../adr/0019-gitlab-token-scoping.md) — AI用GitLabアカウント・トークンスコープの設計
 - [docs/specs/cli.md](../specs/cli.md) — CLI(`review`サブコマンド)の仕様
 - [docs/operations/configuration.md](configuration.md) — 設定リファレンス(未着手の場合はスコープ外)
 - [references/spike-S2-gitlab-rest-api.md](../../references/spike-S2-gitlab-rest-api.md) — PATスコープの調査

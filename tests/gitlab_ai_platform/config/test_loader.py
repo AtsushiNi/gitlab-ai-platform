@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from gitlab_ai_platform.config import (
+    GITLAB_MCP_TOKEN_ENV_KEY,
     GITLAB_TOKEN_ENV_KEY,
     GITLAB_WEBHOOK_SECRET_ENV_KEY,
     ConfigError,
@@ -83,6 +84,7 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
     env_path = _write(
         tmp_path / ".env",
         f"{GITLAB_TOKEN_ENV_KEY}=from-dotenv\n"
+        f"{GITLAB_MCP_TOKEN_ENV_KEY}=mcp-from-dotenv\n"
         f"{GITLAB_WEBHOOK_SECRET_ENV_KEY}=whsec-from-dotenv\n",
     )
 
@@ -90,6 +92,7 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
 
     assert config.gitlab_url == "https://gitlab.example.com"
     assert config.gitlab_token == "from-dotenv"
+    assert config.gitlab_token_mcp == "mcp-from-dotenv"
     assert config.projects == ("group/project-a", "group/project-b")
     assert config.poll_interval_seconds == 30
     assert config.max_parallel == 3
@@ -120,6 +123,23 @@ def test_load_config_prefers_real_env_var_over_dotenv_file(tmp_path, monkeypatch
     config = load_config(config_path=config_path, env_path=env_path)
 
     assert config.gitlab_token == "from-real-env"
+
+
+def test_load_config_falls_back_mcp_token_to_gitlab_token_when_unset(
+    tmp_path, monkeypatch
+):
+    config_path = _write(tmp_path / "config.toml", VALID_CONFIG_TOML)
+    env_path = _write(
+        tmp_path / ".env",
+        f"{GITLAB_TOKEN_ENV_KEY}=only-review-token\n"
+        f"{GITLAB_WEBHOOK_SECRET_ENV_KEY}=whsec-from-dotenv\n",
+    )
+    monkeypatch.delenv(GITLAB_MCP_TOKEN_ENV_KEY, raising=False)
+
+    config = load_config(config_path=config_path, env_path=env_path)
+
+    assert config.gitlab_token == "only-review-token"
+    assert config.gitlab_token_mcp == "only-review-token"
 
 
 def test_load_config_applies_defaults_when_optional_sections_missing(
