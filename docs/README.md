@@ -58,6 +58,8 @@
 - [specs/job-model.md](specs/job-model.md) — Job抽象・状態機械(M3-1)の仕様。既存レビュー処理を
   `review`種別のJobとして再構成する経路、取得の排他・可視性タイムアウト・リトライ・
   デッドレター(M3-2)を含む
+- [specs/webhook-receiver.md](specs/webhook-receiver.md) — Webhook受信対応(M3-6、任意有効化)の
+  仕様。MR Pollerと共存し、二重起票防止ロジック(`ticket_if_unprocessed`)を共有する
 
 ## 更新ルール
 

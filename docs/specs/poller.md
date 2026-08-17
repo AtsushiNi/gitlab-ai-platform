@@ -35,8 +35,11 @@
   - レビューの実行(Workspace Manager準備→Claude Code Runner起動→Review解析)はしない。
     「起票する」とはState Storeにレコードを作成することのみを指す。実行のトリガーは
     M1-12(E2E結線)で後続処理として追加される
-  - Webhookは当面採用しない(MVP時点)。走査対象プロジェクトはPoller構築時に渡された
-    一覧固定で、実行中の動的な追加/削除は扱わない
+  - 走査対象プロジェクトはPoller構築時に渡された一覧固定で、実行中の動的な追加/削除は
+    扱わない。Webhook受信(M3-6、[specs/webhook-receiver.md](webhook-receiver.md)、
+    [ADR-0018](../adr/0018-webhook-receiver.md))は本コンポーネントとは別に任意有効化される
+    追加の検出経路であり、二重起票防止ロジック(`ticket_if_unprocessed`、後述)のみを共有する。
+    MR一覧のGitLab API走査自体はPollerだけの責務のまま
   - プロセスのgraceful shutdown(シグナルハンドリング)・多重起動防止はしない。
     `run`は`stop_event`(`threading.Event`)を受け取って停止するだけで、シグナルの
     登録自体はCLI(M1-10/11)の責務([ADR-0007](../adr/0007-mr-poller-design.md))
@@ -86,6 +89,24 @@ class MrPoller:
         実行中のサイクル完了後に停止する。`on_detected`を渡すと、そのサイクルで新たに
         起票された`DetectedReview`ごと(`result.created`の順)に呼ぶ(M1-11、
         `ADR-0009`)。`on_detected`が送出する例外は`run`の外へそのまま伝播する。"""
+```
+
+`ticket_if_unprocessed`はM3-6([ADR-0018](../adr/0018-webhook-receiver.md))で
+`MrPoller._ticket_if_unprocessed`から切り出したモジュール関数。`MrPoller.poll_once`と
+Webhook受信サーバー(`webhook/server.py`)の両方から呼ばれる、二重起票防止(State Storeの
+`find`→`create`ダンス)の唯一の実装:
+
+```python
+from gitlab_ai_platform.poller import DetectedReview, PollError, ticket_if_unprocessed
+from gitlab_ai_platform.store import StateStore
+
+
+def ticket_if_unprocessed(
+    store: StateStore, project: str, mr_iid: int, commit_sha: str
+) -> DetectedReview | PollError | None:
+    """`(project, mr_iid, commit_sha)`が未処理ならState Storeに起票し、`DetectedReview`を返す。
+    既に起票済みなら`None`。`DuplicateReviewError`以外の`StateStoreError`が発生した場合は
+    `PollError`を返す(例外は送出しない)。"""
 ```
 
 ## 入出力スキーマ
@@ -158,6 +179,9 @@ Poller構築前に検知する。
   - `on_detected`を渡すと、そのサイクルで新たに起票された`DetectedReview`ごとに
     呼ばれること。省略時は呼び出されないだけで例外にならないこと。`on_detected`が
     送出した例外が`run`の外へそのまま伝播すること
+  - M3-6: `ticket_if_unprocessed`を`MrPoller`経由ではなく直接呼び出し、上表の戻り値
+    (`DetectedReview`/`None`/`PollError`)の契約それ自体を検証する(Webhook受信サーバーが
+    同じ契約に依存するため)
 
 ## 関連ドキュメント
 
@@ -169,4 +193,7 @@ Poller構築前に検知する。
 - [review-output.md](review-output.md) — 再レビュー時の指摘突き合わせ(修正済み/未対応/新規、
   M2-2, #81)。新規push自体の検出はこのPollerの既存ロジックが担う
 - [ADR-0014: 再レビュー時の指摘マッチング方式](../adr/0014-re-review-finding-matching.md)
+- [webhook-receiver.md](webhook-receiver.md) — `ticket_if_unprocessed`を共有するWebhook受信
+  サーバー(M3-6)の仕様
+- [ADR-0018: Webhook 受信対応(任意有効化)の設計](../adr/0018-webhook-receiver.md)
 - ソースコード: `src/gitlab_ai_platform/poller/`(`poller.py` / `types.py` / `__init__.py`)

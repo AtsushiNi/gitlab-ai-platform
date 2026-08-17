@@ -34,6 +34,7 @@
 | キー | 既定値 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN` | なし | 必須 | GitLab REST API認証(`PRIVATE-TOKEN`ヘッダ、`gitlab_adapter/rest.py`)、およびgit clone/fetch時のcredential helper経由のPAT供給(`cli/single_run.py`の`_build_workspace_manager`)に使う |
+| `GITLAB_AI_PLATFORM_WEBHOOK_SECRET` | なし | `webhook.enabled=true`の場合のみ必須 | Webhook受信サーバー(M3-6、[specs/webhook-receiver.md](../specs/webhook-receiver.md))がGitLab Webhookの`X-Gitlab-Token`ヘッダと突き合わせるSecret Token。GitLab側のWebhook設定画面の「Secret token」に同じ値を設定する |
 
 ## `config.toml`
 
@@ -92,6 +93,28 @@
 |---|---|---|---|---|
 | `db_path` | `"job.db"` | str | 省略可 | `SqliteJobRepository`のDBファイルパス(M3-1)。`review`種別のJobのライフサイクル(`PENDING`/`RUNNING`/`WAITING_HUMAN`/`DONE`/`FAILED`)を保持する。State Store(`[store]`)とは別のDBファイル([specs/job-model.md](../specs/job-model.md)) |
 
+### `[webhook]`
+
+M3-6([specs/webhook-receiver.md](../specs/webhook-receiver.md)、[ADR-0018](../adr/0018-webhook-receiver.md))。
+`watch`サブコマンド内で任意有効化されるWebhook受信サーバーの設定。**MR Pollerを置き換えない**
+(`enabled=false`が既定で、Pollerのみの従来動作のまま)。
+
+| キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
+|---|---|---|---|---|
+| `enabled` | `false` | bool | 省略可 | `true`にすると`watch`サブコマンドがWebhookサーバーを背景スレッドで起動する。`true`の場合、`.env`の`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`が必須になる |
+| `host` | `"0.0.0.0"` | str | 省略可 | Webhookサーバーの待受アドレス。社内ネットワーク外に晒さないよう、必要に応じて`127.0.0.1`やリバースプロキシ経由に限定するアドレスへ変更する |
+| `port` | `8088` | int(正の整数) | 省略可 | Webhookサーバーの待受ポート |
+| `path` | `"/webhook"` | str(`/`始まり) | 省略可 | GitLab側のWebhook URL(`http(s)://<host>:<port><path>`)に設定するパス |
+
+GitLab側の設定手順(対象プロジェクトの「Settings > Webhooks」):
+
+1. URL: `http(s)://<このプロセスが動くホスト>:<port><path>`(既定なら`http://<host>:8088/webhook`)
+2. Secret token: `.env`の`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`と同じ値
+3. Trigger: **Merge request events** のみを有効化する(Push eventsは不要。
+   [ADR-0018](../adr/0018-webhook-receiver.md)「扱うイベントはMerge Request Hookのみ」)
+4. SSL verification: TLS終端の有無に応じて設定(本サーバー自体はHTTPのみを話す。
+   TLSが必要な場合はリバースプロキシを前段に置く)
+
 ## `config.toml`の例
 
 ```toml
@@ -122,15 +145,24 @@ db_path = "state.db"
 
 [job]
 db_path = "job.db"
+
+[webhook]
+enabled = false
+host = "0.0.0.0"
+port = 8088
+path = "/webhook"
 ```
 
 上記はすべて既定値と同じ値のため、実運用では`[gitlab]`の`url`/`projects`(既定値が無く必須)
-以外は省略してよい。
+以外は省略してよい。`webhook.enabled = true`にする場合は`.env`に
+`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`の設定も必要になる。
 
 ## `.env`の例
 
 ```text
 GITLAB_AI_PLATFORM_GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+# webhook.enabled = true にする場合のみ必要(GitLab側Webhook設定のSecret tokenと同じ値)
+GITLAB_AI_PLATFORM_WEBHOOK_SECRET=whsec-xxxxxxxxxxxxxxxxxxxx
 ```
 
 雛形は`.env.example`(リポジトリ直下)を参照。レビュー用途(読み取りのみ)なら`read_api`
