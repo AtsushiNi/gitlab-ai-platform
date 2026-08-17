@@ -13,6 +13,10 @@ def test_exit_codes_are_unique():
         exit_codes.EXIT_RUNNER_ERROR,
         exit_codes.EXIT_REVIEW_ERROR,
         exit_codes.EXIT_STATE_STORE_ERROR,
+        exit_codes.EXIT_ALREADY_RUNNING,
+        exit_codes.EXIT_CLAUDE_NOT_FOUND,
+        # M3-3(#93, docs/adr/0022-runner-process-separation.md): workerサブコマンド専用
+        exit_codes.EXIT_JOB_ERROR,
         exit_codes.EXIT_INTERRUPTED,
     ]
 
