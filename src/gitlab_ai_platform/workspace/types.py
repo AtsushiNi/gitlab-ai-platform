@@ -26,4 +26,25 @@ class WorktreeHandle:
     sha: str
 
 
-__all__ = ["WorktreeHandle"]
+@dataclass(frozen=True)
+class IssueWorktreeHandle:
+    """Issue単位のworktree1つを表す(M4-8、ADR-0031)。
+
+    `WorktreeHandle`(MR単位)と対になる型。フィールド名を`mr_iid`のまま使い回すと
+    「MRのIID」という意味が実態と食い違うため、`issue_iid`という別名を持つ専用の型として
+    分離した(ADR-0029が指摘した、GitLabのMR/Issueは採番が独立した名前空間であるため
+    数値が偶然一致しうるという問題を、型レベルでも混同しないようにするため)。
+
+    `path`/`branch`/`sha`の意味は`WorktreeHandle`と同じ。`branch`は`issue-<iid>`という
+    ローカルbranch名になり、`mr-<iid>`とは名前空間が完全に分離される
+    (`git_workspace.py`の`_issue_branch_name`参照)。
+    """
+
+    project: str
+    issue_iid: int
+    path: Path
+    branch: str
+    sha: str
+
+
+__all__ = ["IssueWorktreeHandle", "WorktreeHandle"]

@@ -6,12 +6,13 @@ from __future__ import annotations
 from .errors import DiskLimitExceededError, GitCommandError, WorkspaceError
 from .git_workspace import GitWorkspaceManager
 from .protocol import WorkspaceManager
-from .types import WorktreeHandle
+from .types import IssueWorktreeHandle, WorktreeHandle
 
 __all__ = [
     "DiskLimitExceededError",
     "GitCommandError",
     "GitWorkspaceManager",
+    "IssueWorktreeHandle",
     "WorkspaceError",
     "WorkspaceManager",
     "WorktreeHandle",

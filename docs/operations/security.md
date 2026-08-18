@@ -32,7 +32,7 @@ Issue/MRの状態遷移)は**メソッド自体を実装しない/引数自体�
 
 ## 2. AIに許可する操作・禁止する操作
 
-### 2.1 読み取り操作(`GitLabReader`、7メソッド)— 全許可
+### 2.1 読み取り操作(`GitLabReader`、8メソッド)— 全許可
 
 `read_api`スコープのPATのみで動作する想定([`gitlab_adapter/protocol.py`](../../src/gitlab_ai_platform/gitlab_adapter/protocol.py))。
 
@@ -45,12 +45,13 @@ Issue/MRの状態遷移)は**メソッド自体を実装しない/引数自体�
 | `list_merge_request_discussions` | MRコメント(スレッド単位)取得 |
 | `list_issues` | Issue一覧取得(ラベル・state絞り込み可) |
 | `get_issue` | Issue詳細取得 |
+| `get_default_branch` | プロジェクトのdefault branch名取得(M4-8、ADR-0032) |
 
 ### 2.2 書き込み操作(`GitLabWriter`、7メソッド)— 許可リストのみ
 
 | メソッド | 内容 | 備考 |
 |---|---|---|
-| `create_branch` | `ref`を起点にbranch作成 | |
+| `create_branch` | `ref`を起点にbranch作成 | M4-8(実装フェーズ)がdefault branchを起点に実装用branchを作成する際に使用(§3.3)。実装フェーズが呼ぶ書き込みメソッドはこれのみで、`push_file_changes`は呼ばない(M4-9のスコープ) |
 | `push_file_changes` | branchへファイル変更をコミットしてpush | 対象branchがprotectedの場合は`ProtectedBranchError`で拒否(§3.1) |
 | `create_merge_request` | MR作成 | |
 | `create_merge_request_comment` | MRへのコメント投稿 | |
@@ -103,8 +104,9 @@ Issue/MRの状態遷移)は**メソッド自体を実装しない/引数自体�
 GitLab Adapterの許可リストを透過するだけの層という設計。
 
 - [`tools.py`](../../src/gitlab_ai_platform/adapter_mcp_server/tools.py)の`TOOL_FACTORIES`は、
-  `GitLabAdapter`(読み取り7+書き込み7=14メソッド)と1メソッド=1ツールで完全に対応する
-  対応表。merge等はAdapter自体にメソッドが存在しないため、この対応表にも追加しようがない
+  `GitLabAdapter`(読み取り8+書き込み7=15メソッド、M4-8で`get_default_branch`を追加)と
+  1メソッド=1ツールで完全に対応する対応表。merge等はAdapter自体にメソッドが存在しないため、
+  この対応表にも追加しようがない
 - [`server.py`](../../src/gitlab_ai_platform/adapter_mcp_server/server.py)の
   `ALLOWED_TOOL_NAMES = frozenset(TOOL_FACTORIES)`がMCPサーバーに登録するツール名の全集合
 - 未登録のツール名(`merge`等)を呼び出すと、MCP Python SDK側で「未知のツール」として
@@ -113,7 +115,7 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
   `GitLabRestAdapter`がコンストラクタで受け取った時点で内部化されており、
   `tools.py`/`server.py`はAdapterのメソッド呼び出しを仲介するだけ
 - テストで以下を担保:
-  - `ALLOWED_TOOL_NAMES`が現時点の14メソッドという決め打ち集合と完全一致
+  - `ALLOWED_TOOL_NAMES`が現時点の15メソッドという決め打ち集合と完全一致
   - `ALLOWED_TOOL_NAMES`が`GitLabReader`/`GitLabWriter`のProtocol由来の集合と完全一致
     (Adapter側にメソッドが増えた場合、このテストが先に落ちて追従漏れに気づける)
   - merge・branch削除等の禁止操作名を`call_tool`で呼び出すと`ToolError`になる
@@ -144,6 +146,77 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
   (`docs/guide/getting-started.md`「何をしないか」も参照。同ページは書き込みメソッド数が
   M2-10追加前の「4メソッド」のままだが、レビューパイプラインが書き込み系を一切呼ばないという
   結論自体は現状も変わらない)
+- `issue-analysis`/`design`/`plan`(M4-3〜M4-7)も`run_prompt`を使うが、いずれも`allowed_tools`を
+  指定せずに呼び出しており(空タプル)、実際のファイル編集・シェルコマンド実行の権限は
+  与えられていない(読み取り・分析結果のJSON出力のみ)。
+
+### 3.4 実装フェーズ(`implement/`)— このリポジトリで初めてEdit/Write/Bashを許可する経路
+
+実装フェーズ(M4-8 [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114)、
+[ADR-0033](../adr/0033-implement-phase.md)、
+[specs/implement-phase.md](../specs/implement-phase.md))は、無人実行パイプラインの中で
+初めてClaude Codeに実際のファイル編集・シェルコマンド実行の権限を与えるフェーズである。
+これまでの§3.3の「読み取り専用の経路」という前提がこのフェーズには当てはまらないため、
+権限設計・多層防御の構成を独立した節として記録する。
+
+**権限設定**(`cli/dispatcher.py`の`build_implement_handler`が`run_prompt`に渡す値):
+
+| 設定 | 値 | 意図 |
+|---|---|---|
+| `allowed_tools` | `("Edit", "Write", "Bash")` | 実装・テスト実行に必要な最小限の権限。これより絞る余地は無い |
+| `disallowed_tools` | `("Bash(git push:*)",)` | `git push`を明示的に禁止する。**Adapter層の「メソッドとして存在しない」という構造的な保証とは強さが異なる**多層防御の1つ(下記参照) |
+| `permission_mode` | `"acceptEdits"` | headless実行のためEdit/Write系ツールの確認を自動承認する。`--dangerously-skip-permissions`相当の全許可モード(`"bypassPermissions"`)は使わない(既存方針、ADR-0005) |
+
+**実際のGitLabへの書き込み(push)が発生しないことの3層の担保**(ADR-0033):
+
+1. **Workspace Manager**([`workspace/git_workspace.py`](../../src/gitlab_ai_platform/workspace/git_workspace.py)):
+   `git clone`/`git fetch`/`git worktree`/`git reset --hard`のみを実装しており、`git push`は
+   どこにも実装していない(`grep -n "push" src/gitlab_ai_platform/workspace/git_workspace.py`は
+   何もヒットしない)
+2. **実装フェーズのJobHandler**([`cli/dispatcher.py`](../../src/gitlab_ai_platform/cli/dispatcher.py)の
+   `build_implement_handler`): `GitLabWriter`のうち`create_branch`(branch作成)のみを呼び出す。
+   `push_file_changes`(Commits API経由のファイル変更コミット)は一切呼び出さない(M4-9のスコープ)
+3. **認証情報のスコープ・ロール**(§4.1): 自動実行系用のGitLab PAT
+   (`GITLAB_AI_PLATFORM_GITLAB_TOKEN`)は`read_api`スコープかつアカウントロールがReporterの
+   ままである(実装フェーズもこのトークンを使う。対話型MCP用のDeveloperロール・`api`スコープの
+   トークンとは別)。仮にBash経由で`git push`相当の操作が試みられても、GitLab側のスコープ・
+   ロールの両方で拒否される。加えて`GitWorkspaceManager`の`git_config`(credential.helper)は
+   Workspace Manager自身のgit呼び出しにのみ`-c`引数として渡され、worktreeの`.git/config`には
+   永続化されない(=Claude CodeがBash経由で素の`git push`を叩いても、認証情報がworktree内に
+   残っていないため、そもそも認証できず失敗する可能性が高い)
+
+**残存リスクと運用上の注意(このフェーズで新たに生じる考慮事項)**:
+
+- `Bash`を許可している以上、`disallowed_tools`の`Bash(git push:*)`パターンは
+  Claude Codeの協力的な振る舞いを前提とした一段の防御であり、Adapter層のように
+  「そもそも呼び出しようがない」という構造的な保証ではない。実効的な安全性は上記3層のうち
+  2・3(JobHandlerが`push_file_changes`を呼ばないこと、認証情報のスコープ・ロール)に
+  最終的に依存している
+- `SubprocessClaudeCodeRunner`は`claude`プロセスの環境変数として`os.environ`(Pythonプロセス
+  自身の環境)をそのまま引き継ぐ(§4.2参照)。`Bash`が許可されたことで、Claude Codeがこの
+  環境変数を`env`コマンド等で読み取ることが技術的に可能になる。影響を受けうる値:
+  - **AWS/Bedrock認証情報**(`AWS_ACCESS_KEY_ID`等、§4.2): これらは元々OS環境変数として
+    Runnerプロセスに渡される設計であり、本フェーズに限らず`claude`プロセスの環境には常に
+    存在する。ただし`Bash`が許可されたのは本フェーズが初めてであり、実質的に読み取り可能に
+    なったのは本フェーズからである。**Bedrockの認証情報は`bedrock:InvokeModel`相当の
+    最小権限に絞ることを強く推奨する**(IAMポリシー側の対処。このリポジトリのコード側では
+    スコープを絞れない)
+  - **自動実行系用GitLab PAT**(`GITLAB_AI_PLATFORM_GITLAB_TOKEN`): `config/loader.py`は
+    `.env`ファイルと実際にexportされたOS環境変数のどちらからでも読み込める(§4.1)。
+    `.env`ファイルのみに書いた場合、この値は`os.environ`(Runnerプロセスの実際の環境変数)
+    には現れない(`GitWorkspaceManager`はこの値を`config.gitlab_token`から明示的に
+    `token_env`として自身のgit呼び出しにのみ注入しており、プロセス全体の環境変数を
+    汚染しない)。**一方、この値を実際にOS環境変数としてexportする運用を選んだ場合、
+    本フェーズ以降はClaude Codeからも読み取り可能になる**。このリスクを避けるため、
+    実装フェーズを実行する`worker`プロセスについては、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`を
+    `.env`ファイル経由で供給する運用を推奨する(OS環境変数へのexportは不要。
+    [operations/configuration.md](configuration.md)参照)
+  - 上記いずれの場合も、漏洩した場合の影響は自動実行系用アカウントの権限
+    (`read_api`スコープ、Reporterロール)に留まる。対話型MCP用の`api`スコープ・Developer
+    ロールのトークン(§4.1)はこの経路には一切登場しない
+- 将来的な追加の緩和策として、実装フェーズをコンテナ/サンドボックス環境で実行する
+  ([operations/docker-runtime.md](docker-runtime.md)の実行環境をこのフェーズ専用に
+  強化する等)ことが考えられるが、本Issue(M4-8)のスコープ外とし、今後の課題として残す
 
 ## 4. トークン・シークレットの管理
 
@@ -262,9 +335,13 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 - [ADR-0005: Claude Code Runner設計](../adr/0005-claude-code-runner-design.md) — `--dangerously-skip-permissions`を提供しない方針
 - [ADR-0010: GitLab Adapter MCP Serverの設計](../adr/0010-gitlab-mcp-tool-bridge.md) — 「新しい権限を一切追加しない」ことの担保表
 - [ADR-0019: AI用GitLabアカウントとトークンスコープの設計](../adr/0019-gitlab-token-scoping.md) — アカウント分離・用途別トークン・棚卸し・漏洩時対応
+- [ADR-0031: Workspace ManagerのIssue単位worktree対応](../adr/0031-issue-workspace.md)
+- [ADR-0032: GitLab Adapterへのdefault branch取得メソッドの追加](../adr/0032-default-branch-lookup.md)
+- [ADR-0033: 実装フェーズ(Job種別`implement`)の設計](../adr/0033-implement-phase.md) — 本ドキュメント§3.4の元になった、Edit/Write/Bash権限付与とgit push禁止の多層防御設計
 - [specs/gitlab-adapter.md](../specs/gitlab-adapter.md)
 - [specs/adapter-mcp-server.md](../specs/adapter-mcp-server.md)
 - [specs/claude-code-runner.md](../specs/claude-code-runner.md)
+- [specs/implement-phase.md](../specs/implement-phase.md) — §3.4で扱う実装フェーズの仕様
 - [operations/configuration.md](configuration.md) — シークレット関連の設定項目一覧
 - [operations/setup-windows.md](setup-windows.md) — PAT発行手順・Bedrock認証設定手順
 - [guide/getting-started.md](../guide/getting-started.md) 「何をしないか」節

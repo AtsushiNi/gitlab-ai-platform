@@ -87,6 +87,16 @@ class GitLabReader(Protocol):
         """Issueの詳細を取得する。"""
         ...
 
+    def get_default_branch(self, project: str) -> str:
+        """プロジェクトのdefault branch名を取得する(M4-8 [#114], ADR-0032)。
+
+        `GitLabWriter.create_branch`の`ref`引数に渡すbranch起点を、呼び出し側が
+        決め打ちせず解決できるようにするための読み取り専用メソッド。プロジェクト情報
+        (`GET /projects/:id`)から`default_branch`フィールドのみを取り出す最小限の追加で、
+        `Project`のような包括的な型は導入しない(ADR-0032「却下した選択肢」)。
+        """
+        ...
+
 
 @runtime_checkable
 class GitLabWriter(Protocol):

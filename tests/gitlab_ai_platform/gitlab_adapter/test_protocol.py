@@ -62,6 +62,7 @@ def test_gitlab_writer_does_not_expose_forbidden_operations():
 
 
 def test_gitlab_reader_exposes_read_operations():
+    # M4-8(#114, ADR-0032)で`get_default_branch`を追加した(既存7メソッドは変更しない)
     assert _public_methods(GitLabReader) == {
         "get_version",
         "list_merge_requests",
@@ -70,6 +71,7 @@ def test_gitlab_reader_exposes_read_operations():
         "list_merge_request_discussions",
         "list_issues",
         "get_issue",
+        "get_default_branch",
     }
 
 
@@ -121,6 +123,9 @@ class _FakeFullAdapter:
             state="opened",
             author="alice",
         )
+
+    def get_default_branch(self, project: str) -> str:
+        return "main"
 
     def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:
         return Branch(name=branch_name, commit_sha="abc123", protected=False)
@@ -204,6 +209,9 @@ class _FakeReaderOnly:
 
     def get_issue(self, project: str, issue_iid: int) -> Issue:
         raise NotImplementedError
+
+    def get_default_branch(self, project: str) -> str:
+        return "main"
 
 
 def test_full_fake_satisfies_gitlab_adapter_protocol():

@@ -138,6 +138,12 @@ class GitLabRestAdapter:
         )
         return _map_issue(project, data)
 
+    def get_default_branch(self, project: str) -> str:
+        # `GET /projects/:id`のレスポンス全体のうち`default_branch`フィールドのみ使う
+        # (M4-8, ADR-0032)。読み取り専用のため`_record_write`監査ログの対象外
+        data = self._request_json("GET", f"/projects/{_encode_project(project)}")
+        return _require(data, "default_branch")
+
     # -- GitLabWriter --------------------------------------------------------
     # 許可リスト(ADR-0002、M2-10で拡充)にある7操作のみを実装する。merge・branch削除・
     # 管理操作、およびIssue/MRの状態遷移(close/reopen等)は意図的にメソッドとして追加しない。

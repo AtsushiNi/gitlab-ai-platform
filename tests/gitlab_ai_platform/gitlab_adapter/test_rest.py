@@ -88,6 +88,7 @@ _ALLOWED_PUBLIC_OPERATIONS = {
     "list_merge_request_discussions",
     "list_issues",
     "get_issue",
+    "get_default_branch",
     "create_branch",
     "push_file_changes",
     "create_merge_request",
@@ -450,6 +451,30 @@ def test_get_issue():
     assert session.calls[0]["url"] == (
         f"{_BASE_URL}/api/v4/projects/group%2Fproject/issues/5"
     )
+
+
+def test_get_default_branch():
+    adapter, session = _adapter(
+        [
+            _FakeResponse(
+                json_data={"id": 1, "default_branch": "main", "name": "project"}
+            )
+        ]
+    )
+
+    default_branch = adapter.get_default_branch("group/project")
+
+    assert default_branch == "main"
+    assert session.calls[0]["url"] == f"{_BASE_URL}/api/v4/projects/group%2Fproject"
+    assert session.calls[0]["method"] == "GET"
+
+
+def test_get_default_branch_raises_when_field_missing():
+    # GitLab APIが2xxを返しても`default_branch`が欠けていれば失敗として扱う(_require)
+    adapter, _ = _adapter([_FakeResponse(json_data={"id": 1, "name": "project"})])
+
+    with pytest.raises(GitLabApiError):
+        adapter.get_default_branch("group/project")
 
 
 def test_create_issue():

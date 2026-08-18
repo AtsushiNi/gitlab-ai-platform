@@ -3,9 +3,12 @@
 - 実装場所: `src/gitlab_ai_platform/runner/`
 - 対応Issue: [#35](https://github.com/AtsushiNi/gitlab-ai-platform/issues/35) (M1-7)、
   [#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108) (M4-2、Issue向け正規化を追記)、
-  [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3、`run_prompt`を追記)
+  [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3、`run_prompt`を追記)、
+  [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8、実際のworktree +
+  Edit/Write/Bash権限での利用例を追記)
 - 関連ADR: [ADR-0005](../adr/0005-claude-code-runner-design.md)、
-  [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)
+  [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)、
+  [ADR-0033](../adr/0033-implement-phase.md)
 - ステータス: 実装済み(Protocol定義 + subprocess実装 + Issue向け正規化 + `run_prompt`)
 
 ## 責務
@@ -224,10 +227,18 @@ def run_prompt(
 実行ログの保存先は`log_dir`配下に`<log_key>/<timestamp>.json`(`run`の
 `<log_key>/mr-<iid>/<sha先頭12桁>-<timestamp>.json`と異なり、ファイル名にprefixを持たない)。
 
-`issue-analysis`のJobHandlerはWorkspace Manager(worktree)を使わず、Job処理の間だけ存在する
-一時ディレクトリ(`tempfile.TemporaryDirectory`)を`worktree_path`として`run_prompt`に渡す
-(要求分析はIssue本文の読解のみを対象とし、リポジトリ探索を必要としない設計のため、
-ADR-0027「決定」参照)。
+`issue-analysis`/`design`/`plan`のJobHandlerはWorkspace Manager(worktree)を使わず、Job処理の
+間だけ存在する一時ディレクトリ(`tempfile.TemporaryDirectory`)を`worktree_path`として
+`run_prompt`に渡す(いずれもリポジトリ探索を必要としない設計のため、ADR-0027/0029/0030参照)。
+
+`implement`(M4-8、ADR-0033)は、パイプラインの中で初めて`worktree_path`に**実際の**
+worktree(`Workspace Manager.prepare_for_issue`が返すパス、ADR-0031)を渡し、
+`allowed_tools=("Edit", "Write", "Bash")`でファイル編集・シェルコマンド実行を許可する。
+Runner自身のインターフェース・実装(`run_prompt`のシグネチャ、`_execute`本体)は一切変更
+していない。「`worktree_path`という引数名は変更しない。実際には空の一時ディレクトリで
+あることは利用者側の事情であり、Runner自身は引数で渡されたディレクトリをcwdにして
+subprocessを起動する契約以上のことを知らない」というADR-0027の設計判断が、そのまま
+実際のworktreeを渡すユースケースにも対応できたことになる。
 
 ## エラー時の振る舞い
 

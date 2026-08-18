@@ -293,6 +293,110 @@ def test_collect_garbage_skips_project_whose_lock_is_held_elsewhere(
     assert not handle_b.path.exists()
 
 
+# -- Issue単位のworktree(M4-8, ADR-0031) --------------------------------------
+
+
+def test_prepare_for_issue_creates_worktree_checked_out_at_ref(tmp_path, origin_repo):
+    manager = _manager(tmp_path, origin_repo)
+
+    handle = manager.prepare_for_issue("group/project", 7, "main")
+
+    assert handle.path.exists()
+    assert (handle.path / "README.md").exists()
+    assert handle.sha == origin_repo.main_sha
+    assert handle.branch == "issue-7"
+    assert handle.issue_iid == 7
+    # bare cloneはprepare(MR)と共有する(project単位で1つ)
+    assert (tmp_path / "workspace" / "repos" / "group%2Fproject.git").exists()
+
+
+def test_prepare_for_issue_does_not_collide_with_mr_worktree_of_same_iid(
+    tmp_path, origin_repo
+):
+    # ADR-0029が指摘した衝突リスクの回帰テスト: GitLabではMR/IssueのIID採番は独立した
+    # 名前空間のため、同じ数値(この場合1)が偶然一致してもworktree/ローカルbranchが
+    # 物理的に別ディレクトリ・別名前空間になり、互いを破壊しないことを確認する
+    manager = _manager(tmp_path, origin_repo)
+
+    mr_handle = manager.prepare("group/project", 1, "main")
+    issue_handle = manager.prepare_for_issue("group/project", 1, "feature-a")
+
+    assert mr_handle.path != issue_handle.path
+    assert mr_handle.branch != issue_handle.branch
+    assert mr_handle.path.exists()
+    assert issue_handle.path.exists()
+    # 互いのcheckout内容が独立していることも確認する(main vs feature-a)
+    assert not (mr_handle.path / "feature.txt").exists()
+    assert (issue_handle.path / "feature.txt").exists()
+
+    # issue用worktreeへの操作(reset --hard含む)がMR用worktreeを壊していないことを確認する
+    manager.prepare_for_issue("group/project", 1, "main")
+    assert (mr_handle.path / "README.md").exists()
+    assert not (mr_handle.path / "feature.txt").exists()
+    assert not (issue_handle.path / "feature.txt").exists()
+
+
+def test_prepare_for_issue_updates_existing_worktree_to_new_commit(
+    tmp_path, origin_repo
+):
+    manager = _manager(tmp_path, origin_repo)
+    manager.prepare_for_issue("group/project", 7, "feature-a")
+
+    run_git("checkout", "feature-a", cwd=origin_repo.path)
+    (origin_repo.path / "feature.txt").write_text("first\nsecond\nthird\n")
+    run_git("add", "feature.txt", cwd=origin_repo.path)
+    run_git("commit", "-m", "feature commit 3", cwd=origin_repo.path)
+    new_sha = run_git("rev-parse", "HEAD", cwd=origin_repo.path).stdout.strip()
+    run_git("checkout", "main", cwd=origin_repo.path)
+
+    handle = manager.prepare_for_issue("group/project", 7, "feature-a")
+
+    assert handle.sha == new_sha
+    assert (handle.path / "feature.txt").read_text() == "first\nsecond\nthird\n"
+
+
+def test_discard_for_issue_removes_worktree_directory(tmp_path, origin_repo):
+    manager = _manager(tmp_path, origin_repo)
+    handle = manager.prepare_for_issue("group/project", 7, "main")
+
+    manager.discard_for_issue("group/project", 7)
+
+    assert not handle.path.exists()
+
+
+def test_discard_for_issue_is_idempotent_for_unknown_issue(tmp_path, origin_repo):
+    manager = _manager(tmp_path, origin_repo)
+
+    manager.discard_for_issue("group/project", 999)  # 例外を送出しないこと
+
+
+def test_discard_for_issue_does_not_remove_mr_worktree_of_same_iid(
+    tmp_path, origin_repo
+):
+    manager = _manager(tmp_path, origin_repo)
+    mr_handle = manager.prepare("group/project", 1, "main")
+    manager.prepare_for_issue("group/project", 1, "feature-a")
+
+    manager.discard_for_issue("group/project", 1)
+
+    assert mr_handle.path.exists()
+
+
+def test_collect_garbage_does_not_evict_issue_worktrees(tmp_path, origin_repo):
+    # M4-8時点ではGCはmr-prefixのworktreeのみを対象とする(ADR-0031「今後の課題」)。
+    # issue用worktreeが上限超過の解消に使われず、そのまま残ることを確認する
+    manager = _manager(tmp_path, origin_repo, max_disk_bytes=10**9)
+    issue_handle = manager.prepare_for_issue("group/project", 1, "main")
+    now = time.time()
+    os.utime(issue_handle.path, (now - 1000, now - 1000))  # 十分に古くしておく
+
+    gc_manager = _manager(tmp_path, origin_repo, max_disk_bytes=0)
+    removed = gc_manager.collect_garbage()
+
+    assert removed == []
+    assert issue_handle.path.exists()
+
+
 # -- スラッグ変換(_slugify_project/_deslugify_project) -----------------------------
 
 

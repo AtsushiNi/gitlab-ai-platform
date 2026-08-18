@@ -14,6 +14,7 @@ from gitlab_ai_platform.cli.dispatcher import (
     RunnerDispatcher,
     WaitingForHumanError,
     build_design_handler,
+    build_implement_handler,
     build_issue_analysis_handler,
     build_job_handlers,
     build_plan_handler,
@@ -23,19 +24,24 @@ from gitlab_ai_platform.cli.dispatcher import (
 )
 from gitlab_ai_platform.config import Config
 from gitlab_ai_platform.design.job import build_design_job_payload
+from gitlab_ai_platform.gitlab_adapter.errors import GitLabApiError
 from gitlab_ai_platform.gitlab_adapter.types import (
+    Branch,
     Discussion,
     Issue,
     MergeRequest,
     MergeRequestDiff,
 )
+from gitlab_ai_platform.implement.errors import ImplementationNotCommittedError
+from gitlab_ai_platform.implement.git_ops import WorktreeState
+from gitlab_ai_platform.implement.job import build_implement_job_payload
 from gitlab_ai_platform.job.errors import LeaseLostError
 from gitlab_ai_platform.job.protocol import Job, JobStatus, JobType
 from gitlab_ai_platform.plan.job import build_plan_job_payload
 from gitlab_ai_platform.poller.issue_poller import build_issue_analysis_job_payload
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.store import ReviewStatus, SqliteStateStore
-from gitlab_ai_platform.workspace import WorktreeHandle
+from gitlab_ai_platform.workspace import IssueWorktreeHandle, WorktreeHandle
 
 _PROJECT = "group/project"
 _MR_IID = 1
@@ -97,13 +103,22 @@ def _job(**overrides) -> Job:
 
 
 class _FakeGitLabReader:
-    """`GitLabReader`を満たすテスト用フェイク(固定のMR/Issueを1件だけ返す)。"""
+    """`GitLabReader`(+ `implement`が使う`get_default_branch`/`create_branch`)を満たす
+    テスト用フェイク(固定のMR/Issueを1件だけ返す)。"""
 
     def __init__(
-        self, merge_request: MergeRequest | None = None, issue: Issue | None = None
+        self,
+        merge_request: MergeRequest | None = None,
+        issue: Issue | None = None,
+        *,
+        default_branch: str = "main",
+        create_branch_error: GitLabApiError | None = None,
     ) -> None:
         self._merge_request = merge_request
         self._issue = issue
+        self._default_branch = default_branch
+        self._create_branch_error = create_branch_error
+        self.create_branch_calls: list[tuple[str, str, str]] = []
 
     def get_version(self) -> str:
         raise NotImplementedError
@@ -139,11 +154,22 @@ class _FakeGitLabReader:
         assert self._issue is not None
         return self._issue
 
+    def get_default_branch(self, project: str) -> str:
+        return self._default_branch
+
+    def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:
+        self.create_branch_calls.append((project, branch_name, ref))
+        if self._create_branch_error is not None:
+            raise self._create_branch_error
+        return Branch(name=branch_name, commit_sha="branch-head-sha", protected=False)
+
 
 class _FakeWorkspaceManager:
     def __init__(self, worktree_path: Path) -> None:
         self._worktree_path = worktree_path
         self.prepare_calls: list[tuple[str, int, str]] = []
+        self.prepare_for_issue_calls: list[tuple[str, int, str]] = []
+        self.discard_for_issue_calls: list[tuple[str, int]] = []
 
     def prepare(self, project: str, mr_iid: int, ref: str) -> WorktreeHandle:
         self.prepare_calls.append((project, mr_iid, ref))
@@ -160,6 +186,37 @@ class _FakeWorkspaceManager:
 
     def collect_garbage(self) -> list[WorktreeHandle]:
         return []
+
+    def prepare_for_issue(
+        self, project: str, issue_iid: int, ref: str
+    ) -> IssueWorktreeHandle:
+        self.prepare_for_issue_calls.append((project, issue_iid, ref))
+        return IssueWorktreeHandle(
+            project=project,
+            issue_iid=issue_iid,
+            path=self._worktree_path,
+            branch=f"issue-{issue_iid}",
+            sha="worktree-initial-sha",
+        )
+
+    def discard_for_issue(self, project: str, issue_iid: int) -> None:
+        self.discard_for_issue_calls.append((project, issue_iid))
+
+
+class _FakeWorktreeStateReader:
+    """`read_worktree_state`の代わりに`build_implement_handler`へ注入するテスト用フェイク。
+
+    実行前(1回目の呼び出し)・実行後(2回目の呼び出し)で異なる`WorktreeState`を返せるよう、
+    あらかじめ用意したリストを順番に返す(実gitには繋がない)。
+    """
+
+    def __init__(self, states: list[WorktreeState]) -> None:
+        self._states = list(states)
+        self.calls: list[Path] = []
+
+    def __call__(self, worktree_path: Path) -> WorktreeState:
+        self.calls.append(worktree_path)
+        return self._states.pop(0)
 
 
 class _FakeClaudeCodeRunner:
@@ -178,6 +235,7 @@ class _FakeClaudeCodeRunner:
         self._result_kind = result_kind
         self.run_calls: list[tuple[str, int]] = []
         self.run_prompt_calls: list[tuple[Path, str, str]] = []
+        self.run_prompt_kwargs: list[dict] = []
 
     def run(
         self,
@@ -222,6 +280,13 @@ class _FakeClaudeCodeRunner:
         permission_mode=None,
     ) -> RunResult:
         self.run_prompt_calls.append((worktree_path, prompt, log_key))
+        self.run_prompt_kwargs.append(
+            {
+                "allowed_tools": allowed_tools,
+                "disallowed_tools": disallowed_tools,
+                "permission_mode": permission_mode,
+            }
+        )
         if self._result_kind == "design":
             payload = {
                 "design_document": "# 責務\n設計文書の本文です。",
@@ -231,6 +296,13 @@ class _FakeClaudeCodeRunner:
             payload = {
                 "plan_document": "# 概要\n実装計画の本文です。",
                 "tasks": [{"title": "タスク1", "description": "内容1"}],
+                "open_questions": self._open_questions,
+            }
+        elif self._result_kind == "implement":
+            payload = {
+                "summary": "タスク1を実装しテストが通りました。",
+                "commit_message": "タスク1を実装",
+                "tests_passed": True,
                 "open_questions": self._open_questions,
             }
         else:
@@ -356,9 +428,7 @@ def test_build_review_handler_runs_execute_review_and_returns_result_dict(tmp_pa
         store.close()
 
 
-def test_build_job_handlers_registers_review_issue_analysis_design_and_plan_types(
-    tmp_path,
-):
+def test_build_job_handlers_registers_all_five_job_types(tmp_path):
     config = _config(tmp_path)
     adapter = _FakeGitLabReader(_merge_request(), _issue())
     worktree_path = tmp_path / "worktree"
@@ -369,12 +439,14 @@ def test_build_job_handlers_registers_review_issue_analysis_design_and_plan_type
 
     try:
         handlers = build_job_handlers(adapter, workspace, runner, store, config)
-        # M4-7時点で実際にRunnerが処理できるのはreview/issue-analysis/design/plan(ADR-0016)
+        # M4-8時点で実際にRunnerが処理できるのはreview/issue-analysis/design/plan/implement
+        # (ADR-0016で予約済みの4種+plan、ADR-0030)
         assert set(handlers) == {
             JobType.REVIEW,
             JobType.ISSUE_ANALYSIS,
             JobType.DESIGN,
             JobType.PLAN,
+            JobType.IMPLEMENT,
         }
     finally:
         store.close()
@@ -680,6 +752,289 @@ def test_build_plan_handler_completes_when_only_minor_question(tmp_path):
             "assumption": "1コミット相当の粒度とした",
         }
     ]
+
+
+# --- build_implement_handler ---
+
+
+def _implement_job(**overrides) -> Job:
+    now = datetime(2026, 8, 16, 12, 0, 0, tzinfo=UTC)
+    kwargs = dict(
+        id="job-implement-1",
+        job_type=JobType.IMPLEMENT,
+        status=JobStatus.RUNNING,
+        payload=build_implement_job_payload(
+            _PROJECT,
+            _ISSUE_IID,
+            {
+                "plan_document": "# 概要\n実装計画の本文です。",
+                "tasks": [{"title": "タスク1", "description": "内容1"}],
+                "assumed_uncertainties": [],
+            },
+        ),
+        result=None,
+        error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    kwargs.update(overrides)
+    return Job(**kwargs)
+
+
+def _committed_states() -> list[WorktreeState]:
+    # 実行前後でHEAD shaが変化する(=commitされた)状態を模擬する
+    return [
+        WorktreeState(head_sha="before-sha", is_clean=True),
+        WorktreeState(head_sha="after-sha", is_clean=True),
+    ]
+
+
+def test_build_implement_handler_returns_result_dict_when_commit_detected(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="implement")
+    state_reader = _FakeWorktreeStateReader(_committed_states())
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+    job = _implement_job()
+
+    result = handler(job)
+
+    assert result["project"] == _PROJECT
+    assert result["issue_iid"] == _ISSUE_IID
+    assert result["summary"] == "タスク1を実装しテストが通りました。"
+    assert result["commit_message"] == "タスク1を実装"
+    assert result["commit_sha"] == "after-sha"
+    assert result["remote_branch"] == f"ai/issue-{_ISSUE_IID}"
+    assert result["local_branch"] == f"issue-{_ISSUE_IID}"
+    assert result["assumed_uncertainties"] == []
+    assert result["questions"] == []
+
+
+def test_build_implement_handler_creates_remote_branch_from_default_branch(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue(), default_branch="develop")
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="implement")
+    state_reader = _FakeWorktreeStateReader(_committed_states())
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+    handler(_implement_job())
+
+    assert adapter.create_branch_calls == [
+        (_PROJECT, f"ai/issue-{_ISSUE_IID}", "develop")
+    ]
+    assert workspace.prepare_for_issue_calls == [
+        (_PROJECT, _ISSUE_IID, f"ai/issue-{_ISSUE_IID}")
+    ]
+
+
+def test_build_implement_handler_tolerates_branch_already_existing(tmp_path):
+    # retry等でbranchが既に存在する場合(GitLab APIの400)は続行する
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(
+        issue=_issue(),
+        create_branch_error=GitLabApiError("already exists", status_code=400),
+    )
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="implement")
+    state_reader = _FakeWorktreeStateReader(_committed_states())
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+
+    result = handler(_implement_job())
+
+    assert result["commit_sha"] == "after-sha"
+
+
+def test_build_implement_handler_reraises_non_conflict_gitlab_errors(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(
+        issue=_issue(),
+        create_branch_error=GitLabApiError("server error", status_code=500),
+    )
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="implement")
+
+    handler = build_implement_handler(adapter, workspace, runner, config)
+
+    with pytest.raises(GitLabApiError):
+        handler(_implement_job())
+
+
+def test_build_implement_handler_raises_when_head_sha_unchanged(tmp_path):
+    # テストが通らない/commitされなかった場合の扱い(ADR-0033): HEAD shaが変化しないまま
+    # 終了した場合はImplementationNotCommittedErrorを送出し、Job Queueの既存retry機構に乗せる
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[],
+        result_kind="implement",
+    )
+    state_reader = _FakeWorktreeStateReader(
+        [
+            WorktreeState(head_sha="same-sha", is_clean=True),
+            WorktreeState(head_sha="same-sha", is_clean=True),
+        ]
+    )
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+
+    with pytest.raises(ImplementationNotCommittedError):
+        handler(_implement_job())
+
+
+def test_build_implement_handler_raises_when_worktree_left_dirty(tmp_path):
+    # HEADが進んでいても、未commitの差分が残っている(=commit漏れがある)場合も失敗として扱う
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="implement")
+    state_reader = _FakeWorktreeStateReader(
+        [
+            WorktreeState(head_sha="before-sha", is_clean=True),
+            WorktreeState(head_sha="after-sha", is_clean=False),
+        ]
+    )
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+
+    with pytest.raises(ImplementationNotCommittedError):
+        handler(_implement_job())
+
+
+def test_build_implement_handler_raises_waiting_for_human_when_critical_question(
+    tmp_path,
+):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {"question": "既存の命名規則に従いますか?", "severity": "critical"},
+        ],
+        result_kind="implement",
+    )
+    state_reader = _FakeWorktreeStateReader(_committed_states())
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+
+    with pytest.raises(WaitingForHumanError) as excinfo:
+        handler(_implement_job())
+
+    assert excinfo.value.result["questions"] == [
+        {"question": "既存の命名規則に従いますか?", "severity": "critical"}
+    ]
+    # 不明点があっても、commit自体は既にされている前提でcommit_shaを結果に残す
+    assert excinfo.value.result["commit_sha"] == "after-sha"
+
+
+def test_build_implement_handler_completes_when_only_minor_question(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {
+                "question": "エラーハンドリングの粒度は?",
+                "severity": "minor",
+                "assumption": "既存の例外型をそのまま再送出した",
+            },
+        ],
+        result_kind="implement",
+    )
+    state_reader = _FakeWorktreeStateReader(_committed_states())
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+
+    result = handler(_implement_job())
+
+    assert result["questions"] == []
+    assert result["assumed_uncertainties"] == [
+        {
+            "question": "エラーハンドリングの粒度は?",
+            "severity": "minor",
+            "assumption": "既存の例外型をそのまま再送出した",
+        }
+    ]
+
+
+def test_build_implement_handler_grants_edit_write_bash_and_blocks_git_push(tmp_path):
+    # M4-8: このリポジトリで初めてEdit/Write/Bashを許可する。git pushは明示的に禁止する
+    # (docs/operations/security.md参照)
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="implement")
+    state_reader = _FakeWorktreeStateReader(_committed_states())
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+    handler(_implement_job())
+
+    assert len(runner.run_prompt_kwargs) == 1
+    kwargs = runner.run_prompt_kwargs[0]
+    assert set(kwargs["allowed_tools"]) == {"Edit", "Write", "Bash"}
+    assert any("git push" in t for t in kwargs["disallowed_tools"])
+    # --dangerously-skip-permissions相当の全許可モードは使わない(ADR-0005)
+    assert kwargs["permission_mode"] != "bypassPermissions"
+
+
+def test_build_implement_handler_does_not_discard_worktree_on_success(tmp_path):
+    # 実装成功時はローカルcommitをM4-9(push)が参照できるようdiscard_for_issueを呼ばない
+    # (ADR-0033)
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="implement")
+    state_reader = _FakeWorktreeStateReader(_committed_states())
+
+    handler = build_implement_handler(
+        adapter, workspace, runner, config, read_worktree_state=state_reader
+    )
+    handler(_implement_job())
+
+    assert workspace.discard_for_issue_calls == []
 
 
 # --- RunnerDispatcher.run_once ---

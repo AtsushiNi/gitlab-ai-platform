@@ -190,6 +190,19 @@ def _make_get_issue(
     return get_issue
 
 
+def _make_get_default_branch(
+    adapter: GitLabAdapter, default_project: str | None = None
+) -> Callable[..., Any]:
+    def get_default_branch(project: str | None = None) -> str:
+        """プロジェクトのdefault branch名を取得する(M4-8, ADR-0032)。projectを省略した場合、
+        MCPサーバー起動時のカレントディレクトリのgit remoteから自動検出したデフォルト
+        プロジェクトを使う。"""
+        resolved_project = _resolve_project(project, default_project)
+        return adapter.get_default_branch(resolved_project)
+
+    return get_default_branch
+
+
 # -- GitLabWriter (書き込み7メソッド。ADR-0002の許可リストのみ) -------------------
 
 
@@ -343,7 +356,7 @@ def _make_update_issue(
 
 
 # `GitLabAdapter`(Protocol)のメソッド名 → ツールファクトリ、の対応表。
-# キーの集合は、`GitLabReader`(7) + `GitLabWriter`(7) = 14メソッドの許可リストと
+# キーの集合は、`GitLabReader`(8) + `GitLabWriter`(7) = 15メソッドの許可リストと
 # 完全一致する(`tests/gitlab_ai_platform/adapter_mcp_server/test_server.py`で検証)。
 TOOL_FACTORIES: dict[str, ToolFactory] = {
     # -- 読み取り --
@@ -354,6 +367,7 @@ TOOL_FACTORIES: dict[str, ToolFactory] = {
     "list_merge_request_discussions": _make_list_merge_request_discussions,
     "list_issues": _make_list_issues,
     "get_issue": _make_get_issue,
+    "get_default_branch": _make_get_default_branch,
     # -- 書き込み(ADR-0002の許可リストのみ) --
     "create_branch": _make_create_branch,
     "push_file_changes": _make_push_file_changes,
@@ -382,6 +396,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "list_issues": f"指定プロジェクトのIssue一覧を取得する。{_PROJECT_OMISSION_NOTE}",
     "get_issue": f"Issueの詳細を取得する。{_PROJECT_OMISSION_NOTE}",
+    "get_default_branch": f"プロジェクトのdefault branch名を取得する。{_PROJECT_OMISSION_NOTE}",
     "create_branch": f"refを起点に新しいbranchを作成する。{_PROJECT_OMISSION_NOTE}",
     "push_file_changes": (
         "branchにファイル変更のコミットをpushし、新しいcommit shaを返す。"

@@ -2,9 +2,11 @@
 
 - 実装場所: `src/gitlab_ai_platform/workspace/`
 - 対応Issue: [#34](https://github.com/AtsushiNi/gitlab-ai-platform/issues/34) (M1-6)、
-  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、並列アクセスの排他制御)
+  [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、並列アクセスの排他制御)、
+  [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8、Issue単位worktree対応)
 - 関連ADR: [ADR-0004](../adr/0004-workspace-manager-design.md)、
-  [ADR-0015](../adr/0015-parallel-review-execution.md)
+  [ADR-0015](../adr/0015-parallel-review-execution.md)、
+  [ADR-0031](../adr/0031-issue-workspace.md)(Issue単位worktreeの追加)
 - ステータス: 実装済み(Protocol定義 + git実装)
 
 ## 責務
@@ -61,7 +63,7 @@
 ```python
 from typing import Protocol, runtime_checkable
 
-from .types import WorktreeHandle
+from .types import IssueWorktreeHandle, WorktreeHandle
 
 
 @runtime_checkable
@@ -75,7 +77,20 @@ class WorkspaceManager(Protocol):
         ...
 
     def collect_garbage(self) -> list[WorktreeHandle]:
-        """ディスク上限を超えている場合、最終利用時刻が古いworktreeから破棄する。"""
+        """ディスク上限を超えている場合、最終利用時刻が古いworktreeから破棄する。
+        MR単位のworktree(`mr-<iid>`)のみが対象で、Issue単位のworktreeは対象外(ADR-0031)。"""
+        ...
+
+    def prepare_for_issue(
+        self, project: str, issue_iid: int, ref: str
+    ) -> IssueWorktreeHandle:
+        """指定Issueのworktreeを用意する(M4-8、ADR-0031)。`prepare`と同じ内部機構を使うが、
+        `issue-<iid>`という別名前空間のパス・ローカルbranch名を使い、`mr-<iid>`とは
+        物理的に衝突しない。"""
+        ...
+
+    def discard_for_issue(self, project: str, issue_iid: int) -> None:
+        """指定Issueのworktreeを破棄する(M4-8、ADR-0031)。`discard`と同じく冪等。"""
         ...
 ```
 
@@ -107,18 +122,22 @@ GitWorkspaceManager(
 | 型 | フィールド | 補足 |
 |---|---|---|
 | `WorktreeHandle` (frozen dataclass) | `project: str`, `mr_iid: int`, `path: Path`, `branch: str`, `sha: str` | `path`はチェックアウト済みの作業ディレクトリ(Claude Code Runnerがこの配下でheadless実行する)。`sha`は`path`で実際にcheckout済みのcommit |
+| `IssueWorktreeHandle` (frozen dataclass) | `project: str`, `issue_iid: int`, `path: Path`, `branch: str`, `sha: str` | `WorktreeHandle`のIssue版(M4-8、ADR-0031)。フィールドの意味は`WorktreeHandle`と同じで、`mr_iid`の代わりに`issue_iid`を持つ専用の型 |
 
 ディレクトリ構成(`root`配下):
 
 ```text
 repos/<slug>.git             # プロジェクト単位のbare clone
 worktrees/<slug>/mr-<iid>/   # MR単位のworktree
+worktrees/<slug>/issue-<iid>/ # Issue単位のworktree(M4-8, ADR-0031)
 ```
 
 `slug`はproject名をパーセントエンコーディング(`urllib.parse.quote`)したもの
 (単純な`/`→`__`置換は単射でなく別プロジェクトと衝突しうるため不採用。詳細はADR-0004)。
-worktreeのローカルbranch名は`mr-<iid>`
+worktreeのローカルbranch名は`mr-<iid>`(MR単位)/`issue-<iid>`(Issue単位)
 (ソースbranch名はディレクトリ名・branch名に含めない。[ADR-0004](../adr/0004-workspace-manager-design.md)参照)。
+`mr-<iid>`と`issue-<iid>`は名前空間が完全に分離されているため、MRとIssueのIIDが数値として
+偶然一致してもworktree・ローカルbranchが衝突しない([ADR-0031](../adr/0031-issue-workspace.md))。
 
 ## エラー時の振る舞い
 
@@ -142,8 +161,9 @@ worktreeのローカルbranch名は`mr-<iid>`
 - `test_errors.py`: `GitCommandError`/`DiskLimitExceededError`が`WorkspaceError`の
   サブクラスであることを検証する
 - `test_protocol.py`: `WorkspaceManager`の公開メソッド集合が`prepare`/`discard`/
-  `collect_garbage`と完全一致することを検証する。Protocolを満たすダミー実装に対して
-  `isinstance(impl, WorkspaceManager)`が`True`になることも検証する
+  `collect_garbage`/`prepare_for_issue`/`discard_for_issue`(M4-8, ADR-0031)と完全一致する
+  ことを検証する。Protocolを満たすダミー実装に対して`isinstance(impl, WorkspaceManager)`が
+  `True`になることも検証する
 - `test_git_workspace.py`: `GitWorkspaceManager`を実際のgitコマンドで検証する。実サービス
   (社内GitLab)には繋がず、`tmp_path`配下に作った通常のリポジトリ(non-bare)を「origin」代わりに
   使う(CLAUDE.mdのテスト方針)。以下を検証する:
@@ -169,6 +189,10 @@ worktreeのローカルbranch名は`mr-<iid>`
     される)ことを、git呼び出しの同時実行数を計測して検証する
   - (M2-1) `collect_garbage`が、ロックを保持中(操作中)のprojectをブロッキング待ちせず
     スキップし、次点の候補を退避すること(デッドロック回避設計の回帰テスト)
+  - (M4-8, ADR-0031) `prepare_for_issue`が`mr-<iid>`とは別の`issue-<iid>`worktree・ローカル
+    branchを作成すること、**MRとIssueのIIDが同じ数値でも互いのworktreeを破壊しないこと**
+    (`reset --hard`を含む操作の回帰テスト)、`discard_for_issue`が同じIID値のMR worktreeを
+    削除しないこと、`collect_garbage`が現時点でissue用worktreeを退避対象にしないことを検証する
 
 ## 関連ドキュメント
 
@@ -176,6 +200,9 @@ worktreeのローカルbranch名は`mr-<iid>`
 - [ADR-0004: Workspace Manager の設計](../adr/0004-workspace-manager-design.md)
 - [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
   project単位ロックの設計判断・却下した選択肢
+- [ADR-0031: Workspace ManagerのIssue単位worktree対応](../adr/0031-issue-workspace.md) —
+  `prepare_for_issue`/`discard_for_issue`の設計判断・却下した選択肢
 - `references/spike-S3-git-worktree-windows.md` — fetch戦略・パス長制限に関する検証結果
+- [specs/implement-phase.md](implement-phase.md) — `prepare_for_issue`の呼び出し元(M4-8)
 - ソースコード: `src/gitlab_ai_platform/workspace/`
   (`protocol.py` / `types.py` / `errors.py` / `git_workspace.py` / `__init__.py`)

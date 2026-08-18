@@ -47,7 +47,7 @@ Issueに無人実行ラベルが付いた場合(M4-1、Issue Poller)にのみ実
     ところまでで、実際のコミットは行わない(ADR-0030「決定」)
   - タスクの実際の実装。タスク一覧を生成するところまでが本フェーズの責務で、各タスクを
     元にbranch作成・実装・テスト実行・commitを行うのはM4-8(実装フェーズ、Job種別
-    `implement`、未実装)の責務
+    `implement`、[specs/implement-phase.md](implement-phase.md)参照)の責務
   - `WAITING_HUMAN`への実際の状態遷移(`JobRepository.wait_for_human`の呼び出し)・
     `WAITING_HUMAN`からの再開(`update_status`呼び出し)。本パッケージは`Job.result`の構造
     (`build_plan_job_result`/`build_resolved_plan_job_result`)を組み立てるところまでで、
@@ -240,9 +240,8 @@ result(`build_plan_job_result`が組み立てる。`complete`・`wait_for_human`
   (`ASSUME`判定)の場合は通常通り結果を返すことを検証する。`build_job_handlers`が
   `JobType.PLAN`を登録することも検証する
 - `cli/test_respond.py`: `plan`種別の`WAITING_HUMAN`Jobに対して`respond_to_job`/`run_respond`
-  が`build_resolved_plan_job_result`を使って正しく`DONE`まで遷移すること、`plan`以外の
-  未対応種別(`implement`)を指定すると引き続き`InvalidJobTransitionError`を送出することを
-  検証する
+  が`build_resolved_plan_job_result`を使って正しく`DONE`まで遷移することを検証する
+  (`implement`種別の対応はM4-8、[specs/implement-phase.md](implement-phase.md)参照)
 
 ## 関連ドキュメント
 

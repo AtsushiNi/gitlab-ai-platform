@@ -10,13 +10,22 @@
   「MR単位のworktreeを用意する/破棄する」という2操作に見せる。bare cloneの存在・更新は
   実装内部の詳細として隠す。
 - git操作以外(ビルド・テスト実行など)はしない(`docs/architecture.md`の境界)。
+
+M4-8([#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114)、ADR-0031)で、
+Issue単位のworktreeを扱う`prepare_for_issue`/`discard_for_issue`を追加した。既存の
+`prepare`/`discard`(MR単位、シグネチャ・挙動とも変更しない)とは別の名前空間
+(`issue-<iid>`、`mr-<iid>`とは完全に分離)を使う専用メソッドとして追加する形にし、
+ADR-0029が指摘した「MRとIssueのIID採番が独立しているため、同じ`mr_iid`引数に
+Issue IIDを流用すると数値が偶然一致した際にworktreeを`reset --hard`で破損させる」
+という衝突リスクを構造的に解消する(ADR-0026/0027と同じ「既存メソッドは変更せず
+新メソッドを追加する」方針)。
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .types import WorktreeHandle
+from .types import IssueWorktreeHandle, WorktreeHandle
 
 
 @runtime_checkable
@@ -44,6 +53,30 @@ class WorkspaceManager(Protocol):
         """ディスク上限を超えている場合、最終利用時刻が古いworktreeから破棄する。
 
         破棄したworktreeの一覧(破棄直前の状態)を返す。上限以下であれば何もせず空リストを返す。
+        MR単位のworktree(`mr-<iid>`)のみを対象とする。Issue単位のworktree
+        (`prepare_for_issue`が作成するもの)はこのGCの対象に含まれない(ADR-0031「今後の課題」)。
+        """
+        ...
+
+    def prepare_for_issue(
+        self, project: str, issue_iid: int, ref: str
+    ) -> IssueWorktreeHandle:
+        """指定Issueのworktreeを用意する(M4-8、ADR-0031)。
+
+        `prepare`(MR単位)と同じ内部機構(bare clone/fetch/`git worktree`)を使うが、
+        ワークツリーのパス・ローカルbranch名は`issue-<iid>`という別名前空間を使い、
+        `mr-<iid>`とは物理的に衝突しない。`ref`はcreate_branch等で用意した実装用branch名
+        (またはcommit sha)を渡す想定(呼び出し側がdefault branchの解決・branch作成を行う)。
+        """
+        ...
+
+    def discard_for_issue(self, project: str, issue_iid: int) -> None:
+        """指定Issueのworktreeを破棄する(M4-8、ADR-0031)。
+
+        `discard`(MR単位)と同じく冪等(対象が存在しなくても例外を送出しない)。
+        呼び出し側(実装フェーズのJobHandler)は、ローカルcommitをM4-9のpushフェーズが
+        参照できるようにするため、実装成功時は明示的にこのメソッドを呼ばない設計にしている
+        (`docs/adr/0033-implement-phase.md`参照)。
         """
         ...
 
