@@ -77,6 +77,18 @@ def _result(**overrides) -> dict:
     return kwargs
 
 
+def _design_result(**overrides) -> dict:
+    kwargs = dict(
+        project=_PROJECT,
+        issue_iid=_ISSUE_IID,
+        design_document="# 責務\n...",
+        assumed_uncertainties=[],
+        questions=list(_QUESTIONS),
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
 def _make_waiting_human_job(
     job_db_path: str,
     *,
@@ -307,3 +319,62 @@ def test_run_respond_with_valid_job_id_completes_the_job(tmp_path):
     assert done_job is not None
     assert done_job.status == JobStatus.DONE
     assert done_job.result["resolved_questions"][0]["answer"] == "回答1"
+
+
+# --- design種別Job(M4-6, ADR-0029)---
+
+
+def test_respond_to_job_supports_design_job_type(tmp_path):
+    # design種別のWAITING_HUMAN Jobも、issue-analysisと同じ手順でDONEまで遷移できること
+    # (_RESULT_RESOLVERSの一般化、ADR-0029)
+    job_db_path = str(tmp_path / "job.db")
+    job = _make_waiting_human_job(
+        job_db_path, job_type=JobType.DESIGN, result=_design_result()
+    )
+
+    repo = SqliteJobRepository(job_db_path)
+    answers = iter(["回答1", "回答2"])
+    try:
+        done_job = respond_to_job(
+            repo, job, ask=lambda _: next(answers), output=lambda _: None
+        )
+
+        assert done_job.status == JobStatus.DONE
+        assert done_job.result["design_document"] == "# 責務\n..."
+        assert done_job.result["questions"] == []
+        assert done_job.result["resolved_questions"] == [
+            {**_QUESTIONS[0], "answer": "回答1"},
+            {**_QUESTIONS[1], "answer": "回答2"},
+        ]
+    finally:
+        repo.close()
+
+
+def test_run_respond_with_design_job_type_completes_the_job(tmp_path):
+    config = _config(tmp_path)
+    job = _make_waiting_human_job(
+        config.job_db_path, job_type=JobType.DESIGN, result=_design_result()
+    )
+    answers = iter(["回答1", "回答2"])
+
+    done_job = run_respond(
+        config, job_id=job.id, ask=lambda _: next(answers), output=lambda _: None
+    )
+
+    assert done_job is not None
+    assert done_job.status == JobStatus.DONE
+    assert done_job.result["resolved_questions"][0]["answer"] == "回答1"
+
+
+def test_run_respond_with_implement_job_type_still_raises_invalid_transition(
+    tmp_path,
+):
+    # implement(M4の残り)はまだ_RESULT_RESOLVERSに未登録のため、designが追加された後も
+    # 引き続き未対応として扱われることを確認する
+    config = _config(tmp_path)
+    job = _make_waiting_human_job(
+        config.job_db_path, job_type=JobType.IMPLEMENT, result=_result()
+    )
+
+    with pytest.raises(InvalidJobTransitionError):
+        run_respond(config, job_id=job.id)

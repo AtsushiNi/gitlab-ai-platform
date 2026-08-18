@@ -13,6 +13,7 @@ from gitlab_ai_platform.cli.dispatcher import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     RunnerDispatcher,
     WaitingForHumanError,
+    build_design_handler,
     build_issue_analysis_handler,
     build_job_handlers,
     build_review_handler,
@@ -20,6 +21,7 @@ from gitlab_ai_platform.cli.dispatcher import (
     run_dispatcher,
 )
 from gitlab_ai_platform.config import Config
+from gitlab_ai_platform.design.job import build_design_job_payload
 from gitlab_ai_platform.gitlab_adapter.types import (
     Discussion,
     Issue,
@@ -159,10 +161,19 @@ class _FakeWorkspaceManager:
 
 
 class _FakeClaudeCodeRunner:
-    def __init__(self, tmp_path: Path, *, open_questions: list | None = None) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        *,
+        open_questions: list | None = None,
+        result_kind: str = "issue-analysis",
+    ) -> None:
         self._tmp_path = tmp_path
-        # issue-analysisの結果に含める不足情報(既定は無し=WAITING_HUMANにならない)
+        # issue-analysis/designの結果に含める不足情報(既定は無し=WAITING_HUMANにならない)
         self._open_questions = open_questions if open_questions is not None else []
+        # run_promptが返すペイロードの形("issue-analysis"か"design")。
+        # build_design_handlerのテストでは"design"を指定する
+        self._result_kind = result_kind
         self.run_calls: list[tuple[str, int]] = []
         self.run_prompt_calls: list[tuple[Path, str, str]] = []
 
@@ -209,12 +220,18 @@ class _FakeClaudeCodeRunner:
         permission_mode=None,
     ) -> RunResult:
         self.run_prompt_calls.append((worktree_path, prompt, log_key))
-        payload = {
-            "requirements": ["要求1"],
-            "acceptance_criteria": ["条件1"],
-            "assumptions": ["前提1"],
-            "open_questions": self._open_questions,
-        }
+        if self._result_kind == "design":
+            payload = {
+                "design_document": "# 責務\n設計文書の本文です。",
+                "open_questions": self._open_questions,
+            }
+        else:
+            payload = {
+                "requirements": ["要求1"],
+                "acceptance_criteria": ["条件1"],
+                "assumptions": ["前提1"],
+                "open_questions": self._open_questions,
+            }
         result_text = "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
         log_path = self._tmp_path / "run_prompt_log.json"
         log_path.write_text(json.dumps({"command": ["claude"]}), encoding="utf-8")
@@ -331,7 +348,9 @@ def test_build_review_handler_runs_execute_review_and_returns_result_dict(tmp_pa
         store.close()
 
 
-def test_build_job_handlers_registers_review_and_issue_analysis_types(tmp_path):
+def test_build_job_handlers_registers_review_issue_analysis_and_design_types(
+    tmp_path,
+):
     config = _config(tmp_path)
     adapter = _FakeGitLabReader(_merge_request(), _issue())
     worktree_path = tmp_path / "worktree"
@@ -342,8 +361,12 @@ def test_build_job_handlers_registers_review_and_issue_analysis_types(tmp_path):
 
     try:
         handlers = build_job_handlers(adapter, workspace, runner, store, config)
-        # M4-3時点で実際にRunnerが処理できるのはreview/issue-analysis(ADR-0016)
-        assert set(handlers) == {JobType.REVIEW, JobType.ISSUE_ANALYSIS}
+        # M4-6時点で実際にRunnerが処理できるのはreview/issue-analysis/design(ADR-0016)
+        assert set(handlers) == {
+            JobType.REVIEW,
+            JobType.ISSUE_ANALYSIS,
+            JobType.DESIGN,
+        }
     finally:
         store.close()
 
@@ -438,6 +461,111 @@ def test_build_issue_analysis_handler_completes_when_only_minor_question(tmp_pat
     assert result["questions"] == []
     assert result["assumed_uncertainties"] == [
         {"question": "文言は?", "severity": "minor", "assumption": "一般的な文言を使う"}
+    ]
+
+
+# --- build_design_handler ---
+
+
+def _design_job(**overrides) -> Job:
+    now = datetime(2026, 8, 16, 12, 0, 0, tzinfo=UTC)
+    kwargs = dict(
+        id="job-design-1",
+        job_type=JobType.DESIGN,
+        status=JobStatus.RUNNING,
+        payload=build_design_job_payload(
+            _PROJECT,
+            _ISSUE_IID,
+            {
+                "requirements": ["要求1"],
+                "acceptance_criteria": ["条件1"],
+                "assumptions": ["前提1"],
+                "assumed_uncertainties": [],
+            },
+        ),
+        result=None,
+        error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    kwargs.update(overrides)
+    return Job(**kwargs)
+
+
+def test_build_design_handler_returns_result_dict_when_no_open_questions(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="design")
+
+    handler = build_design_handler(adapter, runner, config)
+    job = _design_job()
+
+    result = handler(job)
+
+    assert result["project"] == _PROJECT
+    assert result["issue_iid"] == _ISSUE_IID
+    assert result["design_document"] == "# 責務\n設計文書の本文です。"
+    assert result["assumed_uncertainties"] == []
+    assert result["questions"] == []
+    assert len(runner.run_prompt_calls) == 1
+    _, prompt, log_key = runner.run_prompt_calls[0]
+    assert "Add feature Y" in prompt
+    assert "要求1" in prompt
+    assert log_key == f"group%2Fproject/issue-{_ISSUE_IID}/design"
+
+
+def test_build_design_handler_raises_waiting_for_human_when_critical_question(
+    tmp_path,
+):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {"question": "既存の認証基盤を再利用しますか?", "severity": "critical"},
+        ],
+        result_kind="design",
+    )
+
+    handler = build_design_handler(adapter, runner, config)
+    job = _design_job()
+
+    with pytest.raises(WaitingForHumanError) as excinfo:
+        handler(job)
+
+    assert excinfo.value.result["questions"] == [
+        {"question": "既存の認証基盤を再利用しますか?", "severity": "critical"}
+    ]
+
+
+def test_build_design_handler_completes_when_only_minor_question(tmp_path):
+    # MINORな不明点はASSUME判定になり、WAITING_HUMANにはならない(orchestrator.judge_uncertainty)
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {
+                "question": "キャッシュ戦略は?",
+                "severity": "minor",
+                "assumption": "単純なTTLキャッシュを使う",
+            },
+        ],
+        result_kind="design",
+    )
+
+    handler = build_design_handler(adapter, runner, config)
+    job = _design_job()
+
+    result = handler(job)
+
+    assert result["questions"] == []
+    assert result["assumed_uncertainties"] == [
+        {
+            "question": "キャッシュ戦略は?",
+            "severity": "minor",
+            "assumption": "単純なTTLキャッシュを使う",
+        }
     ]
 
 

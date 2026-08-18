@@ -46,6 +46,12 @@ from typing import Any
 
 from .._paths import slugify_project
 from ..config import Config
+from ..design import (
+    build_design_instructions,
+    build_design_job_result,
+    design_job_payload_to_args,
+    parse_design_output,
+)
 from ..gitlab_adapter import GitLabRestAdapter
 from ..gitlab_adapter.protocol import GitLabReader
 from ..issue_analysis import (
@@ -178,6 +184,55 @@ def build_issue_analysis_handler(
     return _handle
 
 
+def build_design_handler(
+    adapter: GitLabReader,
+    runner: ClaudeCodeRunner,
+    config: Config,
+) -> JobHandler:
+    """design種別の`JobHandler`を組み立てる(M4-6, ADR-0029)。
+
+    `issue-analysis`と同じくWorkspace Manager(worktree)を使わない。設計フェーズは要求分析
+    フェーズが確定させた要求・受入条件・前提のみを入力とし、対象プロジェクトの実際の
+    リポジトリを探索しない設計とした(ADR-0029「決定」。Workspace Managerの
+    `prepare(project, mr_iid, ref)`はMR番号とgit refの組を前提にしたシグネチャで、
+    design(Issue単位)にそのまま使うとMRのworktreeとキー空間が衝突しうる問題があり、
+    GitLab Adapterのdefault branch取得拡張を含む対応は本Issueのスコープを超えるため)。
+
+    処理の流れ: `design_job_payload_to_args`でpayloadを分解(`project`/`issue_iid`/
+    `DesignInput`)→`GitLabReader.get_issue`でIssue取得(見出し用)→`IssueContext`に詰める→
+    設計用instructions(`build_design_instructions`)と`build_issue_prompt`でプロンプトを
+    組み立てる→`ClaudeCodeRunner.run_prompt`で実行→`parse_design_output`で構造化→検出した
+    不明点(`DesignResult.uncertainties`)を`judge_uncertainties`で判定する。`requires_human`が
+    `True`(1件でも`ASK`判定がある)場合は`WaitingForHumanError`を送出し、
+    `RunnerDispatcher._process`がJobを`WAITING_HUMAN`へ遷移させる。`False`の場合は通常の
+    Job結果として辞書を返す(`complete`)。
+    """
+
+    def _handle(job: Job) -> dict[str, Any]:
+        project, issue_iid, design_input = design_job_payload_to_args(job.payload)
+        issue = adapter.get_issue(project, issue_iid)
+        context = IssueContext(issue=issue)
+        instructions = build_design_instructions(design_input)
+        prompt = build_issue_prompt(instructions, context)
+
+        with tempfile.TemporaryDirectory(prefix="design-") as workdir:
+            run_result = runner.run_prompt(
+                Path(workdir),
+                prompt,
+                log_key=f"{slugify_project(project)}/issue-{issue_iid}/design",
+                timeout_seconds=config.runner_timeout_seconds,
+            )
+
+        design = parse_design_output(run_result)
+        judgments = judge_uncertainties(design.uncertainties)
+        result = build_design_job_result(project, issue_iid, design, judgments)
+        if requires_human(judgments):
+            raise WaitingForHumanError(result)
+        return result
+
+    return _handle
+
+
 def build_job_handlers(
     adapter: GitLabReader,
     workspace: WorkspaceManager,
@@ -187,7 +242,7 @@ def build_job_handlers(
 ) -> dict[JobType, JobHandler]:
     """`JobType` → `JobHandler`のディスパッチテーブルを組み立てる(ADR-0022)。
 
-    M4-3時点で`review`/`issue-analysis`が実装済み。`design`/`implement`(M4の残り)は、
+    M4-6時点で`review`/`issue-analysis`/`design`が実装済み。`implement`(M4の残り)は、
     対応するhandlerをこの辞書に追加するだけで`RunnerDispatcher`側の変更なしに配線できる想定。
     """
     return {
@@ -195,6 +250,7 @@ def build_job_handlers(
             adapter, workspace, runner, store, config
         ),
         JobType.ISSUE_ANALYSIS: build_issue_analysis_handler(adapter, runner, config),
+        JobType.DESIGN: build_design_handler(adapter, runner, config),
     }
 
 
@@ -391,6 +447,7 @@ __all__ = [
     "JobHandler",
     "RunnerDispatcher",
     "WaitingForHumanError",
+    "build_design_handler",
     "build_issue_analysis_handler",
     "build_job_handlers",
     "build_review_handler",
