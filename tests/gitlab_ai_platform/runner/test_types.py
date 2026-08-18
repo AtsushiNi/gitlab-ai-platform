@@ -5,12 +5,17 @@ from pathlib import Path
 
 import pytest
 
-from gitlab_ai_platform.runner import ReviewContext, RunResult
+from gitlab_ai_platform.runner import IssueContext, ReviewContext, RunResult
 
 
 def test_review_context_is_immutable(review_context: ReviewContext):
     with pytest.raises(dataclasses.FrozenInstanceError):
         review_context.diffs = ()  # type: ignore[misc]
+
+
+def test_issue_context_is_immutable(issue_context: IssueContext):
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        issue_context.issue = issue_context.issue  # type: ignore[misc]
 
 
 def test_run_result_is_immutable():

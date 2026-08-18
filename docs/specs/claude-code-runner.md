@@ -1,9 +1,10 @@
 # Claude Code Runner
 
 - 実装場所: `src/gitlab_ai_platform/runner/`
-- 対応Issue: [#35](https://github.com/AtsushiNi/gitlab-ai-platform/issues/35) (M1-7)
+- 対応Issue: [#35](https://github.com/AtsushiNi/gitlab-ai-platform/issues/35) (M1-7)、
+  [#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108) (M4-2、Issue向け正規化を追記)
 - 関連ADR: [ADR-0005](../adr/0005-claude-code-runner-design.md)
-- ステータス: 実装済み(Protocol定義 + subprocess実装)
+- ステータス: 実装済み(Protocol定義 + subprocess実装 + Issue向け正規化)
 
 ## 責務
 
@@ -115,6 +116,59 @@ Description:
 <diff>
 ```
 
+## Issue向けの正規化(無人実行トラック、M4-2)
+
+実装場所: `src/gitlab_ai_platform/runner/issue_prompt.py`、型は`types.py`の`IssueContext`。
+対応Issue: [#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108) (M4-2)。
+
+M4(Issue駆動開発、無人実行トラック)の`issue-analysis`/`design`/`implement`フェーズ
+(Jobハンドラ自体は別Issueで今後実装)がClaude Codeへ渡すプロンプトを組み立てるための部品。
+`ReviewContext`/`build_prompt`(MR向け)と対になる設計で、同じ命名規則・組み立て方針を
+横展開したもの。
+
+```python
+from ..gitlab_adapter.types import Issue
+
+
+@dataclass(frozen=True)
+class IssueContext:
+    issue: Issue
+```
+
+| 型 | フィールド | 補足 |
+|---|---|---|
+| `IssueContext` (frozen dataclass) | `issue: Issue` | 型はGitLab Adapter(`gitlab_adapter/types.py`)の`Issue`をそのまま再利用する |
+
+`build_issue_prompt(instructions: str, context: IssueContext) -> str`は`instructions`と
+`context`を結合し、以下の形式のテキストを返す:
+
+```text
+<instructions>
+
+## Issue
+Title: <issue.title>
+
+Description:
+<issue.description>
+
+Labels: <issue.labels をカンマ区切りで結合したもの>
+```
+
+`description`が空文字列の場合は`Description:`見出しごと省略する。`labels`が空タプルの
+場合は`Labels:`行を省略する。`build_prompt`と同じ理由(Popen経由でargvとして渡す際の
+OS上限、Linuxの`MAX_ARG_STRLEN`)で、同じ閾値(100,000バイト)まで切り詰める。
+
+### 対象外(このIssueのスコープ外)
+
+- `GitLabAdapter`(`gitlab_adapter/protocol.py`)には、MRの`list_merge_request_discussions`
+  に相当するIssueコメント(ディスカッション)取得メソッドが存在しない。そのため
+  `IssueContext`は`ReviewContext.discussions`に相当するフィールドを持たず、
+  `build_issue_prompt`の出力にコメントは含まれない。Adapter側にメソッドが追加された時点で
+  `ReviewContext`と同様の形に拡張する
+- Issueを実際にClaude Code Runner(`SubprocessClaudeCodeRunner.run`)へ渡してヘッドレス
+  実行するJobハンドラの実装(M4-3「要求分析フェーズ」等)はスコープ外。本節は
+  「正規化ロジックとその単体テスト」までを対象とする
+
 ## エラー時の振る舞い
 
 実装場所: `src/gitlab_ai_platform/runner/errors.py`。
@@ -170,6 +224,9 @@ Description:
     ことを検証する
   - 標準出力がJSONとして解釈できない場合に`ClaudeCodeOutputError`を送出することを検証する
   - 実行ログが期待するパスに保存され、認証情報等のシークレットが含まれないことを検証する
+- `test_issue_prompt.py`: `build_issue_prompt`が`instructions`・Issueのタイトル・説明・
+  ラベルをプロンプトに含めること、`description`/`labels`が空の場合に対応する見出しを
+  省略すること、切り詰め(`MAX_ARG_STRLEN`対策)が`build_prompt`と同じ閾値で働くことを検証する
 
 ## 関連ドキュメント
 
@@ -178,4 +235,5 @@ Description:
 - `references/spike-s1-claude-code-headless.md` — ヘッドレス実行方式・タイムアウト・
   権限設定・Bedrock認証に関する実機検証結果
 - ソースコード: `src/gitlab_ai_platform/runner/`
-  (`protocol.py` / `types.py` / `errors.py` / `subprocess_runner.py` / `__init__.py`)
+  (`protocol.py` / `types.py` / `errors.py` / `subprocess_runner.py` / `issue_prompt.py` /
+  `__init__.py`)

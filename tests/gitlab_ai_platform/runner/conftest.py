@@ -4,11 +4,12 @@ import pytest
 
 from gitlab_ai_platform.gitlab_adapter.types import (
     Discussion,
+    Issue,
     MergeRequest,
     MergeRequestDiff,
     Note,
 )
-from gitlab_ai_platform.runner import ReviewContext
+from gitlab_ai_platform.runner import IssueContext, ReviewContext
 
 
 @pytest.fixture
@@ -61,3 +62,21 @@ def review_context(merge_request: MergeRequest) -> ReviewContext:
     return ReviewContext(
         merge_request=merge_request, diffs=diffs, discussions=discussions
     )
+
+
+@pytest.fixture
+def issue() -> Issue:
+    return Issue(
+        project="group/project",
+        iid=7,
+        title="Add feature Y",
+        description="We need feature Y because of reason Z.",
+        state="opened",
+        author="carol",
+        labels=("要求分析待ち",),
+    )
+
+
+@pytest.fixture
+def issue_context(issue: Issue) -> IssueContext:
+    return IssueContext(issue=issue)
