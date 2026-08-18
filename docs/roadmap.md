@@ -180,6 +180,11 @@ M2-12 は完了後にフォローアップIssueが複数派生している(い�
 | [#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116) | M4-10 Issue→MRパイプラインのオーケストレーション | 未着手 |
 | [#117](https://github.com/AtsushiNi/gitlab-ai-platform/issues/117) | M4-11 自己レビュー接続 | 未着手 |
 
+M4-8/M4-9の実装過程で、自動実行系トークンのスコープ設計(ADR-0019)が書き込み操作の追加により
+前提から外れていることが判明し、フォローアップとして[#127](https://github.com/AtsushiNi/gitlab-ai-platform/issues/127)
+(自動実行系GitLabトークンのスコープ再設計)を起票した(`references/タスク整理.md`には項目が
+存在しない派生タスクのため、独立した行は起こさず注記のみとする)。
+
 ## X. 横断
 
 X-1・X-2 はいずれも未起票。`references/タスク整理.md` の「X. 横断」節を参照。
