@@ -52,8 +52,17 @@ from ..design import (
     design_job_payload_to_args,
     parse_design_output,
 )
-from ..gitlab_adapter import GitLabRestAdapter
-from ..gitlab_adapter.protocol import GitLabReader
+from ..gitlab_adapter import GitLabApiError, GitLabRestAdapter
+from ..gitlab_adapter.protocol import GitLabAdapter, GitLabReader
+from ..implement import (
+    ImplementationNotCommittedError,
+    WorktreeState,
+    build_implement_instructions,
+    build_implement_job_result,
+    implement_job_payload_to_args,
+    parse_implement_output,
+    read_worktree_state,
+)
 from ..issue_analysis import (
     build_issue_analysis_instructions,
     build_issue_analysis_job_result,
@@ -99,6 +108,21 @@ DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 120.0
 # JobType→処理関数のディスパッチテーブルの値の型(ADR-0022「Job受け渡しプロトコル」)。
 # `complete`にそのまま渡せる`result`(またはNone)を返す契約
 JobHandler = Callable[[Job], "dict[str, Any] | None"]
+
+# 実装フェーズ(M4-8, ADR-0033)でClaude Codeに許可するツール。このリポジトリで初めて
+# Edit/Write/Bash(実際のファイル編集・シェルコマンド実行)を許可する。これまでの
+# review/issue-analysis/design/planはいずれも読み取り・分析のみで、明示的なallowed_toolsを
+# 渡していなかった(`docs/operations/security.md`参照)
+_IMPLEMENT_ALLOWED_TOOLS: tuple[str, ...] = ("Edit", "Write", "Bash")
+# git pushはこのフェーズのスコープ外(M4-9の責務)。`Bash`をallowedToolsで許可する以上、
+# Claude Code自身がBash経由で`git push`を試みることを構造的に禁止できるわけではない
+# (Adapter層の「メソッドとして存在しない」という保証とは強さが異なる。
+# `docs/operations/security.md`「Claude Code Runner」参照)が、明示的に一段防御しておく
+_IMPLEMENT_DISALLOWED_TOOLS: tuple[str, ...] = ("Bash(git push:*)",)
+# headless実行のため、Edit/Write(allowedToolsに既に含む)の確認プロンプトを自動承認する
+# モードにする。`--dangerously-skip-permissions`相当の全許可モード("bypassPermissions")は
+# 使わない(既存方針、ADR-0005「`--dangerously-skip-permissions`は提供しない」)
+_IMPLEMENT_PERMISSION_MODE = "acceptEdits"
 
 
 class WaitingForHumanError(Exception):
@@ -285,8 +309,130 @@ def build_plan_handler(
     return _handle
 
 
+def _remote_branch_name_for_issue(issue_iid: int) -> str:
+    """実装フェーズがGitLab上に作成する実装用branchの名前(M4-8, ADR-0033)。
+
+    Workspace Managerのローカルbranch名(`issue-<iid>`、`workspace/git_workspace.py`)とは
+    別の名前空間。こちらはGitLab上の実際のbranch名であり、M4-9(push)がpush先として使う。
+    """
+    return f"ai/issue-{issue_iid}"
+
+
+def _ensure_remote_branch(
+    adapter: GitLabAdapter, project: str, branch_name: str, ref: str
+) -> None:
+    """`branch_name`をGitLab上に作成する。既に存在する場合(retry等)は例外にせず続行する。
+
+    `create_branch`は許可リストに載った書き込み操作(`docs/operations/security.md` §2.2)。
+    GitLab APIは既存branch名を指定すると400を返すため、その場合のみ「既存のbranchを
+    そのまま使う」と判断して続行する(それ以外のエラーは呼び出し元にそのまま伝播させる)。
+    """
+    try:
+        adapter.create_branch(project, branch_name, ref)
+    except GitLabApiError as exc:
+        if exc.status_code == 400:
+            _logger.info(
+                "implement.remote_branch_already_exists",
+                extra={"project": project, "branch_name": branch_name},
+            )
+            return
+        raise
+
+
+def build_implement_handler(
+    adapter: GitLabAdapter,
+    workspace: WorkspaceManager,
+    runner: ClaudeCodeRunner,
+    config: Config,
+    *,
+    read_worktree_state: Callable[[Path], WorktreeState] = read_worktree_state,
+) -> JobHandler:
+    """implement種別の`JobHandler`を組み立てる(M4-8, ADR-0033)。
+
+    `design`/`plan`と異なり実際のworktree(`Workspace Manager.prepare_for_issue`、ADR-0031)を
+    使う。処理の流れ:
+
+    1. `implement_job_payload_to_args`でpayloadを分解(`project`/`issue_iid`/`ImplementInput`)
+    2. `GitLabReader.get_issue`でIssue取得、`GitLabReader.get_default_branch`でdefault branchを
+       解決(ADR-0032)
+    3. `_ensure_remote_branch`でdefault branchを起点に実装用branch(`ai/issue-<iid>`)を
+       GitLab上に作成する(`create_branch`、許可リストの書き込み操作)
+    4. `Workspace Manager.prepare_for_issue`でその実装用branchのworktreeを用意する
+    5. 実行前のworktreeの状態(HEAD commit sha)を`read_worktree_state`で記録する
+    6. 実装用instructions(`build_implement_instructions`)と`build_issue_prompt`でプロンプトを
+       組み立て、`ClaudeCodeRunner.run_prompt`で実際のworktree上でClaude Codeを実行する
+       (`allowed_tools`/`disallowed_tools`/`permission_mode`は本モジュール冒頭の
+       `_IMPLEMENT_*`定数、ADR-0033)
+    7. 実行後のworktreeの状態を再度確認し、HEAD commit shaが変化していなければ
+       (=実際にはローカルcommitが行われなかった、またはtestsが通らなかった場合)
+       `ImplementationNotCommittedError`を送出する。Claude Codeの自己申告
+       (`ImplementResult.tests_passed`)だけを信用しない(ADR-0005と同じ方針)。
+       この例外は`RunnerDispatcher._process`の`except Exception`経路で`fail(..., retry=True)`
+       となり、既存のJob再試行/デッドレター機構(ADR-0017)にそのまま乗る(ADR-0033
+       「テスト失敗時の扱い」)
+    8. commitが確認できた場合、検出した不明点(`ImplementResult.uncertainties`)を
+       `judge_uncertainties`で判定する。`requires_human`が`True`の場合は
+       `WaitingForHumanError`を送出し、`False`の場合は通常のJob結果を返す(`complete`)
+
+    実装成功時、このhandlerは`Workspace Manager.discard_for_issue`を呼ばない
+    (ローカルcommitをM4-9のpushフェーズが参照できるようにするため。ADR-0033参照)。
+    """
+
+    def _handle(job: Job) -> dict[str, Any]:
+        project, issue_iid, implement_input = implement_job_payload_to_args(job.payload)
+        issue = adapter.get_issue(project, issue_iid)
+        default_branch = adapter.get_default_branch(project)
+        remote_branch = _remote_branch_name_for_issue(issue_iid)
+        _ensure_remote_branch(adapter, project, remote_branch, default_branch)
+
+        worktree = workspace.prepare_for_issue(project, issue_iid, remote_branch)
+        before = read_worktree_state(worktree.path)
+
+        context = IssueContext(issue=issue)
+        instructions = build_implement_instructions(implement_input)
+        prompt = build_issue_prompt(instructions, context)
+
+        run_result = runner.run_prompt(
+            worktree.path,
+            prompt,
+            log_key=f"{slugify_project(project)}/issue-{issue_iid}/implement",
+            timeout_seconds=config.runner_timeout_seconds,
+            allowed_tools=_IMPLEMENT_ALLOWED_TOOLS,
+            disallowed_tools=_IMPLEMENT_DISALLOWED_TOOLS,
+            permission_mode=_IMPLEMENT_PERMISSION_MODE,
+        )
+
+        implement_result = parse_implement_output(run_result)
+        after = read_worktree_state(worktree.path)
+
+        if after.head_sha == before.head_sha or not after.is_clean:
+            raise ImplementationNotCommittedError(
+                f"project={project!r} issue_iid={issue_iid!r}: 実装フェーズの実行後も"
+                "worktreeに新しいローカルcommitが確認できませんでした"
+                f"(tests_passed={implement_result.tests_passed!r}, "
+                f"is_clean={after.is_clean!r}, summary={implement_result.summary!r})"
+            )
+
+        judgments = judge_uncertainties(implement_result.uncertainties)
+        result = build_implement_job_result(
+            project,
+            issue_iid,
+            implement_result=implement_result,
+            commit_sha=after.head_sha,
+            remote_branch=remote_branch,
+            local_branch=worktree.branch,
+            worktree_path=str(worktree.path),
+            judgments=judgments,
+        )
+        if requires_human(judgments):
+            raise WaitingForHumanError(result)
+        return result
+
+    return _handle
+
+
 def build_job_handlers(
-    adapter: GitLabReader,
+    adapter: GitLabAdapter,
     workspace: WorkspaceManager,
     runner: ClaudeCodeRunner,
     store: StateStore,
@@ -294,8 +440,11 @@ def build_job_handlers(
 ) -> dict[JobType, JobHandler]:
     """`JobType` → `JobHandler`のディスパッチテーブルを組み立てる(ADR-0022)。
 
-    M4-7時点で`review`/`issue-analysis`/`design`/`plan`が実装済み。`implement`(M4の残り)は、
-    対応するhandlerをこの辞書に追加するだけで`RunnerDispatcher`側の変更なしに配線できる想定。
+    M4-8時点で`review`/`issue-analysis`/`design`/`plan`/`implement`が実装済み(M4のJobType
+    予約4種+`plan`が出揃った)。`adapter`は`implement`が`create_branch`(書き込み)も必要と
+    するため、M4-7までの`GitLabReader`から`GitLabAdapter`(読み取り+書き込み)へ型を広げた
+    (呼び出し元`run_dispatcher`は元々`GitLabRestAdapter`という両方満たす具象実装を渡して
+    いたため、実際の配線は変更していない)。
     """
     return {
         REVIEW_JOB_TYPE: build_review_handler(
@@ -304,6 +453,7 @@ def build_job_handlers(
         JobType.ISSUE_ANALYSIS: build_issue_analysis_handler(adapter, runner, config),
         JobType.DESIGN: build_design_handler(adapter, runner, config),
         JobType.PLAN: build_plan_handler(adapter, runner, config),
+        JobType.IMPLEMENT: build_implement_handler(adapter, workspace, runner, config),
     }
 
 
@@ -501,6 +651,7 @@ __all__ = [
     "RunnerDispatcher",
     "WaitingForHumanError",
     "build_design_handler",
+    "build_implement_handler",
     "build_issue_analysis_handler",
     "build_job_handlers",
     "build_plan_handler",

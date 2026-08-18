@@ -3,11 +3,13 @@
 - 実装場所: `src/gitlab_ai_platform/adapter_mcp_server/`
 - 対応Issue: [#62](https://github.com/AtsushiNi/gitlab-ai-platform/issues/62) (M2-12)、
   [#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)(「GitLab MCP Tool Bridge」から改称)、
-  [#69](https://github.com/AtsushiNi/gitlab-ai-platform/issues/69)(projectのデフォルト自動解決)
-- 関連ADR: [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)
-- ステータス: 実装済み(`GitLabAdapter`の許可された14メソッド全て。M2-10 [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47)
+  [#69](https://github.com/AtsushiNi/gitlab-ai-platform/issues/69)(projectのデフォルト自動解決)、
+  [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8、`get_default_branch`追加)
+- 関連ADR: [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)、
+  [ADR-0032](../adr/0032-default-branch-lookup.md)
+- ステータス: 実装済み(`GitLabAdapter`の許可された15メソッド全て。M2-10 [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47)
   分は M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み。
-  projectのデフォルト自動解決は #69 で対応済み)
+  projectのデフォルト自動解決は #69 で対応済み。`get_default_branch`はM4-8で対応済み)
 
 ## 責務
 
@@ -67,7 +69,7 @@ def create_server(adapter: GitLabAdapter, *, name: str = "gitlab-adapter") -> MC
   そのメソッドに束縛されたツール関数を生成するファクトリへの対応表。1メソッド=1ファクトリ
   関数(`ToolFactory = Callable[[GitLabAdapter], Callable[..., Any]]`)。
 - `ALLOWED_TOOL_NAMES: frozenset[str]`(`server.py`) — `TOOL_FACTORIES`のキー集合。
-  現時点で14個(下記「対象ツール」節)。
+  現時点で15個(下記「対象ツール」節)。
 
 起動用エントリポイント: `src/gitlab_ai_platform/adapter_mcp_server/main.py`の`main(argv=None) -> int`。
 `python -m gitlab_ai_platform.adapter_mcp_server`(`__main__.py`)で起動する。
@@ -113,7 +115,7 @@ M2-12フォローアップ([#69](https://github.com/AtsushiNi/gitlab-ai-platform
 
 ## 対象ツール(入出力スキーマ)
 
-現時点で`GitLabAdapter`に存在する許可された14メソッドすべてを1:1でツール化している。
+現時点で`GitLabAdapter`に存在する許可された15メソッドすべてを1:1でツール化している。
 引数・戻り値はプリミティブ型/`dict`/`list`のみとし、`gitlab_adapter/types.py`のdataclassは
 `serialization.to_jsonable`で再帰的にdictへ変換してから返す(フィールド名はdataclassの
 フィールド名をそのまま使う。詳細は[gitlab-adapter.md](gitlab-adapter.md#入出力スキーマ)の
@@ -129,6 +131,7 @@ M2-12フォローアップ([#69](https://github.com/AtsushiNi/gitlab-ai-platform
 | `list_merge_request_discussions` | `project: str \| None = None`, `mr_iid: int` | `list[dict]`(`Discussion`。`notes`はネストした`dict`のlist) | `list_merge_request_discussions` |
 | `list_issues` | `project: str \| None = None`, `labels: list[str] \| None = None`, `state: str = "opened"` | `list[dict]`(`Issue`) | `list_issues` |
 | `get_issue` | `project: str \| None = None`, `issue_iid: int` | `dict`(`Issue`) | `get_issue` |
+| `get_default_branch` | `project: str \| None = None` | `str` | `get_default_branch`(M4-8, ADR-0032) |
 | `create_branch` | `project: str \| None = None`, `branch_name: str`, `ref: str` | `dict`(`Branch`) | `create_branch` |
 | `push_file_changes` | `project: str \| None = None`, `branch: str`, `commit_message: str`, `actions: list[dict]` | `str`(新しいcommit sha) | `push_file_changes` |
 | `create_merge_request` | `project: str \| None = None`, `source_branch: str`, `target_branch: str`, `title: str`, `description: str = ""` | `dict`(`MergeRequest`) | `create_merge_request` |
@@ -181,8 +184,8 @@ M2-12フォローアップ([#69](https://github.com/AtsushiNi/gitlab-ai-platform
   こと、dataclassの戻り値がJSON安全な`dict`/`list`に変換されること、
   `push_file_changes`の`actions`(dictの配列)が`CommitAction`に正しく変換されることを検証する
 - `test_server.py`:
-  - `ALLOWED_TOOL_NAMES`が現時点の14メソッドという決め打ちの集合と完全一致することを検証する
-    (`test_allowed_tool_names_matches_current_fourteen_method_allow_list`)
+  - `ALLOWED_TOOL_NAMES`が現時点の15メソッドという決め打ちの集合と完全一致することを検証する
+    (`test_allowed_tool_names_matches_current_fifteen_method_allow_list`)
   - `ALLOWED_TOOL_NAMES`が`GitLabReader`/`GitLabWriter`(Protocol)の公開メソッド集合と
     完全一致することを検証する(`test_allowed_tool_names_matches_gitlab_adapter_protocol_exactly`)。
     Adapter側にさらにメソッドが増えると、このテストが先に落ちて追従漏れに気づける

@@ -131,6 +131,10 @@ class FakeGitLabAdapter:
             author="alice",
         )
 
+    def get_default_branch(self, project: str) -> str:
+        self._record("get_default_branch", project=project)
+        return "main"
+
     # -- GitLabWriter ---------------------------------------------------------
 
     def create_branch(self, project: str, branch_name: str, ref: str) -> Branch:

@@ -4,10 +4,12 @@
 - 対応Issue: [#29](https://github.com/AtsushiNi/gitlab-ai-platform/issues/29) (M1-1、インターフェース定義)、
   [#30](https://github.com/AtsushiNi/gitlab-ai-platform/issues/30) (M1-2、REST実装)、
   [#31](https://github.com/AtsushiNi/gitlab-ai-platform/issues/31) (M1-3、書き込み許可リスト機構の強化)、
-  [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47) (M2-10、Issue/MR操作の拡充)
-- 関連ADR: [ADR-0002](../adr/0002-gitlab-adapter-interface.md)
+  [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47) (M2-10、Issue/MR操作の拡充)、
+  [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8、`get_default_branch`追加)
+- 関連ADR: [ADR-0002](../adr/0002-gitlab-adapter-interface.md)、
+  [ADR-0032](../adr/0032-default-branch-lookup.md)(`get_default_branch`追加の判断)
 - ステータス: 実装済み(インターフェース定義[M1-1] + REST実装[M1-2] +
-  許可リスト機構の強化[M1-3] + Issue/MR操作の拡充[M2-10])
+  許可リスト機構の強化[M1-3] + Issue/MR操作の拡充[M2-10] + `get_default_branch`[M4-8])
 
 ## 責務
 
@@ -106,6 +108,10 @@ class GitLabReader(Protocol):
 
     def get_issue(self, project: str, issue_iid: int) -> Issue:
         """Issueの詳細を取得する。"""
+        ...
+
+    def get_default_branch(self, project: str) -> str:
+        """プロジェクトのdefault branch名を取得する(M4-8、ADR-0032)。"""
         ...
 
 
@@ -260,8 +266,8 @@ class GitLabAdapter(GitLabReader, GitLabWriter, Protocol):
     禁止操作名(`merge` / `delete_branch` / `push` / `close_issue` / `reopen_merge_request`等、
     state_eventを介した状態遷移相当を含む)の集合とも非交差であることを検証する。
     将来誰かが禁止操作をうっかり追加した場合にこのテストが落ちる
-  - `GitLabReader`の公開メソッド集合が読み取り7メソッド(MR系5 + `list_issues`/`get_issue`)と
-    一致することを検証する
+  - `GitLabReader`の公開メソッド集合が読み取り8メソッド(MR系5 + `list_issues`/`get_issue`/
+    `get_default_branch`、M4-8で追加)と一致することを検証する
   - Protocolを満たすダミー実装(`_FakeFullAdapter` / `_FakeReaderOnly`)に対して
     `isinstance(impl, GitLabReader/GitLabWriter/GitLabAdapter)`が期待通り`True`/`False`になることを
     検証する(構造的部分型が意図通り機能することの確認)
@@ -269,9 +275,11 @@ class GitLabAdapter(GitLabReader, GitLabWriter, Protocol):
 - `test_errors.py`: `GitLabApiError`が`status_code`を保持すること、`GitLabAdapterError`の
   サブクラスであることを検証する
 - `test_rest.py`(REST実装、M1-2/M1-3/M2-10):
-  - `GitLabRestAdapter`の公開メソッド集合が許可リスト(読み取り7・書き込み7)と完全一致することを、
+  - `GitLabRestAdapter`の公開メソッド集合が許可リスト(読み取り8・書き込み7)と完全一致することを、
     `test_protocol.py`と同じ強さで具象クラス側にも適用する
     (`test_rest_adapter_exposes_only_allow_listed_operations`)
+  - `get_default_branch`が`GET /projects/:id`から`default_branch`フィールドを取り出すこと、
+    フィールド欠落時に`GitLabApiError`を送出することを検証する(M4-8、ADR-0032)
   - `push_file_changes`がprotected branchへの直pushを、Commits APIへ到達する前に
     `ProtectedBranchError`で拒否すること(`test_push_file_changes_rejects_protected_branch_without_calling_commits_api`)
   - `update_issue`/`update_merge_request`が送信するリクエストボディに`state_event`キーが

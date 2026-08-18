@@ -229,9 +229,8 @@ result(`build_design_job_result`が組み立てる。`complete`・`wait_for_huma
   (`ASSUME`判定)の場合は通常通り結果を返すことを検証する。`build_job_handlers`が
   `JobType.DESIGN`を登録することも検証する
 - `cli/test_respond.py`: `design`種別の`WAITING_HUMAN`Jobに対して`respond_to_job`/`run_respond`
-  が`build_resolved_design_job_result`を使って正しく`DONE`まで遷移すること、`design`以外の
-  未対応種別(`implement`)を指定すると引き続き`InvalidJobTransitionError`を送出することを
-  検証する
+  が`build_resolved_design_job_result`を使って正しく`DONE`まで遷移することを検証する
+  (`implement`種別の対応はM4-8、[specs/implement-phase.md](implement-phase.md)参照)
 
 ## 関連ドキュメント
 

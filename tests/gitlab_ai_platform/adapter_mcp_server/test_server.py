@@ -1,10 +1,11 @@
 """MCPサーバーの配線(`create_server`)を検証する。
 
-`GitLabAdapter`が持つ許可されたメソッド集合(現時点で14個)以外のツールが公開されない
+`GitLabAdapter`が持つ許可されたメソッド集合(現時点で15個)以外のツールが公開されない
 ことを機構として担保する。将来`GitLabReader`/`GitLabWriter`にメソッドが増えた場合、
 このテストの期待集合は意図的に更新しない限り失敗する
 (=権限拡大を検知できる。`docs/adr/0010-gitlab-mcp-tool-bridge.md`参照。
-M2-10(#47)分の追従はM2-12フォローアップ(#65)で対応済み)。
+M2-10(#47)分の追従はM2-12フォローアップ(#65)で対応済み。M4-8(#114, ADR-0032)で
+`get_default_branch`を追加)。
 
 `create_server`/`list_tools`/`call_tool`はいずれも同一プロセス内のPython呼び出しであり、
 実際のstdioソケット・パイプ通信は発生しない(実MCPプロトコル通信・実GitLabのどちらにも
@@ -34,6 +35,7 @@ _EXPECTED_ALLOWED_TOOL_NAMES = {
     "list_merge_request_discussions",
     "list_issues",
     "get_issue",
+    "get_default_branch",
     "create_branch",
     "push_file_changes",
     "create_merge_request",
@@ -68,12 +70,12 @@ def _protocol_public_methods(protocol_cls: type) -> set[str]:
     return {name for name in dir(protocol_cls) if not name.startswith("_")}
 
 
-def test_allowed_tool_names_matches_current_fourteen_method_allow_list() -> None:
+def test_allowed_tool_names_matches_current_fifteen_method_allow_list() -> None:
     assert ALLOWED_TOOL_NAMES == _EXPECTED_ALLOWED_TOOL_NAMES
 
 
 def test_allowed_tool_names_matches_gitlab_adapter_protocol_exactly() -> None:
-    # 現時点ではGitLabReader(7) + GitLabWriter(7)のちょうど14個がAdapterの全許可メソッドであり、
+    # 現時点ではGitLabReader(8) + GitLabWriter(7)のちょうど15個がAdapterの全許可メソッドであり、
     # サーバーのツール集合と完全一致するはず。Adapter側にメソッドが増えると
     # このテストが先に落ち、サーバー側の追従漏れに気づける
     adapter_methods = _protocol_public_methods(GitLabReader) | _protocol_public_methods(

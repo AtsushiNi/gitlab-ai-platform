@@ -36,6 +36,17 @@
   `acquire(blocking=False)`で試みる。他スレッドが操作中(ロック取得できない)候補は
   スキップして次に古いものを試す。ブロッキング待ちをしないのは、A→B, B→Aのような
   ロック待ちの循環(デッドロック)を構造的に起こさないため(詳細はADR-0015参照)
+
+M4-8([#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114)、ADR-0031)で、
+Issue単位のworktreeを扱う`prepare_for_issue`/`discard_for_issue`を追加した。`<root>/worktrees/
+<slug>/issue-<iid>/` という`mr-<iid>`とは別のディレクトリ名前空間を使うことで、MRとIssueの
+IID採番が独立している(数値が偶然一致しうる)GitLabの仕様があっても、worktree・ローカル
+branchが物理的に衝突しない設計にした。bare clone/fetch/`git worktree`まわりの内部処理は
+`_sync_bare_repo`/`_ensure_worktree`として`prepare`/`prepare_for_issue`共通の実装に切り出した。
+`collect_garbage`(GC)は現時点では`mr-`prefixのworktreeのみを対象とし、`issue-`prefixの
+worktreeは含まない(`_worktrees_sorted_by_age`)。実装フェーズのJobHandlerが成功時に
+`discard_for_issue`を呼ばない設計(ローカルcommitをM4-9のpushフェーズが参照できるようにする
+ため)と合わせ、Issue用worktreeの後片付けは今後の課題として残る(ADR-0031「今後の課題」)。
 """
 
 from __future__ import annotations
@@ -50,7 +61,7 @@ from pathlib import Path
 from .._paths import deslugify_project, slugify_project
 from ..logging_ import get_logger
 from .errors import DiskLimitExceededError, GitCommandError
-from .types import WorktreeHandle
+from .types import IssueWorktreeHandle, WorktreeHandle
 
 _logger = get_logger(__name__)
 
@@ -107,7 +118,25 @@ class GitWorkspaceManager:
     def discard(self, project: str, mr_iid: int) -> None:
         with self._project_lock(project):
             self._discard_worktree(
-                project, mr_iid, self._worktree_path(project, mr_iid)
+                project, mr_iid, self._worktree_path(project, mr_iid), _branch_name
+            )
+
+    def prepare_for_issue(
+        self, project: str, issue_iid: int, ref: str
+    ) -> IssueWorktreeHandle:
+        # `prepare`(MR単位)と同じproject単位ロックを使う。同一project配下では
+        # mr-<iid>/issue-<iid>のどちらの操作も同じbare repoに対するgit操作のため、
+        # 名前空間が分かれていても排他は共有する必要がある(M4-8, ADR-0031)
+        with self._project_lock(project):
+            return self._prepare_for_issue_locked(project, issue_iid, ref)
+
+    def discard_for_issue(self, project: str, issue_iid: int) -> None:
+        with self._project_lock(project):
+            self._discard_worktree(
+                project,
+                issue_iid,
+                self._issue_worktree_path(project, issue_iid),
+                _issue_branch_name,
             )
 
     def collect_garbage(self) -> list[WorktreeHandle]:
@@ -131,7 +160,7 @@ class GitWorkspaceManager:
                 if not candidate.path.exists():
                     continue
                 self._discard_worktree(
-                    candidate.project, candidate.mr_iid, candidate.path
+                    candidate.project, candidate.mr_iid, candidate.path, _branch_name
                 )
                 removed.append(candidate)
                 _logger.info(
@@ -154,9 +183,41 @@ class GitWorkspaceManager:
 
     def _prepare_locked(self, project: str, mr_iid: int, ref: str) -> WorktreeHandle:
         # 呼び出し元の`prepare`が`_project_lock(project)`を保持した状態でのみ呼ばれる想定
-        bare_path = self._bare_path(project)
+        bare_path = self._sync_bare_repo(project)
         worktree_path = self._worktree_path(project, mr_iid)
         branch_name = _branch_name(mr_iid)
+        sha = self._ensure_worktree(bare_path, worktree_path, branch_name, ref)
+
+        return WorktreeHandle(
+            project=project,
+            mr_iid=mr_iid,
+            path=worktree_path,
+            branch=branch_name,
+            sha=sha,
+        )
+
+    def _prepare_for_issue_locked(
+        self, project: str, issue_iid: int, ref: str
+    ) -> IssueWorktreeHandle:
+        # `_prepare_locked`と同じ内部機構(bare clone/fetch/`git worktree`)を、
+        # `issue-<iid>`という別名前空間のworktree・ローカルbranchに対して行う(M4-8, ADR-0031)。
+        # 呼び出し元の`prepare_for_issue`が`_project_lock(project)`を保持した状態でのみ呼ばれる想定
+        bare_path = self._sync_bare_repo(project)
+        worktree_path = self._issue_worktree_path(project, issue_iid)
+        branch_name = _issue_branch_name(issue_iid)
+        sha = self._ensure_worktree(bare_path, worktree_path, branch_name, ref)
+
+        return IssueWorktreeHandle(
+            project=project,
+            issue_iid=issue_iid,
+            path=worktree_path,
+            branch=branch_name,
+            sha=sha,
+        )
+
+    def _sync_bare_repo(self, project: str) -> Path:
+        """bare cloneを用意し、最新のremote branch追跡refまでfetchする(`prepare`/`prepare_for_issue`共通)。"""
+        bare_path = self._bare_path(project)
 
         if not bare_path.exists():
             self._run_git(
@@ -172,7 +233,15 @@ class GitWorkspaceManager:
         # クラッシュ等でworktreeディレクトリだけが消えた場合の自己復旧(Spike S-3 §5)。
         # 以降の worktree add で「既に登録済み」エラーになるのを防ぐ
         self._run_git(["worktree", "prune"], cwd=bare_path)
+        return bare_path
 
+    def _ensure_worktree(
+        self, bare_path: Path, worktree_path: Path, branch_name: str, ref: str
+    ) -> str:
+        """worktreeを新規作成、または既存なら`ref`へ`reset --hard`して最新化し、HEADのshaを返す。
+
+        `prepare`/`prepare_for_issue`共通のロジック(`bare_path`/`_sync_bare_repo`済みが前提)。
+        """
         resolved_ref = self._resolve_ref(bare_path, ref)
 
         if worktree_path.exists():
@@ -198,14 +267,7 @@ class GitWorkspaceManager:
             # GCのLRU判定に使う最終利用時刻を更新する
             os.utime(worktree_path, None)
 
-        sha = self._run_git(["rev-parse", "HEAD"], cwd=worktree_path).strip()
-        return WorktreeHandle(
-            project=project,
-            mr_iid=mr_iid,
-            path=worktree_path,
-            branch=branch_name,
-            sha=sha,
-        )
+        return self._run_git(["rev-parse", "HEAD"], cwd=worktree_path).strip()
 
     def _ensure_disk_budget(self) -> None:
         if self._disk_usage_bytes() <= self._max_disk_bytes:
@@ -217,9 +279,15 @@ class GitWorkspaceManager:
                 "既存worktreeを破棄してもなお新規worktree用の空き容量を確保できませんでした"
             )
 
-    def _discard_worktree(self, project: str, mr_iid: int, path: Path) -> None:
+    def _discard_worktree(
+        self,
+        project: str,
+        iid: int,
+        path: Path,
+        branch_name_fn: Callable[[int], str],
+    ) -> None:
         bare_path = self._bare_path(project)
-        branch_name = _branch_name(mr_iid)
+        branch_name = branch_name_fn(iid)
 
         if path.exists():
             if bare_path.exists():
@@ -301,6 +369,16 @@ class GitWorkspaceManager:
     def _worktree_path(self, project: str, mr_iid: int) -> Path:
         return self._worktrees_dir / _slugify_project(project) / _branch_name(mr_iid)
 
+    def _issue_worktree_path(self, project: str, issue_iid: int) -> Path:
+        # `mr-<iid>`とは別の`issue-<iid>`名前空間を使う(M4-8, ADR-0031)。同一project配下でも
+        # ディレクトリ名が完全に分かれるため、MRとIssueのIIDが数値として一致してもworktreeが
+        # 物理的に衝突しない
+        return (
+            self._worktrees_dir
+            / _slugify_project(project)
+            / _issue_branch_name(issue_iid)
+        )
+
     def _config_args(self) -> list[str]:
         return [
             arg for key, value in self._git_config for arg in ("-c", f"{key}={value}")
@@ -321,6 +399,12 @@ class GitWorkspaceManager:
 
 def _branch_name(mr_iid: int) -> str:
     return f"mr-{mr_iid}"
+
+
+def _issue_branch_name(issue_iid: int) -> str:
+    # `mr-<iid>`とは異なるprefixにすることで、MR/Issueが同じIID値を偶然持っていても
+    # worktree・ローカルbranchが衝突しない(M4-8, ADR-0031)
+    return f"issue-{issue_iid}"
 
 
 # runner/subprocess_runner.pyも同じ規則(project→1階層ディレクトリ名)を必要とするため、

@@ -19,8 +19,10 @@ M4-6([#112](https://github.com/AtsushiNi/gitlab-ai-platform/issues/112)、ADR-00
 `design`種別Jobも`WAITING_HUMAN`を使うようになったため、回答の統合先(`_RESULT_RESOLVERS`)を
 `job_type`ごとに切り替えられるようにした(ADR-0028「影響」が予告していた拡張)。M4-7
 ([#113](https://github.com/AtsushiNi/gitlab-ai-platform/issues/113)、ADR-0030)で`plan`種別Jobも
-同じ枠組みに追加した。`implement`(M4の残り)が対応するまでは`_RESULT_RESOLVERS`に含まれない
-種別を指定すると`InvalidJobTransitionError`を送出する。
+同じ枠組みに追加した。M4-8([#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114)、
+ADR-0033)で`implement`種別Jobも追加し、ADR-0028が「今後の課題」としていたJobType予約4種
+すべてが揃った。`_RESULT_RESOLVERS`に含まれない種別を指定すると`InvalidJobTransitionError`を
+送出する。
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from typing import Any
 
 from ..config import Config
 from ..design.job import build_resolved_design_job_result
+from ..implement.job import build_resolved_implement_job_result
 from ..issue_analysis.job import build_resolved_issue_analysis_job_result
 from ..job import Job, JobRepository, JobStatus, JobType, SqliteJobRepository
 from ..job.errors import InvalidJobTransitionError, JobError, JobNotFoundError
@@ -39,13 +42,13 @@ from ..plan.job import build_resolved_plan_job_result
 _logger = get_logger(__name__)
 
 # `WAITING_HUMAN`後の回答統合関数(job_typeごとに`result`の構造が異なるため)。
-# `implement`(M4の残り)がWAITING_HUMANを使うようになったらここに追加する(ADR-0028「影響」)
 _RESULT_RESOLVERS: dict[
     JobType, Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
 ] = {
     JobType.ISSUE_ANALYSIS: build_resolved_issue_analysis_job_result,
     JobType.DESIGN: build_resolved_design_job_result,
     JobType.PLAN: build_resolved_plan_job_result,
+    JobType.IMPLEMENT: build_resolved_implement_job_result,
 }
 
 

@@ -237,6 +237,27 @@ def test_get_issue_delegates(fake_adapter: FakeGitLabAdapter) -> None:
     assert result["iid"] == 5
 
 
+def test_get_default_branch_delegates(fake_adapter: FakeGitLabAdapter) -> None:
+    tool = TOOL_FACTORIES["get_default_branch"](fake_adapter)
+
+    result = tool(project="group/project")
+
+    assert fake_adapter.calls == [("get_default_branch", {"project": "group/project"})]
+    assert result == "main"
+
+
+def test_get_default_branch_falls_back_to_default_project_when_omitted(
+    fake_adapter: FakeGitLabAdapter,
+) -> None:
+    tool = TOOL_FACTORIES["get_default_branch"](fake_adapter, "group/default-project")
+
+    tool()
+
+    assert fake_adapter.calls == [
+        ("get_default_branch", {"project": "group/default-project"})
+    ]
+
+
 def test_update_merge_request_delegates_and_does_not_expose_state_event(
     fake_adapter: FakeGitLabAdapter,
 ) -> None:
@@ -352,7 +373,7 @@ def test_get_version_ignores_default_project_argument(
     assert tool() == "17.0.0-ee"
 
 
-def test_tool_factories_cover_exactly_the_fourteen_allowed_methods() -> None:
+def test_tool_factories_cover_exactly_the_fifteen_allowed_methods() -> None:
     assert set(TOOL_FACTORIES) == {
         "get_version",
         "list_merge_requests",
@@ -361,6 +382,7 @@ def test_tool_factories_cover_exactly_the_fourteen_allowed_methods() -> None:
         "list_merge_request_discussions",
         "list_issues",
         "get_issue",
+        "get_default_branch",
         "create_branch",
         "push_file_changes",
         "create_merge_request",

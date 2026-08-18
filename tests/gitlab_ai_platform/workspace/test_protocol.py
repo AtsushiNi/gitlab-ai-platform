@@ -1,8 +1,20 @@
 from pathlib import Path
 
-from gitlab_ai_platform.workspace import WorkspaceManager, WorktreeHandle
+from gitlab_ai_platform.workspace import (
+    IssueWorktreeHandle,
+    WorkspaceManager,
+    WorktreeHandle,
+)
 
-_EXPECTED_PUBLIC_METHODS = {"prepare", "discard", "collect_garbage"}
+# M4-8(#114, ADR-0031)で`prepare_for_issue`/`discard_for_issue`を追加した。
+# `prepare`/`discard`(MR単位)のシグネチャ・挙動は変更していない
+_EXPECTED_PUBLIC_METHODS = {
+    "prepare",
+    "discard",
+    "collect_garbage",
+    "prepare_for_issue",
+    "discard_for_issue",
+}
 
 
 def _public_methods(protocol_cls: type) -> set[str]:
@@ -20,6 +32,7 @@ class _FakeWorkspaceManager:
 
     def __init__(self) -> None:
         self._handles: dict[tuple[str, int], WorktreeHandle] = {}
+        self._issue_handles: dict[tuple[str, int], IssueWorktreeHandle] = {}
 
     def prepare(self, project: str, mr_iid: int, ref: str) -> WorktreeHandle:
         handle = WorktreeHandle(
@@ -37,6 +50,22 @@ class _FakeWorkspaceManager:
 
     def collect_garbage(self) -> list[WorktreeHandle]:
         return []
+
+    def prepare_for_issue(
+        self, project: str, issue_iid: int, ref: str
+    ) -> IssueWorktreeHandle:
+        handle = IssueWorktreeHandle(
+            project=project,
+            issue_iid=issue_iid,
+            path=Path(f"/tmp/{project}/issue-{issue_iid}"),
+            branch=f"issue-{issue_iid}",
+            sha=ref,
+        )
+        self._issue_handles[(project, issue_iid)] = handle
+        return handle
+
+    def discard_for_issue(self, project: str, issue_iid: int) -> None:
+        self._issue_handles.pop((project, issue_iid), None)
 
 
 def test_fake_workspace_manager_satisfies_protocol():
