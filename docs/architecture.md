@@ -156,7 +156,9 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 - **Job Queue**(M3-2): まずDBベース。取得の排他・可視性タイムアウト・リトライ・デッドレター
 - **Orchestrator**(M3-7, M4-1〜M4-6, M4-9〜M4-10): フェーズ間の状態遷移、`WAITING_HUMAN`による停止判断、
   HTTP API/サーバ層による外部連携の口(M4-8の実装フェーズはRunner+Workspace Manager、
-  M4-9のpush/MR作成はGitLab Adapterの担当)
+  M4-9のpush/MR作成はGitLab Adapterの担当)。M4-10でフェーズ間の連鎖(`issue-analysis → design →
+  plan → implement → push`、`orchestrator.pipeline.advance_pipeline`)を実装した
+  ([ADR-0035](adr/0035-pipeline-orchestration.md))
 
 ## 設計原則(ADR化する判断)
 

@@ -306,6 +306,9 @@ class RunnerDispatcher:
         poll_interval_seconds: float = 5.0,
         heartbeat_interval_seconds: float = 120.0,
         visibility_timeout_seconds: int = DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+        # `complete`成功直後に呼ぶ任意のフック(M4-10, ADR-0035)。RunnerDispatcher自体は
+        # このフックの中身(パイプラインのフェーズ順序)を知らない
+        on_job_completed: Callable[[Job], None] | None = None,
     ) -> None: ...
 
     def run_once(self) -> bool:
@@ -335,6 +338,13 @@ class RunnerDispatcher:
 - 合成ルート`run_dispatcher(config, ...)`は`run_single_review`/`run_watch`と同じ流儀で
   `config`から具象実装(`GitLabRestAdapter`/`build_workspace_manager`/
   `SubprocessClaudeCodeRunner`/`SqliteStateStore`/`SqliteJobRepository`)を組み立てる
+- `on_job_completed`(M4-10, [ADR-0035](../adr/0035-pipeline-orchestration.md)): `_process`が
+  `complete`成功直後(`WaitingForHumanError`/`fail`経路では呼ばない)に呼ぶ任意のフック。
+  フック自体が送出した例外はログにのみ変換し、`_process`の外へは伝播させない(既に成功した
+  今回のJobの完了確定を、後続処理の失敗で巻き戻さないため)。合成ルート`run_dispatcher`は
+  `orchestrator.pipeline.advance_pipeline_hook(job_repo)`を束縛して渡し、
+  `issue-analysis → design → plan → implement → push`の連鎖を実現する。
+  `RunnerDispatcher`自身はこのフックの中身(フェーズ順序)を一切知らない
 
 ## 入出力スキーマ
 
@@ -500,8 +510,13 @@ issue-analysis Jobの`payload`/`result`(payloadは`poller/issue_poller.py`、res
   claim対象にすること、Job処理中に`heartbeat_interval_seconds`ごとに`heartbeat`が呼ばれること、
   `heartbeat`が`LeaseLostError`を送出してもhandler本体は中断されず完了すること、`run_forever`が
   `stop_event`まで空振り時のみ`poll_interval_seconds`待ってポーリングし続けること。
-  `run_dispatcher`(合成ルート)は実サービスに繋がない範囲(`stop_event`を起動前にセットする、
-  Jobが無い状態で`run_once=True`を渡す)で、具象実装の組み立てが例外を出さないことを検証する
+  `on_job_completed`(M4-10, ADR-0035)は`complete`成功後にのみ呼ばれること(`fail`/
+  `wait_for_human`経路では呼ばれないこと)、フック自体が例外を送出しても`complete`済みの
+  結果(`repo.complete_calls`)に影響しないことを検証する。`run_dispatcher`(合成ルート)は
+  実サービスに繋がない範囲(`stop_event`を起動前にセットする、Jobが無い状態で
+  `run_once=True`を渡す)で、具象実装の組み立てが例外を出さないことに加え、
+  `build_job_handlers`/`advance_pipeline_hook`をモンキーパッチして実際に
+  `on_job_completed`として配線されていることを検証する
 
 ## 関連ドキュメント
 
@@ -520,6 +535,12 @@ issue-analysis Jobの`payload`/`result`(payloadは`poller/issue_poller.py`、res
 - [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md) —
   `wait_for_human`で`WAITING_HUMAN`にしたJobを、非リース方式の`update_status`で
   `RUNNING`→`DONE`へ再開させる`respond`サブコマンド(M4-5)の設計判断
+- [ADR-0035: Issue→MRパイプラインのオーケストレーション](../adr/0035-pipeline-orchestration.md) —
+  `RunnerDispatcher`/`respond_to_job`の`on_job_completed`フックが、`orchestrator.pipeline`の
+  `advance_pipeline`/`advance_pipeline_hook`を経てJob完了後のフェーズ連鎖を実現する設計(M4-10)
+- [specs/orchestrator.md](orchestrator.md) — `advance_pipeline`/`advance_pipeline_hook`の
+  公開インターフェース
 - ソースコード: `src/gitlab_ai_platform/job/`(`protocol.py` / `sqlite.py` / `errors.py` /
   `__init__.py`)、`src/gitlab_ai_platform/review/job.py`、
-  `src/gitlab_ai_platform/cli/dispatcher.py`(M3-3)、`src/gitlab_ai_platform/cli/respond.py`(M4-5)
+  `src/gitlab_ai_platform/cli/dispatcher.py`(M3-3, M4-10)、
+  `src/gitlab_ai_platform/cli/respond.py`(M4-5, M4-10)

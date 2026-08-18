@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import time
@@ -38,6 +39,7 @@ from gitlab_ai_platform.gitlab_adapter.types import (
 from gitlab_ai_platform.implement.errors import ImplementationNotCommittedError
 from gitlab_ai_platform.implement.git_ops import WorktreeState
 from gitlab_ai_platform.implement.job import build_implement_job_payload
+from gitlab_ai_platform.job import SqliteJobRepository
 from gitlab_ai_platform.job.errors import LeaseLostError
 from gitlab_ai_platform.job.protocol import Job, JobStatus, JobType
 from gitlab_ai_platform.plan.job import build_plan_job_payload
@@ -349,6 +351,9 @@ class _FakeJobRepository:
     ) -> None:
         self._jobs_to_claim = list(jobs_to_claim)
         self._heartbeat_error = heartbeat_error
+        # claimしたJobをid別に覚えておき、completeが返す更新後Jobの組み立てに使う
+        # (M4-10: RunnerDispatcher._processがcompleteの戻り値をon_job_completedへ渡すため)
+        self._claimed_jobs: dict[str, Job] = {}
         self.claim_calls: list[tuple[str, tuple[JobType, ...] | None, int]] = []
         self.heartbeat_calls: list[tuple[str, str, int]] = []
         self.complete_calls: list[tuple[str, str, dict | None]] = []
@@ -358,7 +363,10 @@ class _FakeJobRepository:
     def claim(self, worker_id, *, job_types=None, visibility_timeout_seconds=600):
         self.claim_calls.append((worker_id, job_types, visibility_timeout_seconds))
         if self._jobs_to_claim:
-            return self._jobs_to_claim.pop(0)
+            job = self._jobs_to_claim.pop(0)
+            if job is not None:
+                self._claimed_jobs[job.id] = job
+            return job
         return None
 
     def heartbeat(self, job_id, worker_id, *, visibility_timeout_seconds=600):
@@ -368,6 +376,10 @@ class _FakeJobRepository:
 
     def complete(self, job_id, worker_id, result=None):
         self.complete_calls.append((job_id, worker_id, result))
+        original = self._claimed_jobs.get(job_id)
+        if original is None:
+            return None
+        return dataclasses.replace(original, status=JobStatus.DONE, result=result)
 
     def fail(self, job_id, worker_id, error, *, retry=True):
         self.fail_calls.append((job_id, worker_id, error, retry))
@@ -1358,6 +1370,128 @@ def test_run_once_completes_job_on_handler_success():
     assert repo.fail_calls == []
 
 
+# --- on_job_completed(M4-10, ADR-0035)---
+
+
+def test_run_once_calls_on_job_completed_with_the_completed_job_after_success():
+    job = _job()
+    repo = _FakeJobRepository([job])
+    completed_jobs: list[Job] = []
+
+    dispatcher = RunnerDispatcher(
+        repo,
+        {JobType.REVIEW: lambda received_job: {"ok": True}},
+        worker_id=_WORKER_ID,
+        on_job_completed=completed_jobs.append,
+    )
+
+    dispatcher.run_once()
+
+    assert len(completed_jobs) == 1
+    assert completed_jobs[0].id == job.id
+    assert completed_jobs[0].status == JobStatus.DONE
+    assert completed_jobs[0].result == {"ok": True}
+
+
+def test_run_once_does_not_call_on_job_completed_when_handler_fails():
+    job = _job()
+    repo = _FakeJobRepository([job])
+    completed_jobs: list[Job] = []
+
+    def _handler(received_job: Job) -> dict:
+        raise RuntimeError("boom")
+
+    dispatcher = RunnerDispatcher(
+        repo,
+        {JobType.REVIEW: _handler},
+        worker_id=_WORKER_ID,
+        on_job_completed=completed_jobs.append,
+    )
+
+    dispatcher.run_once()
+
+    assert completed_jobs == []
+
+
+def test_run_once_does_not_call_on_job_completed_when_waiting_for_human():
+    job = _job()
+    repo = _FakeJobRepository([job])
+    completed_jobs: list[Job] = []
+
+    def _handler(received_job: Job) -> dict:
+        raise WaitingForHumanError(
+            {"questions": [{"question": "q?", "severity": "critical"}]}
+        )
+
+    dispatcher = RunnerDispatcher(
+        repo,
+        {JobType.REVIEW: _handler},
+        worker_id=_WORKER_ID,
+        on_job_completed=completed_jobs.append,
+    )
+
+    dispatcher.run_once()
+
+    assert completed_jobs == []
+    assert repo.wait_for_human_calls != []
+
+
+def test_run_once_does_not_call_on_job_completed_when_job_type_not_implemented():
+    job = _job(job_type=JobType.ISSUE_ANALYSIS, payload={})
+    repo = _FakeJobRepository([job])
+    completed_jobs: list[Job] = []
+
+    dispatcher = RunnerDispatcher(
+        repo,
+        {},
+        worker_id=_WORKER_ID,
+        job_types=(JobType.ISSUE_ANALYSIS,),
+        on_job_completed=completed_jobs.append,
+    )
+
+    dispatcher.run_once()
+
+    assert completed_jobs == []
+
+
+def test_run_once_on_job_completed_exception_does_not_crash_dispatcher(caplog):
+    # フェーズ連鎖(M4-10)の失敗は、既に成功した今回のJobの完了確定を巻き戻す理由にはならない
+    job = _job()
+    repo = _FakeJobRepository([job])
+
+    def _failing_hook(completed_job: Job) -> None:
+        raise RuntimeError("advance_pipeline boom")
+
+    dispatcher = RunnerDispatcher(
+        repo,
+        {JobType.REVIEW: lambda received_job: {"ok": True}},
+        worker_id=_WORKER_ID,
+        on_job_completed=_failing_hook,
+    )
+
+    processed = dispatcher.run_once()
+
+    assert processed is True
+    # complete自体は既に成功している(フックの失敗で巻き戻らない)
+    assert repo.complete_calls == [(job.id, _WORKER_ID, {"ok": True})]
+    assert repo.fail_calls == []
+
+
+def test_run_once_without_on_job_completed_does_not_require_the_hook():
+    # on_job_completed省略時(既定None)でも従来通り動作する(後方互換)
+    job = _job()
+    repo = _FakeJobRepository([job])
+
+    dispatcher = RunnerDispatcher(
+        repo, {JobType.REVIEW: lambda received_job: {"ok": True}}, worker_id=_WORKER_ID
+    )
+
+    processed = dispatcher.run_once()
+
+    assert processed is True
+    assert repo.complete_calls == [(job.id, _WORKER_ID, {"ok": True})]
+
+
 def test_run_once_fails_with_retry_true_when_handler_raises(caplog):
     job = _job()
     repo = _FakeJobRepository([job])
@@ -1573,3 +1707,47 @@ def test_run_dispatcher_does_not_prevent_a_second_concurrent_invocation(tmp_path
 
     run_dispatcher(config, run_once=True)
     run_dispatcher(config, run_once=True)
+
+
+def test_run_dispatcher_wires_advance_pipeline_hook_as_on_job_completed(
+    tmp_path, monkeypatch
+):
+    # run_dispatcher(合成ルート)がadvance_pipeline_hook(job_repo)をon_job_completedとして
+    # 正しく束縛していることを検証する(M4-10, ADR-0035)。実サービス(GitLab/Claude Code)には
+    # 繋がないよう、build_job_handlersとadvance_pipeline_hook自体をモンキーパッチする
+    hook_bound_repos: list[object] = []
+    completed_jobs: list[Job] = []
+
+    def _fake_advance_pipeline_hook(job_repo):
+        hook_bound_repos.append(job_repo)
+
+        def _hook(completed_job: Job) -> None:
+            completed_jobs.append(completed_job)
+
+        return _hook
+
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.dispatcher.advance_pipeline_hook",
+        _fake_advance_pipeline_hook,
+    )
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.dispatcher.build_job_handlers",
+        lambda adapter, workspace, runner, store, config: {
+            JobType.REVIEW: lambda job: {"ok": True}
+        },
+    )
+
+    config = _config(tmp_path, job_db_path=str(tmp_path / "job.db"))
+    job_repo = SqliteJobRepository(config.job_db_path)
+    enqueued = job_repo.enqueue(
+        JobType.REVIEW, {"project": _PROJECT, "mr_iid": _MR_IID}
+    )
+    job_repo.close()
+
+    run_dispatcher(config, run_once=True)
+
+    assert len(hook_bound_repos) == 1
+    assert len(completed_jobs) == 1
+    assert completed_jobs[0].id == enqueued.id
+    assert completed_jobs[0].status == JobStatus.DONE
+    assert completed_jobs[0].result == {"ok": True}
