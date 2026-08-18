@@ -179,22 +179,28 @@ M4-9(pushフェーズ)がJobHandlerとして`push_file_changes`を呼ぶ正規�
    `build_implement_handler`): `GitLabWriter`のうち`create_branch`(branch作成)のみを呼び出す。
    `push_file_changes`(Commits API経由のファイル変更コミット)は呼び出さない
    (`push`種別のJobHandler、`build_push_handler`が別フェーズとして呼ぶ。§3.5)
-3. **認証情報のスコープ・ロール**(§4.1): 自動実行系用のGitLab PAT
-   (`GITLAB_AI_PLATFORM_GITLAB_TOKEN`)は`read_api`スコープかつアカウントロールがReporterの
-   ままである(実装フェーズもこのトークンを使う。対話型MCP用のDeveloperロール・`api`スコープの
-   トークンとは別)。仮にBash経由で`git push`相当の操作が試みられても、GitLab側のスコープ・
-   ロールの両方で拒否される。加えて`GitWorkspaceManager`の`git_config`(credential.helper)は
-   Workspace Manager自身のgit呼び出しにのみ`-c`引数として渡され、worktreeの`.git/config`には
-   永続化されない(=Claude CodeがBash経由で素の`git push`を叩いても、認証情報がworktree内に
-   残っていないため、そもそも認証できず失敗する可能性が高い)
+3. **認証情報のscope・credential.helper**(§4.1): 自動実行系用のGitLab PAT
+   (`GITLAB_AI_PLATFORM_GITLAB_TOKEN`)は[ADR-0037](../adr/0037-automated-token-scope-upgrade.md)
+   (M4フォローアップ、[#127](https://github.com/AtsushiNi/gitlab-ai-platform/issues/127))以降
+   `api`スコープ・Developerロールであり、**GitLab側のロール・スコープによる拒否は成立しない**
+   (下記「残存リスク」参照)。この層で実効的に残るのは`GitWorkspaceManager`の`git_config`
+   (credential.helper)がWorkspace Manager自身のgit呼び出しにのみ`-c`引数として渡され、
+   worktreeの`.git/config`には永続化されないことのみ(=Claude CodeがBash経由で素の
+   `git push`を叩いても、認証情報がworktree内に残っていないため、そもそも認証できず
+   失敗する可能性が高い)
 
 **残存リスクと運用上の注意(このフェーズで新たに生じる考慮事項)**:
 
 - `Bash`を許可している以上、`disallowed_tools`の`Bash(git push:*)`パターンは
   Claude Codeの協力的な振る舞いを前提とした一段の防御であり、Adapter層のように
-  「そもそも呼び出しようがない」という構造的な保証ではない。実効的な安全性は上記3層のうち
-  2・3(JobHandlerが`push_file_changes`を呼ばないこと、認証情報のスコープ・ロール)に
-  最終的に依存している
+  「そもそも呼び出しようがない」という構造的な保証ではない。[ADR-0037](../adr/0037-automated-token-scope-upgrade.md)
+  以降、自動実行系用PATが`api`スコープ・Developerロールになったため、**GitLab側のスコープ・
+  ロールによる拒否という層は失われた**。実効的な安全性は上記1・2・3
+  (Workspace Managerが`git push`を実装しないこと、JobHandlerが`push_file_changes`を
+  呼ばないこと、worktreeに認証情報が永続化されないこと)に最終的に依存している。仮に
+  `disallowed_tools`をすり抜けてBash経由の素の`git push`が認証まで成功した場合、
+  ADR-0037以前は「読み取りのみのアカウントなので拒否される」で止まっていたが、
+  ADR-0037以降は書き込みが成功しうる点に注意する
 - `SubprocessClaudeCodeRunner`は`claude`プロセスの環境変数として`os.environ`(Pythonプロセス
   自身の環境)をそのまま引き継ぐ(§4.2参照)。`Bash`が許可されたことで、Claude Codeがこの
   環境変数を`env`コマンド等で読み取ることが技術的に可能になる。影響を受けうる値:
@@ -214,9 +220,12 @@ M4-9(pushフェーズ)がJobHandlerとして`push_file_changes`を呼ぶ正規�
     実装フェーズを実行する`worker`プロセスについては、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`を
     `.env`ファイル経由で供給する運用を推奨する(OS環境変数へのexportは不要。
     [operations/configuration.md](configuration.md)参照)
-  - 上記いずれの場合も、漏洩した場合の影響は自動実行系用アカウントの権限
-    (`read_api`スコープ、Reporterロール)に留まる。対話型MCP用の`api`スコープ・Developer
-    ロールのトークン(§4.1)はこの経路には一切登場しない
+  - [ADR-0037](../adr/0037-automated-token-scope-upgrade.md)以降、自動実行系用アカウントの
+    権限は`api`スコープ・Developerロールであるため、漏洩した場合の影響は「読み取りのみ」に
+    留まらず書き込み操作(branch作成・push・MR作成)にも及ぶ。対話型MCP用のトークン
+    (§4.1)とはアカウントが分離されているためその経路には登場しないが、自動実行系用
+    アカウント自体の漏洩時の影響度はADR-0019時点の想定より大きい(§4.4のPAT漏洩時対応
+    手順を参照)
 - 将来的な追加の緩和策として、実装フェーズをコンテナ/サンドボックス環境で実行する
   ([operations/docker-runtime.md](docker-runtime.md)の実行環境をこのフェーズ専用に
   強化する等)ことが考えられるが、本Issue(M4-8)のスコープ外とし、今後の課題として残す
@@ -239,35 +248,39 @@ Claude Codeへの権限付与(`allowed_tools`等)の考慮は不要。
 - `push_file_changes`は対象branchがprotectedの場合`ProtectedBranchError`で拒否される(§3.1)。
   pushフェーズの対象branch(`ai/issue-<issue_iid>`)は実装フェーズが作成した非protectedな
   branchのため、通常はこのチェックに引っかからない
-- **既知の課題(トークンスコープの不整合)**: `run_dispatcher`(合成ルート)は`review`/
+- **トークンスコープの整合(対応済み)**: `run_dispatcher`(合成ルート)は`review`/
   `issue-analysis`/`design`/`plan`/`implement`/`push`のすべてのJobHandlerへ同一の
-  `GitLabRestAdapter(config.gitlab_url, config.gitlab_token)`を渡す。§4.1は自動実行系用
-  アカウント(`GITLAB_AI_PLATFORM_GITLAB_TOKEN`)を「構造的に読み取りしか行わない経路のため
-  `read_api`スコープ・Reporterロールに留める」([ADR-0019](../adr/0019-gitlab-token-scoping.md))
-  と説明しているが、実装フェーズ(M4-8、`create_branch`)・pushフェーズ(M4-9、
-  `push_file_changes`/`create_merge_request`)がこの同じトークンで書き込みAPIを呼ぶため、
-  この前提は既に崩れている。`read_api`スコープ・Reporterロールのままでは、これらの
-  書き込み呼び出しはGitLab側で拒否される可能性が高い。運用上、無人実行トラック
-  (`worker`)を稼働させる場合は、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`に`api`スコープ・
-  Developer以上のロールを付与する必要がある。この不整合は本Issue(M4-9)が新規に
-  作ったものではなく実装フェーズ(M4-8)から既に生じていたが、pushフェーズの追加で
-  より顕在化するため明記する。トークン分離の再設計(自動実行系を「読み取り専用」と
-  「無人実装・push可能」の2アカウントにさらに分ける等)は今後の課題とし、
-  本Issueのスコープには含めない
+  `GitLabRestAdapter(config.gitlab_url, config.gitlab_token)`を渡す。M4-8(`create_branch`)・
+  M4-9(`push_file_changes`/`create_merge_request`)の追加により、自動実行系アカウント
+  (`GITLAB_AI_PLATFORM_GITLAB_TOKEN`)がADR-0019の想定(`read_api`スコープ・Reporterロール、
+  「構造的に読み取りしか行わない経路」)を外れて書き込みAPIを呼ぶようになったため、
+  [ADR-0037](../adr/0037-automated-token-scope-upgrade.md)(M4フォローアップ、
+  [#127](https://github.com/AtsushiNi/gitlab-ai-platform/issues/127))で自動実行系アカウントの
+  ロール・スコープを`api`スコープ・Developerロールへ引き上げた(§4.1参照)。安全性は
+  GitLabロールではなく、§2.3のAdapter層の許可リスト(merge等がそもそもメソッドとして
+  存在しない)と、`review`/`issue-analysis`/`design`/`plan`の各JobHandlerが引数を
+  `GitLabReader`型で受け取ること(`cli/dispatcher.py`)で担保する
 
 ## 4. トークン・シークレットの管理
 
 ### 4.1 GitLab PAT
 
 **AI用GitLabアカウント・トークンスコープの設計は[ADR-0019](../adr/0019-gitlab-token-scoping.md)
-(M3-8)で決定した。** 以下はその実装を反映した現状。
+(M3-8)で決定し、[ADR-0037](../adr/0037-automated-token-scope-upgrade.md)(M4フォローアップ、
+[#127](https://github.com/AtsushiNi/gitlab-ai-platform/issues/127))で自動実行系アカウントの
+ロール・スコープを引き上げた。** 以下はその実装を反映した現状。
 
 - **アカウント分離**: 人間の個人アカウントは使わない。用途に応じて2つのAI用アカウントを使う
-  ([ADR-0019](../adr/0019-gitlab-token-scoping.md)「決定 1」):
-  - 自動実行系用アカウント(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行) —
-    構造的に読み取りしか行わない経路(§3.3)のため、ロールは**Reporter**に留める
+  ([ADR-0019](../adr/0019-gitlab-token-scoping.md)「決定 1」、
+  [ADR-0037](../adr/0037-automated-token-scope-upgrade.md)):
+  - 自動実行系用アカウント(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行に加え、
+    `worker`(`run_dispatcher`)経由の`issue-analysis`/`design`/`plan`/`implement`/`push`) —
+    `implement`/`push`が書き込みAPIを呼ぶため、ロールは**Developer**(ADR-0019時点は
+    Reporterだったが、ADR-0037で引き上げ)
   - 対話型GitLab Adapter MCP Server用アカウント — branch作成・push・MR/Issue作成等の
-    書き込み(§2.2)を行うため、ロールは**Developer**(Maintainer以上は与えない)
+    書き込み(§2.2)を行うため、ロールは**Developer**(Maintainer以上は与えない)。
+    自動実行系アカウントと同じロールになったが、無人実行/対話型という監査ログ上の
+    アカウント分離自体は維持する
 - **用途別トークン**: 上記2アカウントに対応して、PATも2種類の環境変数で供給する
   (`config.toml`(リポジトリにコミットされうる)には**書かない**、`.env`ファイルまたは
   実際にexportされたOS環境変数経由。`.env`・`config.toml`はいずれも`.gitignore`対象):
@@ -277,17 +290,20 @@ Claude Codeへの権限付与(`allowed_tools`等)の考慮は不要。
     Server用。`adapter_mcp_server/main.py`が使う。**未設定の場合は`GITLAB_AI_PLATFORM_GITLAB_TOKEN`
     にフォールバックする**(用途別トークンの分離は必須ではなくオプション。
     [`config/models.py`](../../src/gitlab_ai_platform/config/models.py)の`Config.from_raw`)
-- **スコープ最小化**([`.env.example`](../../.env.example)、
+- **スコープ**([`.env.example`](../../.env.example)、
   [references/spike-S2-gitlab-rest-api.md](../../references/spike-S2-gitlab-rest-api.md) §3):
-  - `GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系)は`read_api`で足りる
-  - `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`(対話型MCP)は書き込み操作(branch作成・push・
-    MR/Issue作成等)を含むため`api`スコープが必要。`api`は常に読み書き全体を含み、
-    GitLabのスコープ機構だけでは「コメントは許可するがmergeは禁止」という粒度の制御は
-    できない。この粒度の制御は§3.1のAdapter層のコード側で機構的に絞り込んでいる
-    (GitLabスコープに依存しない設計)
-  - 上記のアカウントロール分離(自動実行系=Reporter)と組み合わせることで、
-    仮にPATのスコープ設定を誤ってもGitLab側のロールが書き込みAPIを拒否する二重の防御になる
-    ([ADR-0019](../adr/0019-gitlab-token-scoping.md)参照)
+  - `GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系)・`GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`
+    (対話型MCP)のいずれも書き込み操作(branch作成・push・MR/Issue作成等)を含むため
+    `api`スコープが必要([ADR-0037](../adr/0037-automated-token-scope-upgrade.md))。
+    `api`は常に読み書き全体を含み、GitLabのスコープ機構だけでは「コメントは許可するが
+    mergeは禁止」という粒度の制御はできない。この粒度の制御は§3.1のAdapter層のコード側で
+    機構的に絞り込んでいる(GitLabスコープに依存しない設計)
+  - GitLabロールによる二重防御(ADR-0019時点の「自動実行系=Reporterなので仮にスコープ設定を
+    誤っても拒否される」という設計)は、自動実行系がDeveloperロールになった
+    ([ADR-0037](../adr/0037-automated-token-scope-upgrade.md))ことで両アカウントとも
+    成立しなくなった。安全性は§3.1のAdapter層の許可リストと、`review`/`issue-analysis`/
+    `design`/`plan`の各JobHandlerが`GitLabReader`型で受け取ること(`cli/dispatcher.py`)に
+    一本化されている
 - **ログへの非露出**:
   - `Config.__repr__`は両トークンを`'***'`にマスクする([`config/models.py`](../../src/gitlab_ai_platform/config/models.py))
   - `ConfigError`のメッセージにはPATの値そのものを含めない
@@ -319,15 +335,16 @@ Claude Codeへの権限付与(`allowed_tools`等)の考慮は不要。
 [D-10 運用・トラブルシューティングガイド](troubleshooting.md)と合わせて、
 今後以下の観点を運用ルールとして整備することを推奨する:
 
-- 発行済みPAT・AWSクレデンシャルの一覧。§4.1の2アカウント運用([ADR-0019](../adr/0019-gitlab-token-scoping.md))
-  に合わせて、少なくとも次の列を記録する: アカウント名・**用途(自動実行系/対話型MCP)**・
-  付与スコープ(`read_api`/`api`)・付与ロール(Reporter/Developer)・発行者・発行日・最終利用日
-- 定期的なローテーション(特にPATは有効期限を設定し、無期限発行を避ける)。対話型MCP用トークン
-  (`api`スコープ、書き込み可能)は自動実行系用トークン(`read_api`スコープ)より影響範囲が
-  大きいため、優先してローテーション間隔を短くすることを推奨する
+- 発行済みPAT・AWSクレデンシャルの一覧。§4.1の2アカウント運用([ADR-0019](../adr/0019-gitlab-token-scoping.md)・
+  [ADR-0037](../adr/0037-automated-token-scope-upgrade.md))に合わせて、少なくとも次の列を
+  記録する: アカウント名・**用途(自動実行系/対話型MCP)**・付与スコープ(`api`)・
+  付与ロール(Developer)・発行者・発行日・最終利用日
+- 定期的なローテーション(特にPATは有効期限を設定し、無期限発行を避ける)。両トークンとも
+  `api`スコープ・Developerロール(ADR-0037以降)で影響範囲は同程度のため、優先順位を付けず
+  両方とも同じ間隔でのローテーションを推奨する
 - 退職・異動・プロジェクト終了時のトークン失効
 - AI用GitLabアカウントのロールが必要以上に強くなっていないかの定期確認
-  (自動実行系=Reporter、対話型MCP=Developerを超えていないか。§4.1)
+  (自動実行系・対話型MCPともにDeveloperを超えていないか。§4.1)
 
 ### 4.4 PAT漏洩時の対応手順
 
@@ -340,16 +357,16 @@ Claude Codeへの権限付与(`allowed_tools`等)の考慮は不要。
    どちらか)。特定できない場合は両方とも失効させる
 2. 社内GitLabの`User Settings > Access Tokens`で該当PATを即座に**Revoke**する。
    新規発行と`.env`の更新は事後でよい。まず失効を優先する
-3. 対話型MCP用トークン(`api`スコープ)が漏洩した場合、書き込み操作(branch作成・push・
-   MR/Issue作成・コメント投稿)が第三者に悪用されうる。該当プロジェクトのAudit Events・
-   最近のMR/Issue・pushされたcommitを確認し、意図しない変更が無いか確認する
-4. 自動実行系用トークン(`read_api`スコープ、かつアカウントロールがReporter)が漏洩した
-   場合の影響範囲は読み取りのみ(非公開プロジェクトのコード・Issue内容の閲覧)に限定される。
-   とはいえ機微情報が漏洩しうるため、同様に失効を優先する
-5. 新しいPATを発行し、`.env`(または実環境変数)の該当キー(`GITLAB_AI_PLATFORM_GITLAB_TOKEN`
+3. 対話型MCP用トークン・自動実行系用トークンのいずれも`api`スコープ・Developerロール
+   ([ADR-0037](../adr/0037-automated-token-scope-upgrade.md))のため、書き込み操作(branch作成・
+   push・MR/Issue作成・コメント投稿)が第三者に悪用されうる。該当プロジェクトのAudit Events・
+   最近のMR/Issue・pushされたcommitを確認し、意図しない変更が無いか確認する。GitLab監査ログ上、
+   どちらのアカウントの操作かは判別できる(ADR-0019「決定4」)ため、1で特定したアカウントの
+   Audit Eventsを優先して確認する
+4. 新しいPATを発行し、`.env`(または実環境変数)の該当キー(`GITLAB_AI_PLATFORM_GITLAB_TOKEN`
    または`GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`)を更新する
    ([configuration.md](configuration.md)「シークレット」節)
-6. §4.3の棚卸し表の当該行を更新し、失効日・再発行日を記録する
+5. §4.3の棚卸し表の当該行を更新し、失効日・再発行日を記録する
 
 ## 5. X-1(セキュリティレビュー)での確認観点
 
@@ -376,6 +393,7 @@ Claude Codeへの権限付与(`allowed_tools`等)の考慮は不要。
 - [ADR-0032: GitLab Adapterへのdefault branch取得メソッドの追加](../adr/0032-default-branch-lookup.md)
 - [ADR-0033: 実装フェーズ(Job種別`implement`)の設計](../adr/0033-implement-phase.md) — 本ドキュメント§3.4の元になった、Edit/Write/Bash権限付与とgit push禁止の多層防御設計
 - [ADR-0034: push と MR 作成フェーズの設計](../adr/0034-push-and-mr-phase.md) — 本ドキュメント§3.5の元になった、初めてGitLabへの実際の書き込みが発生する経路の設計
+- [ADR-0037: 自動実行系GitLabトークンのスコープ引き上げ](../adr/0037-automated-token-scope-upgrade.md) — ADR-0019のロール設計がM4-8/M4-9で崩れたことへの対応(自動実行系をDeveloper/`api`へ引き上げ)
 - [specs/gitlab-adapter.md](../specs/gitlab-adapter.md)
 - [specs/adapter-mcp-server.md](../specs/adapter-mcp-server.md)
 - [specs/claude-code-runner.md](../specs/claude-code-runner.md)

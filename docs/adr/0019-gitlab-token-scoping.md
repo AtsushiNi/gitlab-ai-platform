@@ -192,3 +192,13 @@ GitLab PATの観点では実質的に「自動実行系(単発`review`+`watch`�
   設計タスクのため、既存の1アカウント想定の記述と矛盾しない範囲に留めた)
 - 既存の`.env`(`GITLAB_AI_PLATFORM_GITLAB_TOKEN`のみ設定)は無変更で動作し続ける
   (フォールバックにより後方互換)
+
+## 追記(M4フォローアップ、[#127](https://github.com/AtsushiNi/gitlab-ai-platform/issues/127))
+
+「決定1」の表で`ai-review-bot`(自動実行系)を**Reporter**・`read_api`スコープに絞った前提
+(「この経路はコード上`GitLabReader`しか呼ばない」)は、M4-8(実装フェーズ、`create_branch`)・
+M4-9(pushフェーズ、`push_file_changes`/`create_merge_request`)により崩れた。
+[ADR-0037](0037-automated-token-scope-upgrade.md)で`ai-review-bot`のロール・スコープを
+**Developer・`api`スコープ**へ引き上げる決定をした(上表は歴史的経緯として変更せず残す)。
+`ai-interactive-bot`との2アカウント分離自体、用途別トークン(`gitlab_token`/
+`gitlab_token_mcp`)の仕組みは変更していない。詳細はADR-0037を参照。
