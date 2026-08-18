@@ -24,8 +24,12 @@
 コンポーネント構成と実際のデータフローは [docs/architecture.md](docs/architecture.md) の
 「全体図(現在の構成)」にまとめている。ざっくり言うと:
 
-1. Windows側: 人間の端末上でMRレビューを検出・実行し、結果を人間がVS Codeで確認する
-2. Linux/Docker側: Issue駆動の無人実行パイプライン(Job Queue + Orchestrator + Runner群)
+1. Windows側: MRの検出・レビューをバックグラウンドで行う。人間はAIの処理を待たずに済み、
+   結果ができた頃に確認してレビューを始めれば良い
+2. Linux/Docker側: コンテナ上のアプリが対応必要なIssueを取ってきて、設計→実装→レビューを進め、
+   MRの作成まで自動で行う
+3. Windows上のClaude Code(VS Code拡張)からGitLabのIssueや
+   MRを自分で調べたり操作したりできるMCPサーバーを提供する。
 
 このプロジェクトの現在地(どのマイルストーンが完了しているか)は
 [docs/roadmap.md](docs/roadmap.md) を参照。
