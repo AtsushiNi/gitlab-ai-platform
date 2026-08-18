@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,8 @@ from gitlab_ai_platform.cli.main import main
 from gitlab_ai_platform.cli.single_run import SingleRunResult
 from gitlab_ai_platform.config import GITLAB_TOKEN_ENV_KEY
 from gitlab_ai_platform.gitlab_adapter import GitLabApiError
-from gitlab_ai_platform.job.errors import JobError
+from gitlab_ai_platform.job import Job, JobStatus
+from gitlab_ai_platform.job.errors import InvalidJobTransitionError, JobError
 from gitlab_ai_platform.job.protocol import JobType
 from gitlab_ai_platform.review.errors import ReviewOutputParseError
 from gitlab_ai_platform.review.types import Finding, ReviewPaths, ReviewResult, Severity
@@ -694,3 +696,107 @@ def test_decompose_command_returns_config_error_exit_code(tmp_path, capsys):
 
     assert exit_code == exit_codes.EXIT_CONFIG_ERROR
     assert "設定エラー" in capsys.readouterr().err
+
+
+def _respond_argv(tmp_path: Path, *extra: str) -> list[str]:
+    config_path, env_path = _write_config(tmp_path)
+    return [
+        "--config",
+        str(config_path),
+        "--env",
+        str(env_path),
+        "respond",
+        *extra,
+    ]
+
+
+def _waiting_human_job(**overrides) -> Job:
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
+    kwargs = dict(
+        id="job-1",
+        job_type=JobType.ISSUE_ANALYSIS,
+        status=JobStatus.DONE,
+        payload={"project": "group/project", "issue_iid": 7},
+        result={"project": "group/project", "issue_iid": 7, "questions": []},
+        error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    kwargs.update(overrides)
+    return Job(**kwargs)
+
+
+def test_respond_command_returns_ok_when_job_id_omitted(tmp_path, monkeypatch):
+    # job_id省略時は一覧表示のみでNoneを返す(状態変更なし)
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.main.run_respond", lambda config, **kwargs: None
+    )
+
+    exit_code = main(_respond_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_OK
+
+
+def test_respond_command_prints_summary_when_job_completed(
+    tmp_path, monkeypatch, capsys
+):
+    job = _waiting_human_job()
+    monkeypatch.setattr(
+        "gitlab_ai_platform.cli.main.run_respond", lambda config, **kwargs: job
+    )
+
+    exit_code = main(_respond_argv(tmp_path, "job-1"))
+
+    assert exit_code == exit_codes.EXIT_OK
+    assert "job-1" in capsys.readouterr().out
+
+
+def test_respond_command_passes_job_id_through(tmp_path, monkeypatch):
+    captured = {}
+
+    def _fake_run_respond(config, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_respond", _fake_run_respond)
+
+    exit_code = main(_respond_argv(tmp_path, "job-42"))
+
+    assert exit_code == exit_codes.EXIT_OK
+    assert captured["job_id"] == "job-42"
+
+
+def test_respond_command_omitted_job_id_passes_none(tmp_path, monkeypatch):
+    captured = {}
+
+    def _fake_run_respond(config, **kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_respond", _fake_run_respond)
+
+    exit_code = main(_respond_argv(tmp_path))
+
+    assert exit_code == exit_codes.EXIT_OK
+    assert captured["job_id"] is None
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        JobError("DB接続エラー"),
+        InvalidJobTransitionError("job-1はWAITING_HUMAN状態ではありません"),
+    ],
+)
+def test_respond_command_returns_job_error_exit_code(
+    tmp_path, monkeypatch, capsys, exc
+):
+    def _raise(config, **kwargs):
+        raise exc
+
+    monkeypatch.setattr("gitlab_ai_platform.cli.main.run_respond", _raise)
+
+    exit_code = main(_respond_argv(tmp_path, "job-1"))
+
+    assert exit_code == exit_codes.EXIT_JOB_ERROR
+    assert "Job Repositoryエラー" in capsys.readouterr().err

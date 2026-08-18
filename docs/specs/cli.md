@@ -9,21 +9,24 @@
   [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3、Runner Dispatcher
   `worker`サブコマンド)、
   [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97) (M3-7、HTTP API
-  `api`サブコマンド)
+  `api`サブコマンド)、
+  [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111) (M4-5、`WAITING_HUMAN`後の
+  回答取り込み `respond`サブコマンド)
 - 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
   [ADR-0009](../adr/0009-cli-watch-design.md)、
   [ADR-0012](../adr/0012-decompose-interactive-session.md)、
   [ADR-0015](../adr/0015-parallel-review-execution.md)、
   [ADR-0016](../adr/0016-job-abstraction.md)、
   [ADR-0022](../adr/0022-runner-process-separation.md)、
-  [ADR-0023](../adr/0023-http-api.md)
+  [ADR-0023](../adr/0023-http-api.md)、
+  [ADR-0028](../adr/0028-waiting-human-answer-integration.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
   要件→Issue分解の対話型`decompose`サブコマンド、Runner Dispatcher常駐`worker`サブコマンド、
-  HTTP APIサーバー常駐`api`サブコマンド)
+  HTTP APIサーバー常駐`api`サブコマンド、`WAITING_HUMAN`後の回答取り込み`respond`サブコマンド)
 
 ## 責務
 
-5つのサブコマンドを提供する:
+6つのサブコマンドを提供する:
 
 - `review`: 指定した1つのproject/MRに対し、GitLab Adapter → Workspace Manager →
   Review(プロンプト) → Claude Code Runner → Review(パース・保存) → State Storeという
@@ -52,6 +55,13 @@
   [specs/http-api.md](http-api.md))。`worker`と同様、`review`/`watch`が使う経路とは別の
   独立したプロセスで、`watch`(Poller/Webhook)・`worker`(Runner Dispatcher)いずれの稼働状況
   にも依存しない。「将来のUIや他ツール連携の口」として、任意の`JobType`のJobを投入できる
+- `respond`: `WAITING_HUMAN`状態のJob(M4-3、要求分析フェーズが`ASK`判定の不明点を持つ場合に
+  遷移する)へ、人間の回答をターミナル入力(`input()`)で取り込み、`RUNNING`を経て`DONE`へ
+  遷移させる(M4-5、[ADR-0028](../adr/0028-waiting-human-answer-integration.md)、
+  [specs/issue-analysis.md](issue-analysis.md)「`WAITING_HUMAN`後の再開」)。`job_id`省略時は
+  `WAITING_HUMAN`状態のJobを一覧表示するだけで状態は変更しない。`review`/`watch`と同じ
+  非リース方式(`JobRepository.update_status`)の経路を使う(`WAITING_HUMAN`は`claim`対象外の
+  状態のため、`worker`のリース方式では扱わない)
 
 ## 前提と非対象
 
@@ -76,6 +86,9 @@
     `job_db_path`のみが前提で、GitLab到達性・`workspace_root`は不要(GitLab Adapter/Workspace
     Manager/Claude Code Runnerのいずれにも依存しないため、M3-7、
     [ADR-0023](../adr/0023-http-api.md))
+  - `respond`は`job_db_path`のみが前提で、GitLab到達性・`workspace_root`は不要(`api`と同じ
+    理由)。人間が対話するため実行時にターミナル(TTY)を持つ環境での利用を想定する
+    (`decompose`と同じ、`docs/requirements.md` 3-C)
 - 非対象:
   - オーケストレーション(Job間の遷移)はしない(`docs/architecture.md`のCLIの境界)
   - `review`はMR Pollerによる複数MR横断の走査はしない。`project`/`mr_iid`は呼び出し時に
@@ -93,6 +106,11 @@
   - `api`はJobの実行(`worker`の責務)を行わない。`claim`/`heartbeat`/`complete`/`fail`
     (Runner Dispatcher専用の操作)は公開せず、Job Repositoryへの読み書き(投入・参照・一覧)
     のみを提供する(M3-7、[ADR-0023](../adr/0023-http-api.md))
+  - `respond`は1回の呼び出しで複数Jobをまとめて処理しない(`job_id`省略時は一覧表示のみ)。
+    GitLab Issueコメント経由での質問提示・回答収集も対象外(実際に必要になってから追加する、
+    M4-5、[ADR-0028](../adr/0028-waiting-human-answer-integration.md)「却下した選択肢」)。
+    `issue-analysis`以外のJob種別(`design`/`implement`)への対応も対象外
+    (M4-6以降で必要になった時点で拡張する)
 
 ## 公開インターフェース
 
@@ -122,6 +140,9 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] \
     decompose <project> \
     [--permission-mode MODE]
+
+gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir DIR] \
+    respond [job_id]
 ```
 
 `pip install -e .`後は`gitlab-ai-platform`(`[project.scripts]`)として、それ以外でも
@@ -145,6 +166,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 | `--heartbeat-interval`(worker) | - | `120`(秒) | Job処理中にリースを延長する間隔秒 |
 | `--visibility-timeout`(worker) | - | `600`(秒、`job.protocol.DEFAULT_VISIBILITY_TIMEOUT_SECONDS`) | `claim`時に設定する可視性タイムアウト秒 |
 | `--once`(worker) | - | 偽 | 1件だけJobをclaim・処理して終了する(デバッグ・単発実行用) |
+| `job_id`(respond) | - | なし(省略時は一覧表示のみ) | 回答対象のJob ID。`WAITING_HUMAN`状態のJobである必要がある |
 
 `watch`/`worker`は`project`/`mr_iid`のような対象指定の引数を持たない。走査対象プロジェクト・
 ポーリング間隔・レビュー待ちラベル等はすべて`config.toml`(`Config`)から読む
@@ -162,6 +184,10 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 `mr_iid`に相当するものは存在しない(要件がまだIssue化されていない段階から始まるため)。
 `--allowed-tools`/`--disallowed-tools`は公開しない(対話型セッションでは`claude`自身の
 既定の権限確認フロー、または`--permission-mode`で人間がその場で制御する想定のため)。
+
+`respond`は`job_id`(位置引数、省略可)のみを取り、`api`と同じくCLI固有のオプションは
+持たない。`job_id`省略時は`WAITING_HUMAN`状態のJobの一覧をターミナルに表示するだけで、
+質問提示・回答収集・状態遷移は行わない(M4-5、[ADR-0028](../adr/0028-waiting-human-answer-integration.md))。
 
 ### Python API
 
@@ -485,6 +511,64 @@ def run_decompose(
     `claude`コマンド自体が見つからない場合のみ`ClaudeCommandNotFoundError`を送出する。"""
 ```
 
+#### `respond`(実装場所: `src/gitlab_ai_platform/cli/respond.py`、M4-5)
+
+`review`/`watch`と同じ「パイプライン本体/合成ルート」分離パターンを踏襲する
+([ADR-0008](../adr/0008-cli-single-run-design.md)、
+[ADR-0028](../adr/0028-waiting-human-answer-integration.md))。`WAITING_HUMAN`は`claim`対象外の
+状態のため、`worker`のリース方式ではなく`review`/`watch`と同じ非リース方式
+(`JobRepository.update_status`)を使う。
+
+```python
+from collections.abc import Callable
+
+from gitlab_ai_platform.config import Config
+from gitlab_ai_platform.job import Job, JobRepository
+
+
+def collect_answers(
+    questions: list[dict],
+    *,
+    ask: Callable[[str], str] = input,
+    output: Callable[[str], None] = print,
+) -> list[str]:
+    """`questions`(`Job.result["questions"]`)を1件ずつ提示し、人間の回答を集める。
+    Job Repositoryの状態は一切変更しない。"""
+
+
+def list_waiting_human_jobs(
+    job_repo: JobRepository, *, output: Callable[[str], None] = print
+) -> list[Job]:
+    """`WAITING_HUMAN`状態のJobを一覧表示する(`job_id`省略時の確認用途)。"""
+
+
+def respond_to_job(
+    job_repo: JobRepository,
+    job: Job,
+    *,
+    ask: Callable[[str], str] = input,
+    output: Callable[[str], None] = print,
+) -> Job:
+    """`WAITING_HUMAN`のJobに回答を取り込み、`RUNNING`を経て`DONE`へ遷移させる。
+    質問提示・回答収集(`collect_answers`)はJobの状態を一切変更しない。`RUNNING`遷移後に
+    例外(`KeyboardInterrupt`含む)が発生した場合は`FAILED`へ更新してから元の例外を
+    再送出する(ADR-0028)。"""
+
+
+def run_respond(
+    config: Config,
+    *,
+    job_id: str | None = None,
+    ask: Callable[[str], str] = input,
+    output: Callable[[str], None] = print,
+) -> Job | None:
+    """合成ルート。`config`から`SqliteJobRepository`を組み立てる。`job_id`省略時は
+    `list_waiting_human_jobs`のみを呼び`None`を返す(状態変更なし)。指定時は対象Jobを取得し、
+    `WAITING_HUMAN`状態かつ`issue-analysis`種別であることを確認してから`respond_to_job`に
+    委譲する。対象が存在しない場合は`JobNotFoundError`、条件を満たさない場合は
+    `InvalidJobTransitionError`を送出する(いずれも`job.errors.JobError`のサブクラス)。"""
+```
+
 ## 入出力スキーマ
 
 実装場所: `src/gitlab_ai_platform/cli/single_run.py`。
@@ -627,12 +711,34 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 4. 起動後は人間が直接ターミナルで対話する。`proc.wait()`で`claude`プロセスの終了を待ち、
    その終了コードをそのまま呼び出し元(`cli.main`)へ返す
 
+## 処理の流れ(`respond`: `run_respond`/`respond_to_job`、M4-5)
+
+詳細な設計判断は[ADR-0028](../adr/0028-waiting-human-answer-integration.md)、`result`構造の
+詳細は[specs/issue-analysis.md](issue-analysis.md)「`WAITING_HUMAN`後の再開」を参照。
+
+1. `job_id`省略時: `list_waiting_human_jobs`で`JobRepository.list_by_status(WAITING_HUMAN)`の
+   結果をターミナルに表示して終了する(状態変更なし)
+2. `job_id`指定時: `job_repo.get(job_id)`で対象Jobを取得する。存在しなければ
+   `JobNotFoundError`、`WAITING_HUMAN`状態でなければ`InvalidJobTransitionError`、
+   `issue-analysis`以外の`job_type`であれば同じく`InvalidJobTransitionError`を送出する
+3. `job.result["questions"]`を1件ずつ提示し、`input()`(既定)で回答を集める
+   (`collect_answers`)。この間はJob Repositoryの状態を一切変更しない
+4. 回答が揃ってから`update_status(job_id, RUNNING)`を呼ぶ(`WAITING_HUMAN → RUNNING`)
+5. `issue_analysis.build_resolved_issue_analysis_job_result(result, answers)`で、
+   `questions`と回答を統合した新しい`result`を組み立てる
+6. `update_status(job_id, DONE, result=統合後のresult)`でJobを完了させる
+7. 手順4〜6のいずれかで例外(`KeyboardInterrupt`含む)が発生した場合は
+   `update_status(job_id, FAILED, error=...)`を呼んでから元の例外を再送出する。手順3で
+   中断された場合はJobが`WAITING_HUMAN`のまま変化しないため、`respond`をそのまま
+   再実行すればよい
+
 ## エラー時の振る舞い(`cli/main.py`)
 
 このモジュール自身は独自の例外型を持たない。パイプライン(`review`は
 `execute_review`/`run_single_review`、`watch`は`run_watch`、`worker`は`run_dispatcher`、
-`api`は`run_api_server`、`decompose`は`run_decompose`)が送出する例外をそのまま受け取り、
-`cli/exit_codes.py`の終了コードとエラーメッセージ(標準エラー出力)に変換する。
+`api`は`run_api_server`、`decompose`は`run_decompose`、`respond`は`run_respond`)が送出する
+例外をそのまま受け取り、`cli/exit_codes.py`の終了コードとエラーメッセージ(標準エラー出力)に
+変換する。
 
 | 例外 | 終了コード | サブコマンド | 備考 |
 |---|---|---|---|
@@ -644,8 +750,8 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 | `store.errors.StateStoreError` | 15 | review/watch/worker | |
 | `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`)。`worker`/`api`は多重起動防止を行わないため該当しない(ADR-0022/ADR-0023) |
 | `decompose.ClaudeCommandNotFoundError` | 17 | decompose | 対話型`claude`プロセスの起動自体に失敗した場合(`FileNotFoundError`)。それ以外は`claude`プロセス自身の終了コードをそのまま返す(`docs/adr/0012-decompose-interactive-session.md`) |
-| `job.errors.JobError` | 18 | worker/api | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`(worker)・`enqueue`/`get`/`list_by_status`/`list_dead_letters`(api)自体がDB接続不良等でJob Repository起因のエラーを送出した場合のみ。`worker`は個々のJobの処理失敗を`RunnerDispatcher`が、`api`は個々のリクエストのエラーを`ApiServer`がそれぞれ握りつぶし続行するため、通常この経路には来ない(M3-3/[ADR-0022](../adr/0022-runner-process-separation.md)、M3-7/[ADR-0023](../adr/0023-http-api.md)) |
-| `KeyboardInterrupt` | 130 | 全て | `watch`/`worker`/`api`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない |
+| `job.errors.JobError` | 18 | worker/api/respond | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`(worker)・`enqueue`/`get`/`list_by_status`/`list_dead_letters`(api)自体がDB接続不良等でJob Repository起因のエラーを送出した場合。`worker`は個々のJobの処理失敗を`RunnerDispatcher`が、`api`は個々のリクエストのエラーを`ApiServer`がそれぞれ握りつぶし続行するため、通常この経路には来ない(M3-3/[ADR-0022](../adr/0022-runner-process-separation.md)、M3-7/[ADR-0023](../adr/0023-http-api.md))。`respond`は`job_id`未存在(`JobNotFoundError`)・`WAITING_HUMAN`以外の状態や`issue-analysis`以外の`job_type`を指定した場合(`InvalidJobTransitionError`)もここに含まれる(いずれも`JobError`のサブクラス、M4-5/[ADR-0028](../adr/0028-waiting-human-answer-integration.md)) |
+| `KeyboardInterrupt` | 130 | 全て | `watch`/`worker`/`api`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない。`respond`は回答収集中(`input()`待ち)のCtrl+Cのみ`JobError`経由(`FAILED`更新後に再送出、ADR-0028)ではなくこの経路(130)に乗る |
 | 上記以外の例外 | 1 | 全て | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
 
 `watch`では、上記5種類のパイプライン例外(11〜15)のうち`run_watch_loop`のループ内
@@ -744,8 +850,8 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   実サービスに繋がない範囲で検証する(`api/test_server.py`の詳細な入出力検証は
   [specs/http-api.md](http-api.md)側)
 - `test_main.py`: `run_single_review`/`run_watch`/`run_dispatcher`/`run_api_server`/
-  `run_decompose`を`monkeypatch`で差し替え、CLI引数が正しく渡ること、各例外型が対応する
-  終了コード・標準エラー出力になること、正常系で標準出力にサマリ(結果パス・指摘件数)が
+  `run_decompose`/`run_respond`を`monkeypatch`で差し替え、CLI引数が正しく渡ること、各例外型が
+  対応する終了コード・標準エラー出力になること、正常系で標準出力にサマリ(結果パス・指摘件数)が
   表示されることを検証する。`watch`/`worker`/`api`はSIGINT/SIGTERM受信で`stop_event`が
   セットされること、`main`終了後にシグナルハンドラが元へ戻ることも検証する。`watch`も
   `review`と同じ5種類のパイプライン例外(構成段階を想定し`run_watch`自体から送出させる)が
@@ -760,7 +866,24 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   終了コード)がそのままCLIの終了コードになること、`project`/`--permission-mode`/
   `--config`/`--env`が正しく渡ること、`ClaudeCommandNotFoundError`が
   `EXIT_CLAUDE_NOT_FOUND`(17)に変換されること、`ConfigError`が`review`/`watch`/`worker`/
-  `api`と同じ`EXIT_CONFIG_ERROR`(10)経路に乗ることを検証する
+  `api`と同じ`EXIT_CONFIG_ERROR`(10)経路に乗ることを検証する。`respond`(M4-5)は`job_id`が
+  位置引数として`run_respond`へ渡ること(省略時は`None`)、`run_respond`が`Job`を返した場合に
+  標準出力へJob IDを含むサマリが表示されること、`None`を返した場合(一覧表示のみ)は
+  サマリを表示しないこと、`JobError`(`JobNotFoundError`/`InvalidJobTransitionError`含む)が
+  `EXIT_JOB_ERROR`(18)に変換されることを検証する
+- `test_respond.py`(M4-5): `collect_answers`が質問を順に提示し回答を集めること(Job
+  Repositoryを一切呼ばないこと)、`list_waiting_human_jobs`が`WAITING_HUMAN`のJobを一覧表示する
+  こと(空の場合は「ありません」の旨を表示すること)、`respond_to_job`を実DBの
+  `SqliteJobRepository`(`enqueue`→`claim`→`wait_for_human`でWAITING_HUMAN状態を作る)と
+  組み合わせ、`WAITING_HUMAN → RUNNING → DONE`と正しく遷移し統合後の`result`が永続化される
+  ことを検証する。回答収集中(`ask`呼び出し中)に`KeyboardInterrupt`を送出させても
+  Job Repositoryが一切呼ばれずJobが`WAITING_HUMAN`のまま変化しないこと、`RUNNING`遷移後の
+  失敗(`update_status(DONE)`だけを失敗させる手書きフェイク`JobRepository`で再現)では
+  `FAILED`へ更新されてから元の例外が再送出されることを検証する。`run_respond`(合成ルート)は
+  `job_id`省略時に一覧表示のみで状態変更しないこと、存在しない`job_id`で`JobNotFoundError`、
+  `WAITING_HUMAN`以外の状態や`issue-analysis`以外の`job_type`を指定すると
+  `InvalidJobTransitionError`を送出すること、正常系で`DONE`のJobを返すことを検証する
+  (`unittest.mock`は使わず手書きフェイク、CLAUDE.mdのテスト方針)
 - `test_decompose.py`: 実`claude`・実MCPサーバーには繋がない(CLAUDE.mdのテスト方針)。
   `build_mcp_config`が`--config`/`--env`パスを`adapter_mcp_server`起動コマンドへ引き継ぎ、
   GitLab PAT等の値を一切含まないこと・`--log-dir`が指定時のみ付与されること、
@@ -786,6 +909,8 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   `worker`サブコマンド・`RunnerDispatcher`の設計判断
 - [ADR-0023: 最小限の HTTP API / サーバ層の設計](../adr/0023-http-api.md) —
   `api`サブコマンド・`ApiServer`の設計判断
+- [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md) —
+  `respond`サブコマンドの設計判断
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信
   サーバー(M3-6)の仕様
@@ -798,9 +923,12 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   `claim`/`heartbeat`/`complete`/`fail`の詳細)
 - [adapter-mcp-server.md](adapter-mcp-server.md) — `decompose`が`--mcp-config`で登録する
   GitLab Adapter MCP Serverの仕様
+- [issue-analysis.md](issue-analysis.md) — `respond`が結線する`issue-analysis`のresult構造
+  (`WAITING_HUMAN`後の再開、M4-5)
 - `references/spike-S3-git-worktree-windows.md` §8.1 — GitLab認証(credential helper)の
   実機検証結果
 - ソースコード: `src/gitlab_ai_platform/cli/`
   (`main.py` / `single_run.py` / `watch.py` / `worker_pool.py` / `dispatcher.py` /
-  `api_server.py` / `decompose.py` / `lock.py` / `exit_codes.py` / `__main__.py` /
-  `__init__.py`)、`src/gitlab_ai_platform/api/`(`server.py` / `errors.py` / `__init__.py`)
+  `api_server.py` / `decompose.py` / `respond.py` / `lock.py` / `exit_codes.py` /
+  `__main__.py` / `__init__.py`)、`src/gitlab_ai_platform/api/`
+  (`server.py` / `errors.py` / `__init__.py`)

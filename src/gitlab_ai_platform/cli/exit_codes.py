@@ -16,11 +16,16 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)):
   `decompose`はその他の場合、対話セッション終了時の`claude`プロセス自身の終了コードを
   そのままCLIの終了コードとして返す(構造化された結果がなく、パイプライン各段階の
   終了コードという概念自体が存在しないため)。
-- `EXIT_JOB_ERROR`(18)は`worker`サブコマンド(M3-3 [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93)、
-  `docs/adr/0022-runner-process-separation.md`)専用。個々のJobの処理失敗は`RunnerDispatcher`が
-  `JobRepository.fail`で処理し続行するため、ここに届くのは`SqliteJobRepository`の構築失敗や
+- `EXIT_JOB_ERROR`(18)は`worker`/`api`/`respond`サブコマンド(M3-3
+  [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93)、
+  `docs/adr/0022-runner-process-separation.md`。M4-5
+  [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111)で`respond`へ拡張)専用。
+  `worker`/`api`は個々のJob/リクエストの処理失敗を`RunnerDispatcher`/`ApiServer`が
+  `JobRepository.fail`等で処理し続行するため、ここに届くのは`SqliteJobRepository`の構築失敗や
   `claim`/`heartbeat`/`complete`/`fail`自体がJob Repository起因のエラー(`JobError`)を送出した
-  場合(DB接続不良等、Dispatcher自身が継続できない異常)のみ。
+  場合(DB接続不良等、継続できない異常)のみ。`respond`は`job_id`未存在
+  (`JobNotFoundError`)・`WAITING_HUMAN`以外の状態を指定した場合(`InvalidJobTransitionError`)も
+  含む(いずれも`JobError`のサブクラス)。
 """
 
 from __future__ import annotations
