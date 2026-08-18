@@ -44,6 +44,7 @@ def test_job_type_values():
     assert JobType.REVIEW == "review"
     assert JobType.ISSUE_ANALYSIS == "issue-analysis"
     assert JobType.DESIGN == "design"
+    assert JobType.PLAN == "plan"
     assert JobType.IMPLEMENT == "implement"
 
 

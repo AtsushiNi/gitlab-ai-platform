@@ -13,7 +13,9 @@
   [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111) (M4-5、`WAITING_HUMAN`後の
   回答取り込み `respond`サブコマンド)、
   [#112](https://github.com/AtsushiNi/gitlab-ai-platform/issues/112) (M4-6、`respond`の
-  `design`種別Jobへの対応拡張)
+  `design`種別Jobへの対応拡張)、
+  [#113](https://github.com/AtsushiNi/gitlab-ai-platform/issues/113) (M4-7、`respond`の
+  `plan`種別Jobへの対応拡張)
 - 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
   [ADR-0009](../adr/0009-cli-watch-design.md)、
   [ADR-0012](../adr/0012-decompose-interactive-session.md)、
@@ -22,7 +24,8 @@
   [ADR-0022](../adr/0022-runner-process-separation.md)、
   [ADR-0023](../adr/0023-http-api.md)、
   [ADR-0028](../adr/0028-waiting-human-answer-integration.md)、
-  [ADR-0029](../adr/0029-design-phase.md)
+  [ADR-0029](../adr/0029-design-phase.md)、
+  [ADR-0030](../adr/0030-implementation-plan-phase.md)
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
   要件→Issue分解の対話型`decompose`サブコマンド、Runner Dispatcher常駐`worker`サブコマンド、
   HTTP APIサーバー常駐`api`サブコマンド、`WAITING_HUMAN`後の回答取り込み`respond`サブコマンド)
@@ -59,15 +62,15 @@
   独立したプロセスで、`watch`(Poller/Webhook)・`worker`(Runner Dispatcher)いずれの稼働状況
   にも依存しない。「将来のUIや他ツール連携の口」として、任意の`JobType`のJobを投入できる
 - `respond`: `WAITING_HUMAN`状態のJob(M4-3、要求分析フェーズが`ASK`判定の不明点を持つ場合に
-  遷移する。M4-6で設計フェーズも同様に遷移しうる)へ、人間の回答をターミナル入力(`input()`)で
-  取り込み、`RUNNING`を経て`DONE`へ遷移させる(M4-5、
+  遷移する。M4-6/M4-7で設計・実装計画フェーズも同様に遷移しうる)へ、人間の回答をターミナル
+  入力(`input()`)で取り込み、`RUNNING`を経て`DONE`へ遷移させる(M4-5、
   [ADR-0028](../adr/0028-waiting-human-answer-integration.md)、
   [specs/issue-analysis.md](issue-analysis.md)「`WAITING_HUMAN`後の再開」)。`job_id`省略時は
   `WAITING_HUMAN`状態のJobを一覧表示するだけで状態は変更しない。`review`/`watch`と同じ
   非リース方式(`JobRepository.update_status`)の経路を使う(`WAITING_HUMAN`は`claim`対象外の
   状態のため、`worker`のリース方式では扱わない)。回答の統合先(`result`の組み立て方)は
-  `job_type`ごとの辞書(`_RESULT_RESOLVERS`)から選ぶ。M4-6時点で`issue-analysis`/`design`が
-  対応済み、`implement`は未対応(M4-6、[ADR-0029](../adr/0029-design-phase.md))
+  `job_type`ごとの辞書(`_RESULT_RESOLVERS`)から選ぶ。M4-7時点で`issue-analysis`/`design`/`plan`が
+  対応済み、`implement`は未対応(M4-7、[ADR-0030](../adr/0030-implementation-plan-phase.md))
 
 ## 前提と非対象
 
@@ -102,8 +105,8 @@
   - GitLabへの自動コメント投稿はしない(Review, M1-9の境界を継承)
   - `watch`は失敗したレビューの自動リトライ・監視・プロセス再起動はしない
     (`docs/adr/0009-cli-watch-design.md`。M3以降のLinux/Docker移行後のスコープ)
-  - `worker`は`review`種別以外のJobType(`issue-analysis`/`design`/`implement`)の実際の処理を
-    実装しない(M4のスコープ)。未実装種別を明示的に`--job-types`でclaim対象にした場合は
+  - `worker`は`review`種別以外のJobType(`issue-analysis`/`design`/`plan`/`implement`)の実際の
+    処理を実装しない(M4のスコープ)。未実装種別を明示的に`--job-types`でclaim対象にした場合は
     `NotImplementedError`経由でデッドレター化する([ADR-0016](../adr/0016-job-abstraction.md)、
     [ADR-0022](../adr/0022-runner-process-separation.md))
   - `decompose`はIssue分解案の自動決定・無人起票はしない。粒度・優先度・依存関係の判断は
@@ -115,9 +118,9 @@
   - `respond`は1回の呼び出しで複数Jobをまとめて処理しない(`job_id`省略時は一覧表示のみ)。
     GitLab Issueコメント経由での質問提示・回答収集も対象外(実際に必要になってから追加する、
     M4-5、[ADR-0028](../adr/0028-waiting-human-answer-integration.md)「却下した選択肢」)。
-    `issue-analysis`/`design`以外のJob種別(`implement`)への対応も対象外
+    `issue-analysis`/`design`/`plan`以外のJob種別(`implement`)への対応も対象外
     (M4-8以降で必要になった時点で`_RESULT_RESOLVERS`に追加する、
-    [ADR-0029](../adr/0029-design-phase.md))
+    [ADR-0030](../adr/0030-implementation-plan-phase.md))
 
 ## 公開インターフェース
 
@@ -168,7 +171,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 | `--disallowed-tools`(review) | - | 空 | `claude --disallowedTools`に対応 |
 | `--permission-mode`(review/decompose) | - | なし | `claude --permission-mode`に対応 |
 | `--worker-id`(worker) | - | `hostname:pid`を自動生成 | このworkerプロセスのリース所有者ID(`claim`/`heartbeat`/`complete`/`fail`の`worker_id`) |
-| `--job-types`(worker) | - | `handlers`に登録済みの種別のみ(M3-3時点では`review`のみ) | claim対象とする`JobType`の値(`review`/`issue-analysis`/`design`/`implement`) |
+| `--job-types`(worker) | - | `handlers`に登録済みの種別のみ(M3-3時点では`review`のみ) | claim対象とする`JobType`の値(`review`/`issue-analysis`/`design`/`plan`/`implement`) |
 | `--poll-interval`(worker) | - | `5`(秒) | `claim`が空振りした際の待機秒数 |
 | `--heartbeat-interval`(worker) | - | `120`(秒) | Job処理中にリースを延長する間隔秒 |
 | `--visibility-timeout`(worker) | - | `600`(秒、`job.protocol.DEFAULT_VISIBILITY_TIMEOUT_SECONDS`) | `claim`時に設定する可視性タイムアウト秒 |
@@ -571,8 +574,8 @@ def run_respond(
 ) -> Job | None:
     """合成ルート。`config`から`SqliteJobRepository`を組み立てる。`job_id`省略時は
     `list_waiting_human_jobs`のみを呼び`None`を返す(状態変更なし)。指定時は対象Jobを取得し、
-    `WAITING_HUMAN`状態かつ対応済み種別(`_RESULT_RESOLVERS`に登録済みのJobType。M4-6時点で
-    `issue-analysis`/`design`)であることを確認してから`respond_to_job`に委譲する。対象が
+    `WAITING_HUMAN`状態かつ対応済み種別(`_RESULT_RESOLVERS`に登録済みのJobType。M4-7時点で
+    `issue-analysis`/`design`/`plan`)であることを確認してから`respond_to_job`に委譲する。対象が
     存在しない場合は`JobNotFoundError`、条件を満たさない場合は`InvalidJobTransitionError`を
     送出する(いずれも`job.errors.JobError`のサブクラス)。"""
 ```

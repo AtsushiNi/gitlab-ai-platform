@@ -69,6 +69,12 @@ from ..job.protocol import (
 )
 from ..logging_ import execution_id_scope, get_logger
 from ..orchestrator import judge_uncertainties, requires_human
+from ..plan import (
+    build_plan_instructions,
+    build_plan_job_result,
+    parse_plan_output,
+    plan_job_payload_to_args,
+)
 from ..poller.issue_poller import issue_analysis_job_payload_to_args
 from ..review import (
     REVIEW_JOB_TYPE,
@@ -233,6 +239,52 @@ def build_design_handler(
     return _handle
 
 
+def build_plan_handler(
+    adapter: GitLabReader,
+    runner: ClaudeCodeRunner,
+    config: Config,
+) -> JobHandler:
+    """plan種別の`JobHandler`を組み立てる(M4-7, ADR-0030)。
+
+    `design`と同じくWorkspace Manager(worktree)を使わない。実装計画フェーズは設計フェーズが
+    確定させた設計内容・前提のみを入力とし、対象プロジェクトの実際のリポジトリを探索しない
+    設計とした(ADR-0030「決定」。理由はADR-0029が設計フェーズについて述べたものと同じ)。
+
+    処理の流れ: `plan_job_payload_to_args`でpayloadを分解(`project`/`issue_iid`/`PlanInput`)→
+    `GitLabReader.get_issue`でIssue取得(見出し用)→`IssueContext`に詰める→実装計画用
+    instructions(`build_plan_instructions`)と`build_issue_prompt`でプロンプトを組み立てる→
+    `ClaudeCodeRunner.run_prompt`で実行→`parse_plan_output`で構造化→検出した不明点
+    (`PlanResult.uncertainties`)を`judge_uncertainties`で判定する。`requires_human`が`True`
+    (1件でも`ASK`判定がある)場合は`WaitingForHumanError`を送出し、
+    `RunnerDispatcher._process`がJobを`WAITING_HUMAN`へ遷移させる。`False`の場合は通常の
+    Job結果として辞書を返す(`complete`)。
+    """
+
+    def _handle(job: Job) -> dict[str, Any]:
+        project, issue_iid, plan_input = plan_job_payload_to_args(job.payload)
+        issue = adapter.get_issue(project, issue_iid)
+        context = IssueContext(issue=issue)
+        instructions = build_plan_instructions(plan_input)
+        prompt = build_issue_prompt(instructions, context)
+
+        with tempfile.TemporaryDirectory(prefix="plan-") as workdir:
+            run_result = runner.run_prompt(
+                Path(workdir),
+                prompt,
+                log_key=f"{slugify_project(project)}/issue-{issue_iid}/plan",
+                timeout_seconds=config.runner_timeout_seconds,
+            )
+
+        plan = parse_plan_output(run_result)
+        judgments = judge_uncertainties(plan.uncertainties)
+        result = build_plan_job_result(project, issue_iid, plan, judgments)
+        if requires_human(judgments):
+            raise WaitingForHumanError(result)
+        return result
+
+    return _handle
+
+
 def build_job_handlers(
     adapter: GitLabReader,
     workspace: WorkspaceManager,
@@ -242,7 +294,7 @@ def build_job_handlers(
 ) -> dict[JobType, JobHandler]:
     """`JobType` → `JobHandler`のディスパッチテーブルを組み立てる(ADR-0022)。
 
-    M4-6時点で`review`/`issue-analysis`/`design`が実装済み。`implement`(M4の残り)は、
+    M4-7時点で`review`/`issue-analysis`/`design`/`plan`が実装済み。`implement`(M4の残り)は、
     対応するhandlerをこの辞書に追加するだけで`RunnerDispatcher`側の変更なしに配線できる想定。
     """
     return {
@@ -251,6 +303,7 @@ def build_job_handlers(
         ),
         JobType.ISSUE_ANALYSIS: build_issue_analysis_handler(adapter, runner, config),
         JobType.DESIGN: build_design_handler(adapter, runner, config),
+        JobType.PLAN: build_plan_handler(adapter, runner, config),
     }
 
 
@@ -450,6 +503,7 @@ __all__ = [
     "build_design_handler",
     "build_issue_analysis_handler",
     "build_job_handlers",
+    "build_plan_handler",
     "build_review_handler",
     "default_worker_id",
     "run_dispatcher",

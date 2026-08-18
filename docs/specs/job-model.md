@@ -4,17 +4,20 @@
 - 対応Issue: [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1)、
   [#92](https://github.com/AtsushiNi/gitlab-ai-platform/issues/92) (M3-2)、
   [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3、Runner Dispatcher側の実配線)、
-  [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3、`wait_for_human`の追加)
+  [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3、`wait_for_human`の追加)、
+  [#113](https://github.com/AtsushiNi/gitlab-ai-platform/issues/113) (M4-7、`PLAN`の追加)
 - 関連ADR: [ADR-0016](../adr/0016-job-abstraction.md)、[ADR-0017](../adr/0017-job-queue.md)、
   [ADR-0022](../adr/0022-runner-process-separation.md)、
-  [ADR-0026](../adr/0026-job-waiting-human-transition.md)
+  [ADR-0026](../adr/0026-job-waiting-human-transition.md)、
+  [ADR-0030](../adr/0030-implementation-plan-phase.md)
 - ステータス: 実装済み(Protocol定義 + SQLite実装 + 既存レビュー処理のJob化 [M3-1] +
   取得の排他・可視性タイムアウト・リトライ・デッドレター [M3-2] +
-  Runner Dispatcherによる実配線 [M3-3] + `WAITING_HUMAN`遷移の`wait_for_human` [M4-3])
+  Runner Dispatcherによる実配線 [M3-3] + `WAITING_HUMAN`遷移の`wait_for_human` [M4-3] +
+  `JobType.PLAN`の追加 [M4-7])
 
 ## 責務
 
-タスク種別(`review`/`issue-analysis`/`design`/`implement`)を横断して、1件のタスク実行の
+タスク種別(`review`/`issue-analysis`/`design`/`plan`/`implement`)を横断して、1件のタスク実行の
 ライフサイクル(`PENDING → RUNNING → (DONE | FAILED | WAITING_HUMAN)`という状態機械)を
 記録・照会する。実装(SQLite)を`typing.Protocol`で抽象化し、呼び出し側(CLI・将来の
 Orchestrator)を具象実装から切り離す。M3-2で、複数Runner(M3-3で別プロセス/別ホストに
@@ -44,10 +47,10 @@ Job Repositoryのメソッドとして追加した([ADR-0017](../adr/0017-job-qu
     `RunnerDispatcher`、`worker`サブコマンド)が実際に呼び出す
     ([ADR-0017](../adr/0017-job-queue.md)、[ADR-0022](../adr/0022-runner-process-separation.md))
 - 非対象:
-  - `review`以外のJobType(`issue-analysis`/`design`/`implement`)の実際の実行(Runner
-    Dispatcher側のhandler実装)はM4のスコープ。M3-1時点では値としての予約のみで、M3-3時点でも
-    未実装種別をclaimすると`RunnerDispatcher`が`NotImplementedError`を送出し即座に
-    デッドレター化する([ADR-0016](../adr/0016-job-abstraction.md)の契約、
+  - `review`以外のJobType(`issue-analysis`/`design`/`plan`/`implement`)の実際の実行(Runner
+    Dispatcher側のhandler実装)はM4のスコープ。M3-1時点では値としての予約のみで、M4-7時点で
+    `implement`のみが未実装で、これをclaimすると`RunnerDispatcher`が`NotImplementedError`を
+    送出し即座にデッドレター化する([ADR-0016](../adr/0016-job-abstraction.md)の契約、
     [ADR-0022](../adr/0022-runner-process-separation.md))
   - 二重レビュー防止そのもの(State Storeの責務のまま)。Jobは「実行1回分のライフサイクル」の
     管理に専念する
@@ -75,6 +78,7 @@ class JobType(str, Enum):
     REVIEW = "review"
     ISSUE_ANALYSIS = "issue-analysis"  # M4で実装
     DESIGN = "design"  # M4で実装
+    PLAN = "plan"  # M4-7で実装
     IMPLEMENT = "implement"  # M4で実装
 
 
@@ -338,7 +342,7 @@ class RunnerDispatcher:
 
 | 型 | フィールド | 補足 |
 |---|---|---|
-| `JobType` (Enum) | `REVIEW` / `ISSUE_ANALYSIS` / `DESIGN` / `IMPLEMENT` | タスク種別。M4-6時点で実際にRunnerが処理できるのは`REVIEW`/`ISSUE_ANALYSIS`/`DESIGN`。`IMPLEMENT`はM4での実装を見越した予約値 |
+| `JobType` (Enum) | `REVIEW` / `ISSUE_ANALYSIS` / `DESIGN` / `PLAN` / `IMPLEMENT` | タスク種別。M4-7時点で実際にRunnerが処理できるのは`REVIEW`/`ISSUE_ANALYSIS`/`DESIGN`/`PLAN`。`IMPLEMENT`はM4での実装を見越した予約値 |
 | `JobStatus` (Enum) | `PENDING` / `RUNNING` / `WAITING_HUMAN` / `DONE` / `FAILED` | Jobの進行状態(状態機械)。M3-2でもこの5値のまま変更していない([ADR-0017](../adr/0017-job-queue.md)) |
 | `Job` (frozen dataclass) | `id: str`, `job_type: JobType`, `status: JobStatus`, `payload: dict[str, Any]`, `result: dict[str, Any] \| None`, `error: str \| None`, `created_at: datetime`, `updated_at: datetime`, `attempts: int = 0`, `max_attempts: int = 3`, `lease_owner: str \| None = None`, `lease_expires_at: datetime \| None = None`, `dead_letter_at: datetime \| None = None` | `id`はUUID(SQLite実装が`uuid.uuid4()`で生成)。`attempts`以降はM3-2で追加(末尾にデフォルト値付き) |
 
