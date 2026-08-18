@@ -1,0 +1,161 @@
+"""`WAITING_HUMAN`状態のJobへ人間の回答を取り込み、再開・完了させる(M4-5、`respond`サブコマンド)。
+
+方針(M4-5 [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111)、
+`docs/adr/0028-waiting-human-answer-integration.md`):
+
+- `review`/`watch`が使う非リース方式(`JobRepository.update_status`)の経路を再利用する。
+  `WAITING_HUMAN`はそもそも`claim`(リース方式)の対象外の状態のため(ADR-0026)、
+  `RunnerDispatcher`(`worker`)ではなくこちらの経路を使うのが自然
+- `run_respond`(合成ルート)/`respond_to_job`(パイプライン本体)という、他のサブコマンド
+  (`cli/single_run.py`等)と同じ分離パターンを踏襲する
+- 質問提示・回答収集(`collect_answers`)はJobの状態を一切変更しない。全質問への回答が
+  揃ってから`WAITING_HUMAN → RUNNING`へ遷移させ、`RUNNING → DONE`まで一気に進める。
+  回答収集中(人間が考えている間)にCtrl+C等で中断されてもJobは`WAITING_HUMAN`のまま
+  変化しないため、`respond`をそのまま再実行すればよい。`RUNNING`遷移後に例外
+  (`KeyboardInterrupt`含む)が発生した場合は`FAILED`へ倒し、`RUNNING`のまま孤立させない
+  (ADR-0028「決定」参照)
+- 現時点でM4は`issue-analysis`(M4-3)までしか実装されていないため、回答の統合先は
+  `issue_analysis.build_resolved_issue_analysis_job_result`固定。将来`design`/`implement`が
+  `WAITING_HUMAN`を使うようになったら、Job種別ごとの統合関数を切り替える必要がある
+  (ADR-0028「影響」)
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+from ..config import Config
+from ..issue_analysis.job import build_resolved_issue_analysis_job_result
+from ..job import Job, JobRepository, JobStatus, JobType, SqliteJobRepository
+from ..job.errors import InvalidJobTransitionError, JobError, JobNotFoundError
+from ..logging_ import get_logger
+
+_logger = get_logger(__name__)
+
+
+def collect_answers(
+    questions: list[dict[str, Any]],
+    *,
+    ask: Callable[[str], str] = input,
+    output: Callable[[str], None] = print,
+) -> list[str]:
+    """`questions`(`Job.result["questions"]`)を1件ずつ提示し、人間の回答を集める。
+
+    Job Repositoryの状態は一切変更しない(呼び出し元`respond_to_job`が、この関数から
+    正常に戻った後にだけ`WAITING_HUMAN → RUNNING`遷移を行う)。
+    """
+    answers: list[str] = []
+    total = len(questions)
+    for index, question in enumerate(questions, start=1):
+        output(f"[{index}/{total}] ({question['severity']}) {question['question']}")
+        answers.append(ask("回答: "))
+    return answers
+
+
+def list_waiting_human_jobs(
+    job_repo: JobRepository, *, output: Callable[[str], None] = print
+) -> list[Job]:
+    """`WAITING_HUMAN`状態のJobを一覧表示する(`job_id`省略時の確認用途)。"""
+    jobs = job_repo.list_by_status(JobStatus.WAITING_HUMAN)
+    if not jobs:
+        output("WAITING_HUMAN状態のJobはありません")
+        return jobs
+
+    output(f"WAITING_HUMAN状態のJob: {len(jobs)}件")
+    for job in jobs:
+        result = job.result or {}
+        project = result.get("project", "?")
+        issue_iid = result.get("issue_iid", "?")
+        n_questions = len(result.get("questions", []))
+        output(f"  {job.id}  {project} #{issue_iid}  質問{n_questions}件")
+    output(
+        "回答するには対象のjob_idを指定して再実行してください: "
+        "gitlab-ai-platform respond <job_id>"
+    )
+    return jobs
+
+
+def respond_to_job(
+    job_repo: JobRepository,
+    job: Job,
+    *,
+    ask: Callable[[str], str] = input,
+    output: Callable[[str], None] = print,
+) -> Job:
+    """`WAITING_HUMAN`のJobに回答を取り込み、`RUNNING`を経て`DONE`へ遷移させる(ADR-0028)。
+
+    質問提示・回答収集(`collect_answers`)はJobの状態を一切変更しない。`WAITING_HUMAN →
+    RUNNING`遷移後に例外(`KeyboardInterrupt`含む)が発生した場合は`FAILED`へ更新してから
+    元の例外を再送出し、`RUNNING`のまま放置しない。
+    """
+    questions = (job.result or {}).get("questions", [])
+    answers = collect_answers(questions, ask=ask, output=output)
+
+    job = job_repo.update_status(job.id, JobStatus.RUNNING)
+    try:
+        resolved_result = build_resolved_issue_analysis_job_result(
+            job.result or {}, answers
+        )
+        return job_repo.update_status(job.id, JobStatus.DONE, result=resolved_result)
+    except BaseException as exc:
+        # KeyboardInterrupt(Ctrl+C)も含め、RUNNINGへ遷移させた後の失敗はJobを孤立させない
+        # よう明示的にFAILEDへ倒す(ADR-0028「決定」)。FAILEDへの更新自体が失敗しても
+        # (DB接続不良等)、元の例外を優先してそのまま再送出する
+        try:
+            job_repo.update_status(job.id, JobStatus.FAILED, error=str(exc))
+        except JobError as update_exc:
+            _logger.error(
+                "respond.failed_status_update_failed",
+                extra={"job_id": job.id, "error": str(update_exc)},
+            )
+        raise
+
+
+def run_respond(
+    config: Config,
+    *,
+    job_id: str | None = None,
+    ask: Callable[[str], str] = input,
+    output: Callable[[str], None] = print,
+) -> Job | None:
+    """合成ルート。`SqliteJobRepository`を組み立て、一覧表示または1件の回答取り込みを行う。
+
+    `job_id`省略時は`list_waiting_human_jobs`で一覧表示するだけで`None`を返す(状態変更なし)。
+    `job_id`指定時は対象Jobを取得し、`WAITING_HUMAN`状態であることを確認してから
+    `respond_to_job`に委譲する。対象Jobが存在しない場合は`JobNotFoundError`、
+    `WAITING_HUMAN`状態でない場合は`InvalidJobTransitionError`を送出する。
+    """
+    job_repo = SqliteJobRepository(config.job_db_path)
+    try:
+        if job_id is None:
+            list_waiting_human_jobs(job_repo, output=output)
+            return None
+
+        job = job_repo.get(job_id)
+        if job is None:
+            raise JobNotFoundError(f"job_id={job_id!r} のJobが見つかりません")
+        if job.status is not JobStatus.WAITING_HUMAN:
+            raise InvalidJobTransitionError(
+                f"job_id={job_id!r} はWAITING_HUMAN状態ではありません"
+                f"(現在の状態: {job.status.value!r})"
+            )
+        if job.job_type is not JobType.ISSUE_ANALYSIS:
+            # 現時点でWAITING_HUMANになりうるのはissue-analysisのみ(M4-6以降で拡張予定、
+            # ADR-0028「影響」)。未対応種別を誤って指定した場合に分かりやすく失敗させる
+            raise InvalidJobTransitionError(
+                f"job_id={job_id!r} のjob_type={job.job_type.value!r} は"
+                "respondがまだ対応していません(issue-analysisのみ対応)"
+            )
+
+        return respond_to_job(job_repo, job, ask=ask, output=output)
+    finally:
+        job_repo.close()
+
+
+__all__ = [
+    "collect_answers",
+    "list_waiting_human_jobs",
+    "respond_to_job",
+    "run_respond",
+]

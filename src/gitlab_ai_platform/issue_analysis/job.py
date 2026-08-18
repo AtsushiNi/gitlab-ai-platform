@@ -9,11 +9,18 @@
   完了)・`wait_for_human`(人間の確認待ち)のどちらの結果にも同じ構造の辞書を使う(ADR-0026)。
   `questions`(`ask_judgments`の結果)は`wait_for_human`のときのみ非空になり、`complete`のときは
   必ず空配列になる(`requires_human`がFalseの場合のみ`complete`を呼ぶため)。
+
+M4-5([#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111)、
+[ADR-0028](../../../docs/adr/0028-waiting-human-answer-integration.md)):
+
+- `build_resolved_issue_analysis_job_result`は、`WAITING_HUMAN`で人間に提示した`questions`への
+  回答を統合した新しい`result`を組み立てる。`cli/respond.py`の`respond_to_job`が、
+  `WAITING_HUMAN → RUNNING`遷移後・`DONE`遷移前に呼び出す。
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..orchestrator import UncertaintyJudgment, ask_judgments, assume_judgments
@@ -59,4 +66,50 @@ def _judgment_to_dict(judgment: UncertaintyJudgment) -> dict[str, Any]:
     return data
 
 
-__all__ = ["build_issue_analysis_job_result"]
+def build_resolved_issue_analysis_job_result(
+    result: Mapping[str, Any], answers: Sequence[str]
+) -> dict[str, Any]:
+    """`WAITING_HUMAN`の`result`に人間の回答を統合した新しい`result`を組み立てる(M4-5, ADR-0028)。
+
+    `result["questions"]`(`build_issue_analysis_job_result`が組み立てたもの)と同じ順序・
+    同じ件数の`answers`を受け取る想定。各質問を`resolved_questions`
+    (`{"question", "severity", "answer"}`)へ変換して記録するとともに、`assumed_uncertainties`
+    (ASSUME判定の不明点)と同じ形の項目として合流させる(`answer`は`assumption`キーに転記)。
+    M4-9がMR本文に「前提とした情報」を記載する際、`assumed_uncertainties`だけを見れば
+    ASSUME/ASK→回答のどちらも拾える(ADR-0028「決定」参照)。`questions`は解決済みのため
+    常に空配列にする。
+
+    `answers`の件数が`result["questions"]`と一致しない場合は`ValueError`を送出する
+    (呼び出し側`respond_to_job`の実装ミスを早期に検知するための防御的チェック)。
+    """
+    questions = result.get("questions", [])
+    if len(answers) != len(questions):
+        raise ValueError(
+            f"answersの件数({len(answers)})がquestionsの件数({len(questions)})と"
+            "一致しません"
+        )
+
+    resolved_questions = [
+        {"question": q["question"], "severity": q["severity"], "answer": answer}
+        for q, answer in zip(questions, answers, strict=True)
+    ]
+    merged_assumed_uncertainties = [
+        *result.get("assumed_uncertainties", []),
+        *(
+            {"question": q["question"], "severity": q["severity"], "assumption": answer}
+            for q, answer in zip(questions, answers, strict=True)
+        ),
+    ]
+
+    return {
+        **result,
+        "questions": [],
+        "resolved_questions": resolved_questions,
+        "assumed_uncertainties": merged_assumed_uncertainties,
+    }
+
+
+__all__ = [
+    "build_issue_analysis_job_result",
+    "build_resolved_issue_analysis_job_result",
+]

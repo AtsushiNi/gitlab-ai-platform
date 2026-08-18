@@ -9,7 +9,10 @@ Issue駆動開発の無人実行トラック向けに横展開したもの。実
 from __future__ import annotations
 
 from .errors import IssueAnalysisError, IssueAnalysisOutputParseError
-from .job import build_issue_analysis_job_result
+from .job import (
+    build_issue_analysis_job_result,
+    build_resolved_issue_analysis_job_result,
+)
 from .parser import parse_issue_analysis_output
 from .prompts import build_issue_analysis_instructions
 from .types import RequirementAnalysis
@@ -20,5 +23,6 @@ __all__ = [
     "RequirementAnalysis",
     "build_issue_analysis_instructions",
     "build_issue_analysis_job_result",
+    "build_resolved_issue_analysis_job_result",
     "parse_issue_analysis_output",
 ]

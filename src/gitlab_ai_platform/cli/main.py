@@ -12,8 +12,10 @@ M1-11 [#39](https://github.com/AtsushiNi/gitlab-ai-platform/issues/39)、
   `docs/adr/0022-runner-process-separation.md`。`JobRepository.claim`でJobを取り出し続ける
   別プロセス/別ホスト実行用の常駐モード)、`api`サブコマンドでJob Repositoryへの最小限の
   HTTP API(M3-7 [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97)、
-  `docs/adr/0023-http-api.md`。Job投入・状態/結果参照・一覧取得。将来のUI・他ツール連携の口)
-  を提供する。
+  `docs/adr/0023-http-api.md`。Job投入・状態/結果参照・一覧取得。将来のUI・他ツール連携の口)、
+  `respond`サブコマンドで`WAITING_HUMAN`状態のJobへの回答取り込み・再開(M4-5
+  [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111)、
+  `docs/adr/0028-waiting-human-answer-integration.md`)を提供する。
 - パイプライン(`single_run.run_single_review`)が送出する各段階の例外
   (`GitLabAdapterError` / `WorkspaceError` / `RunnerError` / `ReviewError` /
   `StateStoreError`)を捕まえ、`exit_codes`の対応する終了コードとエラーメッセージ
@@ -59,6 +61,7 @@ from .dispatcher import (
     run_dispatcher,
 )
 from .lock import AlreadyRunningError
+from .respond import run_respond
 from .single_run import SingleRunResult, run_single_review
 from .watch import run_watch
 
@@ -91,6 +94,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_api_command(config)
         if args.command == "decompose":
             return _run_decompose_command(args)
+        if args.command == "respond":
+            return _run_respond_command(config, args)
 
         parser.error(f"不明なコマンドです: {args.command!r}")
         return (
@@ -295,6 +300,22 @@ def _run_decompose_command(args: argparse.Namespace) -> int:
     return returncode
 
 
+def _run_respond_command(config: Config, args: argparse.Namespace) -> int:
+    with execution_id_scope():
+        try:
+            job = run_respond(config, job_id=args.job_id)
+        except JobError as exc:
+            # job_id未存在(JobNotFoundError)・WAITING_HUMAN以外の状態
+            # (InvalidJobTransitionError)もここに含まれる(いずれもJobErrorのサブクラス)
+            _logger.error("cli.respond_failed", extra={"error": str(exc)})
+            print(f"Job Repositoryエラー: {exc}", file=sys.stderr)
+            return exit_codes.EXIT_JOB_ERROR
+
+    if job is not None:
+        print(f"Job {job.id} を完了しました(status={job.status.value})")
+    return exit_codes.EXIT_OK
+
+
 def _install_shutdown_handler(stop_event: threading.Event) -> Callable[[], None]:
     """SIGINT/SIGTERM受信時に`stop_event`をセットするハンドラを登録する。
 
@@ -488,6 +509,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--permission-mode",
         default=None,
         help="Claude Codeの--permission-modeに対応する値",
+    )
+
+    respond_parser = subparsers.add_parser(
+        "respond",
+        help=(
+            "WAITING_HUMAN状態のJobへ人間の回答を取り込み、再開・完了させる"
+            "(M4-5、docs/adr/0028-waiting-human-answer-integration.md)"
+        ),
+    )
+    respond_parser.add_argument(
+        "job_id",
+        nargs="?",
+        default=None,
+        help=(
+            "回答対象のJob ID。省略時はWAITING_HUMAN状態のJobを一覧表示するだけで"
+            "状態は変更しない"
+        ),
     )
 
     return parser

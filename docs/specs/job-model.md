@@ -511,7 +511,11 @@ issue-analysis Jobの`payload`/`result`(payloadは`poller/issue_poller.py`、res
   State StoreとJobを別コンポーネントとして併存させる設計判断
 - [specs/state-store.md](state-store.md) — State Store(併存する二重レビュー防止の仕組み)の仕様
 - [specs/cli.md](cli.md) — `execute_review_job`の呼び出し元(単発実行・watchモード)、
-  `RunnerDispatcher`の呼び出し元(`worker`サブコマンド)の仕様
+  `RunnerDispatcher`の呼び出し元(`worker`サブコマンド)、`WAITING_HUMAN → RUNNING → DONE`を
+  非リース方式(`update_status`)で辿る`respond`サブコマンド(M4-5)の仕様
+- [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md) —
+  `wait_for_human`で`WAITING_HUMAN`にしたJobを、非リース方式の`update_status`で
+  `RUNNING`→`DONE`へ再開させる`respond`サブコマンド(M4-5)の設計判断
 - ソースコード: `src/gitlab_ai_platform/job/`(`protocol.py` / `sqlite.py` / `errors.py` /
   `__init__.py`)、`src/gitlab_ai_platform/review/job.py`、
-  `src/gitlab_ai_platform/cli/dispatcher.py`(M3-3)
+  `src/gitlab_ai_platform/cli/dispatcher.py`(M3-3)、`src/gitlab_ai_platform/cli/respond.py`(M4-5)
