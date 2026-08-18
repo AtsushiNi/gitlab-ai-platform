@@ -51,9 +51,9 @@ Issue/MRの状態遷移)は**メソッド自体を実装しない/引数自体�
 
 | メソッド | 内容 | 備考 |
 |---|---|---|
-| `create_branch` | `ref`を起点にbranch作成 | M4-8(実装フェーズ)がdefault branchを起点に実装用branchを作成する際に使用(§3.3)。実装フェーズが呼ぶ書き込みメソッドはこれのみで、`push_file_changes`は呼ばない(M4-9のスコープ) |
-| `push_file_changes` | branchへファイル変更をコミットしてpush | 対象branchがprotectedの場合は`ProtectedBranchError`で拒否(§3.1) |
-| `create_merge_request` | MR作成 | |
+| `create_branch` | `ref`を起点にbranch作成 | M4-8(実装フェーズ)がdefault branchを起点に実装用branchを作成する際に使用(§3.4) |
+| `push_file_changes` | branchへファイル変更をコミットしてpush | M4-9(pushフェーズ)が実装フェーズのローカルcommitをGitLabへ反映する際に使用(§3.5)。対象branchがprotectedの場合は`ProtectedBranchError`で拒否(§3.1) |
+| `create_merge_request` | MR作成 | M4-9(pushフェーズ)がpush後に使用(§3.5) |
 | `create_merge_request_comment` | MRへのコメント投稿 | |
 | `update_merge_request` | MRのタイトル・説明の更新 | `state_event`(close/reopen/merge相当)に対応する引数がメソッドシグネチャ自体に存在しない |
 | `create_issue` | Issue作成 | |
@@ -167,7 +167,9 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 | `disallowed_tools` | `("Bash(git push:*)",)` | `git push`を明示的に禁止する。**Adapter層の「メソッドとして存在しない」という構造的な保証とは強さが異なる**多層防御の1つ(下記参照) |
 | `permission_mode` | `"acceptEdits"` | headless実行のためEdit/Write系ツールの確認を自動承認する。`--dangerously-skip-permissions`相当の全許可モード(`"bypassPermissions"`)は使わない(既存方針、ADR-0005) |
 
-**実際のGitLabへの書き込み(push)が発生しないことの3層の担保**(ADR-0033):
+**実装フェーズ自身がリモートへ`git push`(Bash経由の素のgit操作)を行わないことの3層の担保**
+(ADR-0033。「Claude Codeが実装中にBash経由で勝手にpushする」という経路を塞ぐものであり、
+M4-9(pushフェーズ)がJobHandlerとして`push_file_changes`を呼ぶ正規の経路(§3.5)とは別物):
 
 1. **Workspace Manager**([`workspace/git_workspace.py`](../../src/gitlab_ai_platform/workspace/git_workspace.py)):
    `git clone`/`git fetch`/`git worktree`/`git reset --hard`のみを実装しており、`git push`は
@@ -175,7 +177,8 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
    何もヒットしない)
 2. **実装フェーズのJobHandler**([`cli/dispatcher.py`](../../src/gitlab_ai_platform/cli/dispatcher.py)の
    `build_implement_handler`): `GitLabWriter`のうち`create_branch`(branch作成)のみを呼び出す。
-   `push_file_changes`(Commits API経由のファイル変更コミット)は一切呼び出さない(M4-9のスコープ)
+   `push_file_changes`(Commits API経由のファイル変更コミット)は呼び出さない
+   (`push`種別のJobHandler、`build_push_handler`が別フェーズとして呼ぶ。§3.5)
 3. **認証情報のスコープ・ロール**(§4.1): 自動実行系用のGitLab PAT
    (`GITLAB_AI_PLATFORM_GITLAB_TOKEN`)は`read_api`スコープかつアカウントロールがReporterの
    ままである(実装フェーズもこのトークンを使う。対話型MCP用のDeveloperロール・`api`スコープの
@@ -217,6 +220,40 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 - 将来的な追加の緩和策として、実装フェーズをコンテナ/サンドボックス環境で実行する
   ([operations/docker-runtime.md](docker-runtime.md)の実行環境をこのフェーズ専用に
   強化する等)ことが考えられるが、本Issue(M4-8)のスコープ外とし、今後の課題として残す
+
+### 3.5 push と MR 作成フェーズ(`push/`)— このリポジトリで初めてGitLabへの実際の書き込みが発生する経路
+
+pushフェーズ(M4-9 [#115](https://github.com/AtsushiNi/gitlab-ai-platform/issues/115)、
+[ADR-0034](../adr/0034-push-and-mr-phase.md)、
+[specs/push-phase.md](../specs/push-phase.md))は、無人実行パイプラインの中で初めて
+`GitLabWriter.push_file_changes`/`create_merge_request`(いずれも§2.2の許可リスト操作)を
+実際に呼び出し、GitLabへ書き込むフェーズである。`ClaudeCodeRunner`を一切使わない
+(git diff計算とGitLab Adapter呼び出しのみの機械的な処理)ため、§3.3/§3.4のような
+Claude Codeへの権限付与(`allowed_tools`等)の考慮は不要。
+
+- [`cli/dispatcher.py`](../../src/gitlab_ai_platform/cli/dispatcher.py)の`build_push_handler`が
+  呼び出すのは`GitLabReader.get_default_branch`(読み取り)・`GitLabWriter.push_file_changes`・
+  `create_merge_request`(いずれも書き込み)の3メソッドのみ。§2.3の禁止操作(merge・
+  protected branchへの直push等)はAdapterにメソッドとして存在しないため、この経路からも
+  呼び出せない
+- `push_file_changes`は対象branchがprotectedの場合`ProtectedBranchError`で拒否される(§3.1)。
+  pushフェーズの対象branch(`ai/issue-<issue_iid>`)は実装フェーズが作成した非protectedな
+  branchのため、通常はこのチェックに引っかからない
+- **既知の課題(トークンスコープの不整合)**: `run_dispatcher`(合成ルート)は`review`/
+  `issue-analysis`/`design`/`plan`/`implement`/`push`のすべてのJobHandlerへ同一の
+  `GitLabRestAdapter(config.gitlab_url, config.gitlab_token)`を渡す。§4.1は自動実行系用
+  アカウント(`GITLAB_AI_PLATFORM_GITLAB_TOKEN`)を「構造的に読み取りしか行わない経路のため
+  `read_api`スコープ・Reporterロールに留める」([ADR-0019](../adr/0019-gitlab-token-scoping.md))
+  と説明しているが、実装フェーズ(M4-8、`create_branch`)・pushフェーズ(M4-9、
+  `push_file_changes`/`create_merge_request`)がこの同じトークンで書き込みAPIを呼ぶため、
+  この前提は既に崩れている。`read_api`スコープ・Reporterロールのままでは、これらの
+  書き込み呼び出しはGitLab側で拒否される可能性が高い。運用上、無人実行トラック
+  (`worker`)を稼働させる場合は、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`に`api`スコープ・
+  Developer以上のロールを付与する必要がある。この不整合は本Issue(M4-9)が新規に
+  作ったものではなく実装フェーズ(M4-8)から既に生じていたが、pushフェーズの追加で
+  より顕在化するため明記する。トークン分離の再設計(自動実行系を「読み取り専用」と
+  「無人実装・push可能」の2アカウントにさらに分ける等)は今後の課題とし、
+  本Issueのスコープには含めない
 
 ## 4. トークン・シークレットの管理
 
@@ -338,10 +375,12 @@ GitLab Adapterの許可リストを透過するだけの層という設計。
 - [ADR-0031: Workspace ManagerのIssue単位worktree対応](../adr/0031-issue-workspace.md)
 - [ADR-0032: GitLab Adapterへのdefault branch取得メソッドの追加](../adr/0032-default-branch-lookup.md)
 - [ADR-0033: 実装フェーズ(Job種別`implement`)の設計](../adr/0033-implement-phase.md) — 本ドキュメント§3.4の元になった、Edit/Write/Bash権限付与とgit push禁止の多層防御設計
+- [ADR-0034: push と MR 作成フェーズの設計](../adr/0034-push-and-mr-phase.md) — 本ドキュメント§3.5の元になった、初めてGitLabへの実際の書き込みが発生する経路の設計
 - [specs/gitlab-adapter.md](../specs/gitlab-adapter.md)
 - [specs/adapter-mcp-server.md](../specs/adapter-mcp-server.md)
 - [specs/claude-code-runner.md](../specs/claude-code-runner.md)
 - [specs/implement-phase.md](../specs/implement-phase.md) — §3.4で扱う実装フェーズの仕様
+- [specs/push-phase.md](../specs/push-phase.md) — §3.5で扱うpushフェーズの仕様
 - [operations/configuration.md](configuration.md) — シークレット関連の設定項目一覧
 - [operations/setup-windows.md](setup-windows.md) — PAT発行手順・Bedrock認証設定手順
 - [guide/getting-started.md](../guide/getting-started.md) 「何をしないか」節

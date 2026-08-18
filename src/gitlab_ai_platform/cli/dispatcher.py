@@ -32,6 +32,11 @@
   `fail`ではなく`JobRepository.wait_for_human`でJobを`WAITING_HUMAN`へ遷移させる。
   「未対応のJobType→`NotImplementedError`」と同じ、JobHandlerとRunnerDispatcherの間の
   契約として例外を使うパターン。
+- M4-9([#115](https://github.com/AtsushiNi/gitlab-ai-platform/issues/115)、ADR-0034)で
+  `build_push_handler`を追加した。`push`種別は初めてClaude Code Runnerを呼び出さない
+  JobHandler(git diff計算とGitLab Adapter呼び出しのみの機械的な処理)だが、`JobHandler`の
+  契約(`Callable[[Job], dict[str, Any] | None]`)自体は変更していないため、
+  `RunnerDispatcher`は無改修で扱える。
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ from ..design import (
 )
 from ..gitlab_adapter import GitLabApiError, GitLabRestAdapter
 from ..gitlab_adapter.protocol import GitLabAdapter, GitLabReader
+from ..gitlab_adapter.types import CommitAction
 from ..implement import (
     ImplementationNotCommittedError,
     WorktreeState,
@@ -85,6 +91,15 @@ from ..plan import (
     plan_job_payload_to_args,
 )
 from ..poller.issue_poller import issue_analysis_job_payload_to_args
+from ..push import (
+    build_merge_request_description,
+    build_merge_request_title,
+    build_push_job_result,
+    compute_commit_actions,
+    push_job_payload_to_args,
+)
+from ..push.errors import NoFileChangesError
+from ..push.types import PushInput
 from ..review import (
     REVIEW_JOB_TYPE,
     build_review_job_result,
@@ -431,6 +446,90 @@ def build_implement_handler(
     return _handle
 
 
+def build_push_handler(
+    adapter: GitLabAdapter,
+    workspace: WorkspaceManager,
+    *,
+    compute_commit_actions: Callable[
+        [Path, str, str], list[CommitAction]
+    ] = compute_commit_actions,
+) -> JobHandler:
+    """push種別の`JobHandler`を組み立てる(M4-9, ADR-0034)。
+
+    これまでの5種類と異なり`ClaudeCodeRunner`を引数に取らない(git diff計算とGitLab Adapter
+    呼び出しのみの機械的な処理のため)。`WaitingForHumanError`も送出しない(人間の判断を要する
+    不明点を生成しないため)。処理の流れ:
+
+    1. `push_job_payload_to_args`でpayloadを分解(`PushInput`。実装フェーズの
+       `payload`/`result`両方から組み立てられたもの、ADR-0034「論点2」)
+    2. `GitLabReader.get_default_branch`でdefault branchを解決する(ADR-0032と同じ問い合わせ、
+       push実行時点で再度呼ぶ)
+    3. `push.git_ops.compute_commit_actions`で、`PushInput.worktree_path`の
+       `PushInput.commit_sha`(実装フェーズがローカルcommitしたcommit)と、
+       `git merge-base(commit_sha, origin/<default_branch>)`で計算したbaseとの差分を
+       `CommitAction`の配列にする(ADR-0034「論点1」)。差分が空であれば`NoFileChangesError`
+       を送出する
+    4. `GitLabWriter.push_file_changes(project, remote_branch, commit_message, actions)`
+       (許可リストの書き込み操作)でGitLab上へ実際にpushする
+    5. `push.mr_template`でMRタイトル・本文を組み立て(「対応Issue」「設計要約」
+       「○○と仮定して実装した」を必須項目として含む、Issue #115本文の要求)、
+       `GitLabWriter.create_merge_request`でMRを作成する
+    6. push・MR作成の両方が成功した後、`Workspace Manager.discard_for_issue`でworktreeを
+       破棄する(ADR-0034「論点4」。`implement`が実装成功時に呼ばない設計と対称的に、
+       pushフェーズはここで初めてworktreeが不要になる)
+    """
+
+    def _handle(job: Job) -> dict[str, Any]:
+        push_input: PushInput = push_job_payload_to_args(job.payload)
+        default_branch = adapter.get_default_branch(push_input.project)
+
+        actions = compute_commit_actions(
+            Path(push_input.worktree_path),
+            default_branch,
+            push_input.commit_sha,
+        )
+        if not actions:
+            raise NoFileChangesError(
+                f"project={push_input.project!r} issue_iid={push_input.issue_iid!r}: "
+                "push対象のファイル変更が検出できませんでした"
+                f"(commit_sha={push_input.commit_sha!r})"
+            )
+
+        commit_message = push_input.commit_message or push_input.summary
+        pushed_commit_sha = adapter.push_file_changes(
+            push_input.project,
+            push_input.remote_branch,
+            commit_message,
+            actions,
+        )
+
+        title = build_merge_request_title(push_input.issue_iid, push_input.summary)
+        description = build_merge_request_description(
+            push_input.issue_iid,
+            plan_document=push_input.plan_document,
+            summary=push_input.summary,
+            assumed_uncertainties=push_input.assumed_uncertainties,
+        )
+        merge_request = adapter.create_merge_request(
+            push_input.project,
+            push_input.remote_branch,
+            default_branch,
+            title,
+            description,
+        )
+
+        workspace.discard_for_issue(push_input.project, push_input.issue_iid)
+
+        return build_push_job_result(
+            push_input.project,
+            push_input.issue_iid,
+            pushed_commit_sha=pushed_commit_sha,
+            merge_request=merge_request,
+        )
+
+    return _handle
+
+
 def build_job_handlers(
     adapter: GitLabAdapter,
     workspace: WorkspaceManager,
@@ -440,11 +539,13 @@ def build_job_handlers(
 ) -> dict[JobType, JobHandler]:
     """`JobType` → `JobHandler`のディスパッチテーブルを組み立てる(ADR-0022)。
 
-    M4-8時点で`review`/`issue-analysis`/`design`/`plan`/`implement`が実装済み(M4のJobType
-    予約4種+`plan`が出揃った)。`adapter`は`implement`が`create_branch`(書き込み)も必要と
-    するため、M4-7までの`GitLabReader`から`GitLabAdapter`(読み取り+書き込み)へ型を広げた
+    M4-9時点で`review`/`issue-analysis`/`design`/`plan`/`implement`/`push`が実装済み
+    (M4のJobType予約4種+`plan`+`push`が出揃った)。`adapter`は`implement`が`create_branch`、
+    `push`が`push_file_changes`/`create_merge_request`(いずれも書き込み)を必要とするため、
+    M4-7までの`GitLabReader`から`GitLabAdapter`(読み取り+書き込み)へ型を広げた
     (呼び出し元`run_dispatcher`は元々`GitLabRestAdapter`という両方満たす具象実装を渡して
-    いたため、実際の配線は変更していない)。
+    いたため、実際の配線は変更していない)。`push`は`ClaudeCodeRunner`を使わないため
+    `runner`を渡さない(ADR-0034「論点3」)。
     """
     return {
         REVIEW_JOB_TYPE: build_review_handler(
@@ -454,6 +555,7 @@ def build_job_handlers(
         JobType.DESIGN: build_design_handler(adapter, runner, config),
         JobType.PLAN: build_plan_handler(adapter, runner, config),
         JobType.IMPLEMENT: build_implement_handler(adapter, workspace, runner, config),
+        JobType.PUSH: build_push_handler(adapter, workspace),
     }
 
 
@@ -655,6 +757,7 @@ __all__ = [
     "build_issue_analysis_handler",
     "build_job_handlers",
     "build_plan_handler",
+    "build_push_handler",
     "build_review_handler",
     "default_worker_id",
     "run_dispatcher",
