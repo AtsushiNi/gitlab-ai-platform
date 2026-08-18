@@ -40,7 +40,7 @@ CLAUDE.mdの「次に着手すべきIssueはGitHub Projectsの着手順フィー
 | M1 | レビュー自動化MVP | レビュー待ちMRを自動検出→AIレビュー→ローカル保存まで一気通貫 | 完了 (12/12) |
 | M2 | 実運用強化 | 並列・再レビュー・人間のレビュー体験・GitLabへの選択投稿 | 進行中 (5/12) |
 | M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 完了 (8/8) |
-| M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 進行中 (10/11) |
+| M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 完了 (11/11) |
 | X  | 横断 | セキュリティ・コスト・可観測性 | 未起票 (0/2) |
 
 ## M0. 土台整備
@@ -178,7 +178,7 @@ M2-12 は完了後にフォローアップIssueが複数派生している(い�
 | [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) | M4-8 実装フェーズ(Job種別 implement) | 完了 |
 | [#115](https://github.com/AtsushiNi/gitlab-ai-platform/issues/115) | M4-9 push と MR 作成 | 完了 |
 | [#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116) | M4-10 Issue→MRパイプラインのオーケストレーション | 完了 |
-| [#117](https://github.com/AtsushiNi/gitlab-ai-platform/issues/117) | M4-11 自己レビュー接続 | 未着手 |
+| [#117](https://github.com/AtsushiNi/gitlab-ai-platform/issues/117) | M4-11 自己レビュー接続 | 完了 |
 
 M4-8/M4-9の実装過程で、自動実行系トークンのスコープ設計(ADR-0019)が書き込み操作の追加により
 前提から外れていることが判明し、フォローアップとして[#127](https://github.com/AtsushiNi/gitlab-ai-platform/issues/127)

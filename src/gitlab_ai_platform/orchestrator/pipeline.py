@@ -1,14 +1,20 @@
 """Issue→MRパイプラインのフェーズ間状態遷移(M4-10 [#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116)、
-[ADR-0035](../../../docs/adr/0035-pipeline-orchestration.md))。
+[ADR-0035](../../../docs/adr/0035-pipeline-orchestration.md)、
+M4-11 [#117](https://github.com/AtsushiNi/gitlab-ai-platform/issues/117)、
+[ADR-0036](../../../docs/adr/0036-self-review-connection.md))。
 
 方針:
 
-- `issue-analysis → design → plan → implement → push`という5フェーズの連鎖を、`advance_pipeline`
-  という1つの純粋寄りの関数(`JobRepository`への`enqueue`という副作用のみ持つ)で表現する。
-  `JobType`ごとの「次フェーズ」対応表(`_NEXT_JOB_TYPE`)を見て、次フェーズが無ければ(`review`/
-  `push`)`None`を返すだけの単純な仕組みにした
-- 各フェーズの`build_<次フェーズ>_job_payload`(`design`/`plan`/`implement`/`push`各パッケージに
-  既存)をそのまま呼び出す。新しい変換ロジックはここには書かない(Issue #116本文の想定通り)
+- `issue-analysis → design → plan → implement → push → review`という6フェーズの連鎖を、
+  `advance_pipeline`という1つの純粋寄りの関数(`JobRepository`への`enqueue`という副作用のみ持つ)で
+  表現する。`JobType`ごとの「次フェーズ」対応表(`_NEXT_JOB_TYPE`)を見て、次フェーズが無ければ
+  (`review`)`None`を返すだけの単純な仕組みにした
+- 各フェーズの`build_<次フェーズ>_job_payload`(`design`/`plan`/`implement`/`push`/`review`各
+  パッケージに既存)をそのまま呼び出す。新しい変換ロジックはここには書かない(Issue #116本文の
+  想定通り)
+- `push`完了後に`review`Jobを自動投入する(ADR-0036)。MR IIDは`push`完了時のJob `result`
+  (`build_push_job_result`が組み立てる`merge_request_iid`)で初めて手に入るため、
+  「`implement`完了後」ではなく「`push`完了後」が正しい接続点(ADR-0036「論点1」)
 - `RunnerDispatcher._process`(`cli/dispatcher.py`)がJobを`complete`した経路、`respond_to_job`
   (`cli/respond.py`)がJobを`WAITING_HUMAN`から`DONE`にした経路の両方から、同じこの関数を呼ぶ
   (ADR-0035「決定」参照)。どちらも「連鎖させてよいのはJobが`DONE`になった場合のみ」という
@@ -39,16 +45,19 @@ from ..job.protocol import Job, JobRepository, JobStatus, JobType
 from ..logging_ import get_logger
 from ..plan import build_plan_job_payload
 from ..push import build_push_job_payload
+from ..review import build_review_job_payload
 
 _logger = get_logger(__name__)
 
-# JobType→次フェーズのJobTypeの対応表。無人実行トラック5フェーズの連鎖順序そのもの。
-# `review`(MRレビュー、別トラック)と`push`(最終フェーズ)は次が無いため含めない
+# JobType→次フェーズのJobTypeの対応表。無人実行トラック5フェーズ+自己レビュー接続
+# (M4-11, ADR-0036)の連鎖順序そのもの。`review`は次が無い最終フェーズのため
+# キーとしては含めない(既存M1のレビューパイプラインで完結し、人間がレビュー結果を見て判断する)
 _NEXT_JOB_TYPE: dict[JobType, JobType] = {
     JobType.ISSUE_ANALYSIS: JobType.DESIGN,
     JobType.DESIGN: JobType.PLAN,
     JobType.PLAN: JobType.IMPLEMENT,
     JobType.IMPLEMENT: JobType.PUSH,
+    JobType.PUSH: JobType.REVIEW,
 }
 
 
@@ -60,9 +69,11 @@ def advance_pipeline(job_repo: JobRepository, completed_job: Job) -> Job | None:
     - `completed_job.status`が`DONE`でない場合(`WAITING_HUMAN`・`FAILED`を連鎖させない境界。
       呼び出し側は`complete`成功後/`WAITING_HUMAN → DONE`成功後にのみ本関数を呼ぶべきだが、
       本チェックは呼び出し側の実装ミスに対する防御)
-    - `completed_job.job_type`に次フェーズが無い場合(`review`/`push`)
+    - `completed_job.job_type`に次フェーズが無い場合(`review`のみ。`push`はM4-11で
+      `review`が次フェーズになった、ADR-0036)
     - `completed_job.result`に次フェーズのpayload組み立てに必要なフィールドが欠けている場合
-      (`project`/`issue_iid`が無い、または`push`投入に必要な`commit_sha`等が無い)
+      (`project`/`issue_iid`が無い、または`push`投入に必要な`commit_sha`等、`review`投入に
+      必要な`merge_request_iid`等が無い)
     - 次フェーズJobの`enqueue`が`JobError`で失敗した場合(Job Queue自体の障害。呼び出し元の
       Job自体は既に`DONE`として確定済みのため、この失敗でその確定を巻き戻す必要はない)
     """
@@ -134,8 +145,8 @@ def _build_next_job_payload(
 
     各フェーズが既に用意している`build_<次フェーズ>_job_payload`をそのまま呼び出すだけで、
     ここで新しい変換ロジックは書かない(Issue #116本文の想定通り)。`project`/`issue_iid`が
-    `completed_job.result`に無い、または`push`投入に必要なフィールドが`result`に無い場合は
-    `KeyError`を`None`に変換して返す(呼び出し元の`advance_pipeline`が握りつぶす)。
+    `completed_job.result`に無い、または`push`/`review`投入に必要なフィールドが`result`に
+    無い場合は`KeyError`を`None`に変換して返す(呼び出し元の`advance_pipeline`が握りつぶす)。
     """
     result = completed_job.result or {}
     project = result.get("project")
@@ -158,6 +169,16 @@ def _build_next_job_payload(
                 issue_iid,
                 implement_payload=completed_job.payload,
                 implement_result=result,
+            )
+        if next_job_type is JobType.REVIEW:
+            # MR IIDは`push`完了時のresult(`build_push_job_result`)で初めて手に入るため、
+            # `implement`ではなく`push`完了を起点にする(ADR-0036「論点1」)。
+            # `sha`は省略時「MR取得時点の最新commit」を使う設計だが、pushで作られたcommitを
+            # 明示的にレビュー対象にするため`pushed_commit_sha`を渡す
+            return build_review_job_payload(
+                project,
+                result["merge_request_iid"],
+                sha=result["pushed_commit_sha"],
             )
     except KeyError:
         return None

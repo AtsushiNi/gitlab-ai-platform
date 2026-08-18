@@ -154,11 +154,13 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 - **Job抽象・状態機械**(M3-1): `PENDING` `RUNNING` `WAITING_HUMAN` `DONE` `FAILED`。既存のレビュー
   処理をこの型に再構成し、Issue駆動開発(M4)の各フェーズ(要求分析/設計/実装)も同じ型で表現する
 - **Job Queue**(M3-2): まずDBベース。取得の排他・可視性タイムアウト・リトライ・デッドレター
-- **Orchestrator**(M3-7, M4-1〜M4-6, M4-9〜M4-10): フェーズ間の状態遷移、`WAITING_HUMAN`による停止判断、
+- **Orchestrator**(M3-7, M4-1〜M4-6, M4-9〜M4-11): フェーズ間の状態遷移、`WAITING_HUMAN`による停止判断、
   HTTP API/サーバ層による外部連携の口(M4-8の実装フェーズはRunner+Workspace Manager、
   M4-9のpush/MR作成はGitLab Adapterの担当)。M4-10でフェーズ間の連鎖(`issue-analysis → design →
   plan → implement → push`、`orchestrator.pipeline.advance_pipeline`)を実装した
-  ([ADR-0035](adr/0035-pipeline-orchestration.md))
+  ([ADR-0035](adr/0035-pipeline-orchestration.md))。M4-11で`push`完了後に`review`Jobを自動投入する
+  接続を同じ`advance_pipeline`に追加し、`issue-analysis → design → plan → implement → push →
+  review`という6フェーズの連鎖になった([ADR-0036](adr/0036-self-review-connection.md))
 
 ## 設計原則(ADR化する判断)
 

@@ -67,9 +67,9 @@
 - [specs/issue-poller.md](specs/issue-poller.md) — Issue Poller(M4-1)の仕様。無人実行ラベルの
   付いたIssueを検出し、専用のIssue Ticket Storeで二重投入を防ぎながら`issue-analysis`種別の
   Jobを投入する
-- [specs/orchestrator.md](specs/orchestrator.md) — Orchestrator(M3-7, M4-1〜M4-6, M4-9〜M4-10)の仕様。
+- [specs/orchestrator.md](specs/orchestrator.md) — Orchestrator(M3-7, M4-1〜M4-6, M4-9〜M4-11)の仕様。
   「質問する / 仮定して進める」判断ロジック(M4-4)に加え、`issue-analysis → design → plan →
-  implement → push`のフェーズ連鎖(M4-10、`advance_pipeline`)を実装済み
+  implement → push → review`のフェーズ連鎖(M4-10/M4-11、`advance_pipeline`)を実装済み
 - [specs/issue-analysis.md](specs/issue-analysis.md) — 要求分析フェーズ(M4-3、Job種別
   `issue-analysis`)の仕様。Issueを分析し要求・受入条件・前提・不足情報を構造化して出力する。
   `WAITING_HUMAN`遷移(`job/protocol.py`の`wait_for_human`)・Runnerへの組み立て済みプロンプト

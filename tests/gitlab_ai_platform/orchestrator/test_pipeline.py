@@ -99,12 +99,12 @@ def test_returns_none_for_review_job_type():
     assert repo.enqueue_calls == []
 
 
-def test_returns_none_for_push_job_type():
-    # pushはパイプラインの最終フェーズ
+def test_returns_none_when_push_result_missing_review_required_fields():
+    # merge_request_iid等がresultに無い(壊れたJob等)場合はKeyErrorをNoneに変換する
     repo = _FakeJobRepository()
     job = _job(
         JobType.PUSH,
-        result={"project": _PROJECT, "issue_iid": _ISSUE_IID, "pushed_commit_sha": "x"},
+        result={"project": _PROJECT, "issue_iid": _ISSUE_IID},
     )
 
     assert advance_pipeline(repo, job) is None
@@ -254,6 +254,39 @@ def test_implement_done_returns_none_when_result_missing_push_required_fields():
     assert repo.enqueue_calls == []
 
 
+# --- push → review(M4-11, ADR-0036) ---
+
+
+def test_push_done_enqueues_review_job_using_mr_iid_and_pushed_commit_sha():
+    # MR IIDは`push`完了時のresultで初めて手に入るため、`implement`ではなく`push`完了を
+    # 起点にする(ADR-0036「論点1」)
+    repo = _FakeJobRepository()
+    job = _job(
+        JobType.PUSH,
+        result={
+            "project": _PROJECT,
+            "issue_iid": _ISSUE_IID,
+            "pushed_commit_sha": "pushed-sha",
+            "remote_branch": f"ai/issue-{_ISSUE_IID}",
+            "merge_request_iid": 42,
+            "merge_request_web_url": "https://gitlab.example.com/group/project/-/merge_requests/42",
+        },
+    )
+
+    next_job = advance_pipeline(repo, job)
+
+    assert next_job is not None
+    assert next_job.job_type is JobType.REVIEW
+    assert len(repo.enqueue_calls) == 1
+    job_type, payload = repo.enqueue_calls[0]
+    assert job_type is JobType.REVIEW
+    assert payload == {
+        "project": _PROJECT,
+        "mr_iid": 42,
+        "sha": "pushed-sha",
+    }
+
+
 # --- 欠損フィールド ---
 
 
@@ -333,10 +366,16 @@ def test_advance_pipeline_hook_binds_job_repo_and_returns_none():
 
 
 def test_advance_pipeline_hook_is_a_noop_for_terminal_job_types():
+    # reviewはパイプラインの最終フェーズ(次が無い)
     repo = _FakeJobRepository()
     job = _job(
-        JobType.PUSH,
-        result={"project": _PROJECT, "issue_iid": _ISSUE_IID, "pushed_commit_sha": "x"},
+        JobType.REVIEW,
+        result={
+            "project": _PROJECT,
+            "mr_iid": 1,
+            "sha": "abc",
+            "result_path": "/tmp/x",
+        },
     )
     hook = advance_pipeline_hook(repo)
 
