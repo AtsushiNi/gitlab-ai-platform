@@ -14,24 +14,36 @@
   変化しないため、`respond`をそのまま再実行すればよい。`RUNNING`遷移後に例外
   (`KeyboardInterrupt`含む)が発生した場合は`FAILED`へ倒し、`RUNNING`のまま孤立させない
   (ADR-0028「決定」参照)
-- 現時点でM4は`issue-analysis`(M4-3)までしか実装されていないため、回答の統合先は
-  `issue_analysis.build_resolved_issue_analysis_job_result`固定。将来`design`/`implement`が
-  `WAITING_HUMAN`を使うようになったら、Job種別ごとの統合関数を切り替える必要がある
-  (ADR-0028「影響」)
+
+M4-6([#112](https://github.com/AtsushiNi/gitlab-ai-platform/issues/112)、ADR-0029)で、
+`design`種別Jobも`WAITING_HUMAN`を使うようになったため、回答の統合先(`_RESULT_RESOLVERS`)を
+`job_type`ごとに切り替えられるようにした(ADR-0028「影響」が予告していた拡張)。`implement`
+(M4の残り)が対応するまでは`_RESULT_RESOLVERS`に含まれない種別を指定すると
+`InvalidJobTransitionError`を送出する。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from ..config import Config
+from ..design.job import build_resolved_design_job_result
 from ..issue_analysis.job import build_resolved_issue_analysis_job_result
 from ..job import Job, JobRepository, JobStatus, JobType, SqliteJobRepository
 from ..job.errors import InvalidJobTransitionError, JobError, JobNotFoundError
 from ..logging_ import get_logger
 
 _logger = get_logger(__name__)
+
+# `WAITING_HUMAN`後の回答統合関数(job_typeごとに`result`の構造が異なるため)。
+# `implement`(M4の残り)がWAITING_HUMANを使うようになったらここに追加する(ADR-0028「影響」)
+_RESULT_RESOLVERS: dict[
+    JobType, Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
+] = {
+    JobType.ISSUE_ANALYSIS: build_resolved_issue_analysis_job_result,
+    JobType.DESIGN: build_resolved_design_job_result,
+}
 
 
 def collect_answers(
@@ -88,15 +100,18 @@ def respond_to_job(
     質問提示・回答収集(`collect_answers`)はJobの状態を一切変更しない。`WAITING_HUMAN →
     RUNNING`遷移後に例外(`KeyboardInterrupt`含む)が発生した場合は`FAILED`へ更新してから
     元の例外を再送出し、`RUNNING`のまま放置しない。
+
+    回答の統合先(`result`の組み立て方)は`job.job_type`に応じて`_RESULT_RESOLVERS`から
+    選ぶ(M4-6、ADR-0029)。`run_respond`が事前に対応種別であることを確認済みの前提で呼ぶため、
+    ここでの`KeyError`は呼び出し側の実装ミスとして扱う。
     """
     questions = (job.result or {}).get("questions", [])
     answers = collect_answers(questions, ask=ask, output=output)
+    resolve_result = _RESULT_RESOLVERS[job.job_type]
 
     job = job_repo.update_status(job.id, JobStatus.RUNNING)
     try:
-        resolved_result = build_resolved_issue_analysis_job_result(
-            job.result or {}, answers
-        )
+        resolved_result = resolve_result(job.result or {}, answers)
         return job_repo.update_status(job.id, JobStatus.DONE, result=resolved_result)
     except BaseException as exc:
         # KeyboardInterrupt(Ctrl+C)も含め、RUNNINGへ遷移させた後の失敗はJobを孤立させない
@@ -140,12 +155,14 @@ def run_respond(
                 f"job_id={job_id!r} はWAITING_HUMAN状態ではありません"
                 f"(現在の状態: {job.status.value!r})"
             )
-        if job.job_type is not JobType.ISSUE_ANALYSIS:
-            # 現時点でWAITING_HUMANになりうるのはissue-analysisのみ(M4-6以降で拡張予定、
-            # ADR-0028「影響」)。未対応種別を誤って指定した場合に分かりやすく失敗させる
+        if job.job_type not in _RESULT_RESOLVERS:
+            # 対応済みJob種別は_RESULT_RESOLVERSに登録されているもののみ(M4-6時点で
+            # issue-analysis/design、ADR-0029)。未対応種別を誤って指定した場合に
+            # 分かりやすく失敗させる
+            supported = ", ".join(sorted(t.value for t in _RESULT_RESOLVERS))
             raise InvalidJobTransitionError(
                 f"job_id={job_id!r} のjob_type={job.job_type.value!r} は"
-                "respondがまだ対応していません(issue-analysisのみ対応)"
+                f"respondがまだ対応していません({supported}のみ対応)"
             )
 
         return respond_to_job(job_repo, job, ask=ask, output=output)

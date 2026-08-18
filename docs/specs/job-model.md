@@ -338,7 +338,7 @@ class RunnerDispatcher:
 
 | 型 | フィールド | 補足 |
 |---|---|---|
-| `JobType` (Enum) | `REVIEW` / `ISSUE_ANALYSIS` / `DESIGN` / `IMPLEMENT` | タスク種別。M4-3時点で実際にRunnerが処理できるのは`REVIEW`/`ISSUE_ANALYSIS`。`DESIGN`/`IMPLEMENT`はM4での実装を見越した予約値 |
+| `JobType` (Enum) | `REVIEW` / `ISSUE_ANALYSIS` / `DESIGN` / `IMPLEMENT` | タスク種別。M4-6時点で実際にRunnerが処理できるのは`REVIEW`/`ISSUE_ANALYSIS`/`DESIGN`。`IMPLEMENT`はM4での実装を見越した予約値 |
 | `JobStatus` (Enum) | `PENDING` / `RUNNING` / `WAITING_HUMAN` / `DONE` / `FAILED` | Jobの進行状態(状態機械)。M3-2でもこの5値のまま変更していない([ADR-0017](../adr/0017-job-queue.md)) |
 | `Job` (frozen dataclass) | `id: str`, `job_type: JobType`, `status: JobStatus`, `payload: dict[str, Any]`, `result: dict[str, Any] \| None`, `error: str \| None`, `created_at: datetime`, `updated_at: datetime`, `attempts: int = 0`, `max_attempts: int = 3`, `lease_owner: str \| None = None`, `lease_expires_at: datetime \| None = None`, `dead_letter_at: datetime \| None = None` | `id`はUUID(SQLite実装が`uuid.uuid4()`で生成)。`attempts`以降はM3-2で追加(末尾にデフォルト値付き) |
 
