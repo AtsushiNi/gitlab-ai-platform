@@ -28,6 +28,11 @@
   `docs/adr/0017-job-queue.md`)で、取得の排他・可視性タイムアウト・リトライ・デッドレターを
   実現する`claim`/`heartbeat`/`complete`/`fail`/`list_dead_letters`を追加した。既存5メソッドの
   シグネチャ・挙動(`enqueue`はキーワード専用引数`max_attempts`の追加のみ)は変更していない
+- M4-3([#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109)、
+  `docs/adr/0026-job-waiting-human-transition.md`)で、`complete`と対になる`wait_for_human`を
+  追加した。`RunnerDispatcher`(`cli/dispatcher.py`)がclaim済みJobを`WAITING_HUMAN`へ
+  遷移させるための経路で、`complete`/`fail`と同じくリース所有権(`worker_id`)の検証と
+  リース情報のクリアを行う
 """
 
 from __future__ import annotations
@@ -181,6 +186,20 @@ class JobRepository(Protocol):
         `retry=False`、またはリトライ上限に達している場合は`FAILED`へ遷移させ、デッドレター
         として確定する。`worker_id`が現在のリース所有者と一致しない場合は`LeaseLostError`を
         送出する。
+        """
+        ...
+
+    def wait_for_human(
+        self, job_id: str, worker_id: str, result: dict[str, Any] | None = None
+    ) -> Job:
+        """claim済みJobが人間の確認を必要とすると報告し`WAITING_HUMAN`へ遷移させる(M4-3, ADR-0026)。
+
+        `complete`と対になるメソッドで、`RUNNING → WAITING_HUMAN`へ遷移させたうえで
+        リース情報をクリアする(`WAITING_HUMAN`はclaim対象外の状態のため)。`result`には
+        人間へ提示する質問一覧等(`orchestrator.ask_judgments`が返す`UncertaintyJudgment`を
+        呼び出し側が辞書化したもの)を渡す想定で、`complete`の`result`と同じく`Job.result`
+        フィールドにそのまま格納される。`worker_id`が現在のリース所有者と一致しない場合は
+        `LeaseLostError`を送出する。
         """
         ...
 

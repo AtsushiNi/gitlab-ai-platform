@@ -27,19 +27,32 @@
 - 排他は`JobRepository.claim`のアトミックなUPDATE文(ADR-0017)に委ね、`ProcessLock`
   (`cli/lock.py`)は使わない。複数の`worker`プロセス(将来は複数ホスト)が同一`job_db_path`に
   対して同時に稼働することを前提とする設計そのものであるため(ADR-0022「決定」参照)。
+- `handler`が`WaitingForHumanError`を送出した場合(M4-3
+  [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109)、ADR-0026)は、
+  `fail`ではなく`JobRepository.wait_for_human`でJobを`WAITING_HUMAN`へ遷移させる。
+  「未対応のJobType→`NotImplementedError`」と同じ、JobHandlerとRunnerDispatcherの間の
+  契約として例外を使うパターン。
 """
 
 from __future__ import annotations
 
 import os
 import socket
+import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
+from .._paths import slugify_project
 from ..config import Config
 from ..gitlab_adapter import GitLabRestAdapter
 from ..gitlab_adapter.protocol import GitLabReader
+from ..issue_analysis import (
+    build_issue_analysis_instructions,
+    build_issue_analysis_job_result,
+    parse_issue_analysis_output,
+)
 from ..job import SqliteJobRepository
 from ..job.errors import JobError, LeaseLostError
 from ..job.protocol import (
@@ -49,12 +62,14 @@ from ..job.protocol import (
     JobType,
 )
 from ..logging_ import execution_id_scope, get_logger
+from ..orchestrator import judge_uncertainties, requires_human
+from ..poller.issue_poller import issue_analysis_job_payload_to_args
 from ..review import (
     REVIEW_JOB_TYPE,
     build_review_job_result,
     review_job_payload_to_args,
 )
-from ..runner import SubprocessClaudeCodeRunner
+from ..runner import IssueContext, SubprocessClaudeCodeRunner, build_issue_prompt
 from ..runner.protocol import ClaudeCodeRunner
 from ..store import build_state_store
 from ..store.protocol import StateStore
@@ -72,6 +87,21 @@ DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 120.0
 # JobType→処理関数のディスパッチテーブルの値の型(ADR-0022「Job受け渡しプロトコル」)。
 # `complete`にそのまま渡せる`result`(またはNone)を返す契約
 JobHandler = Callable[[Job], "dict[str, Any] | None"]
+
+
+class WaitingForHumanError(Exception):
+    """JobHandlerが人間の確認を必要とすると判断したことを表す(M4-3, ADR-0026)。
+
+    `NotImplementedError`(未対応のJobType、ADR-0016)と同じ、JobHandlerと
+    `RunnerDispatcher`の間の契約として使う例外。`_process`はこの例外を捕捉すると
+    `fail`ではなく`JobRepository.wait_for_human`でJobを`WAITING_HUMAN`へ遷移させる。
+    `result`には`wait_for_human`にそのまま渡す辞書(質問一覧等、`build_issue_analysis_job_result`
+    が組み立てたもの)を持つ。
+    """
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        super().__init__("人間の確認が必要です(WAITING_HUMAN)")
+        self.result = result
 
 
 def build_review_handler(
@@ -100,6 +130,54 @@ def build_review_handler(
     return _handle
 
 
+def build_issue_analysis_handler(
+    adapter: GitLabReader,
+    runner: ClaudeCodeRunner,
+    config: Config,
+) -> JobHandler:
+    """issue-analysis種別の`JobHandler`を組み立てる(M4-3, ADR-0026/0027)。
+
+    `review`と異なりWorkspace Manager(worktree)を使わない。要求分析はIssue本文(タイトル・
+    説明・ラベル)の読解のみを対象とし、リポジトリ探索を必要としない設計のため(ADR-0027)。
+    Claude Codeの実行先(subprocessのcwd)には、Job処理の間だけ存在する一時ディレクトリを使い、
+    処理後に破棄する。
+
+    処理の流れ: `issue_analysis_job_payload_to_args`でpayloadを分解(`poller/issue_poller.py`と
+    共有するpayload形式、重複実装しない)→`GitLabReader.get_issue`でIssue取得→
+    `IssueContext`に詰める→要求分析用instructions(`build_issue_analysis_instructions`)と
+    `build_issue_prompt`でプロンプトを組み立てる→`ClaudeCodeRunner.run_prompt`で実行→
+    `parse_issue_analysis_output`で構造化→検出した不明点(`RequirementAnalysis.uncertainties`)を
+    `judge_uncertainties`で判定する。`requires_human`が`True`(1件でも`ASK`判定がある)場合は
+    `WaitingForHumanError`を送出し、`RunnerDispatcher._process`がJobを`WAITING_HUMAN`へ
+    遷移させる。`False`の場合は通常のJob結果として辞書を返す(`complete`)。
+    """
+
+    def _handle(job: Job) -> dict[str, Any]:
+        project, issue_iid = issue_analysis_job_payload_to_args(job.payload)
+        issue = adapter.get_issue(project, issue_iid)
+        context = IssueContext(issue=issue)
+        prompt = build_issue_prompt(build_issue_analysis_instructions(), context)
+
+        with tempfile.TemporaryDirectory(prefix="issue-analysis-") as workdir:
+            run_result = runner.run_prompt(
+                Path(workdir),
+                prompt,
+                log_key=f"{slugify_project(project)}/issue-{issue_iid}",
+                timeout_seconds=config.runner_timeout_seconds,
+            )
+
+        analysis = parse_issue_analysis_output(run_result)
+        judgments = judge_uncertainties(analysis.uncertainties)
+        result = build_issue_analysis_job_result(
+            project, issue_iid, analysis, judgments
+        )
+        if requires_human(judgments):
+            raise WaitingForHumanError(result)
+        return result
+
+    return _handle
+
+
 def build_job_handlers(
     adapter: GitLabReader,
     workspace: WorkspaceManager,
@@ -109,13 +187,14 @@ def build_job_handlers(
 ) -> dict[JobType, JobHandler]:
     """`JobType` → `JobHandler`のディスパッチテーブルを組み立てる(ADR-0022)。
 
-    現時点では`review`のみ実装済み。`issue-analysis`/`design`/`implement`(M4)は、対応する
-    handlerをこの辞書に追加するだけで`RunnerDispatcher`側の変更なしに配線できる想定。
+    M4-3時点で`review`/`issue-analysis`が実装済み。`design`/`implement`(M4の残り)は、
+    対応するhandlerをこの辞書に追加するだけで`RunnerDispatcher`側の変更なしに配線できる想定。
     """
     return {
         REVIEW_JOB_TYPE: build_review_handler(
             adapter, workspace, runner, store, config
         ),
+        JobType.ISSUE_ANALYSIS: build_issue_analysis_handler(adapter, runner, config),
     }
 
 
@@ -175,7 +254,7 @@ class RunnerDispatcher:
                 stop_event.wait(self._poll_interval_seconds)
 
     def _process(self, job: Job) -> None:
-        """1件のJobを処理し、結果に応じて`complete`/`fail`を呼び分ける(ADR-0022)。
+        """1件のJobを処理し、結果に応じて`complete`/`fail`/`wait_for_human`を呼び分ける(ADR-0022/0026)。
 
         1件の失敗は他のJobの処理を止めない(例外を再送出しない)。`worker`は無人・ヘッドレスな
         運用を前提とするため、`watch`の「想定外の例外はプロセスを落とす」方針とは意図的に異なる。
@@ -194,6 +273,14 @@ class RunnerDispatcher:
                 # ADR-0016: 未実装のJobTypeを受け取った場合はNotImplementedErrorを送出する契約
                 raise NotImplementedError(f"未対応のJobTypeです: {job.job_type.value}")
             result = handler(job)
+        except WaitingForHumanError as exc:
+            # ADR-0026: JobHandlerが人間の確認が必要と判断した場合は、失敗ではなく
+            # WAITING_HUMANへ遷移させる(complete/failと対になる経路)
+            self._job_repo.wait_for_human(job.id, self._worker_id, result=exc.result)
+            _logger.info(
+                "dispatcher.job_waiting_human",
+                extra={"job_id": job.id, "job_type": job.job_type.value},
+            )
         except NotImplementedError as exc:
             # 未実装種別はリトライしても状況が変わらないため、即座にデッドレター化する
             self._job_repo.fail(job.id, self._worker_id, str(exc), retry=False)
@@ -303,6 +390,8 @@ __all__ = [
     "DEFAULT_POLL_INTERVAL_SECONDS",
     "JobHandler",
     "RunnerDispatcher",
+    "WaitingForHumanError",
+    "build_issue_analysis_handler",
     "build_job_handlers",
     "build_review_handler",
     "default_worker_id",

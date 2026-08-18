@@ -25,6 +25,9 @@ _EXPECTED_PUBLIC_METHODS = {
     "complete",
     "fail",
     "list_dead_letters",
+    # M4-3([#109], docs/adr/0026-job-waiting-human-transition.md): `complete`と対になる
+    # WAITING_HUMANへの遷移メソッド
+    "wait_for_human",
 }
 
 
@@ -198,6 +201,11 @@ class _FakeJobRepository:
         self, job_id: str, worker_id: str, error: str, *, retry: bool = True
     ) -> Job:
         return self.update_status(job_id, JobStatus.FAILED, error=error)
+
+    def wait_for_human(
+        self, job_id: str, worker_id: str, result: dict | None = None
+    ) -> Job:
+        return self.update_status(job_id, JobStatus.WAITING_HUMAN, result=result)
 
     def list_dead_letters(self) -> list[Job]:
         return [job for job in self._jobs.values() if job.dead_letter_at is not None]

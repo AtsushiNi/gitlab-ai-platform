@@ -2,9 +2,11 @@
 
 - 実装場所: `src/gitlab_ai_platform/runner/`
 - 対応Issue: [#35](https://github.com/AtsushiNi/gitlab-ai-platform/issues/35) (M1-7)、
-  [#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108) (M4-2、Issue向け正規化を追記)
-- 関連ADR: [ADR-0005](../adr/0005-claude-code-runner-design.md)
-- ステータス: 実装済み(Protocol定義 + subprocess実装 + Issue向け正規化)
+  [#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108) (M4-2、Issue向け正規化を追記)、
+  [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3、`run_prompt`を追記)
+- 関連ADR: [ADR-0005](../adr/0005-claude-code-runner-design.md)、
+  [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)
+- ステータス: 実装済み(Protocol定義 + subprocess実装 + Issue向け正規化 + `run_prompt`)
 
 ## 責務
 
@@ -58,6 +60,20 @@ class ClaudeCodeRunner(Protocol):
         permission_mode: str | None = None,
     ) -> RunResult:
         """`worktree_path`配下でClaude Codeを非対話実行し、結果を返す。"""
+        ...
+
+    def run_prompt(
+        self,
+        worktree_path: Path,
+        prompt: str,
+        *,
+        log_key: str,
+        timeout_seconds: int,
+        allowed_tools: Sequence[str] = (),
+        disallowed_tools: Sequence[str] = (),
+        permission_mode: str | None = None,
+    ) -> RunResult:
+        """組み立て済みの`prompt`をそのままClaude Codeへ渡して非対話実行し、結果を返す(M4-3、ADR-0027)。"""
         ...
 ```
 
@@ -158,16 +174,60 @@ Labels: <issue.labels をカンマ区切りで結合したもの>
 場合は`Labels:`行を省略する。`build_prompt`と同じ理由(Popen経由でargvとして渡す際の
 OS上限、Linuxの`MAX_ARG_STRLEN`)で、同じ閾値(100,000バイト)まで切り詰める。
 
-### 対象外(このIssueのスコープ外)
+### 対象外(M4-2時点のスコープ外)
 
 - `GitLabAdapter`(`gitlab_adapter/protocol.py`)には、MRの`list_merge_request_discussions`
   に相当するIssueコメント(ディスカッション)取得メソッドが存在しない。そのため
   `IssueContext`は`ReviewContext.discussions`に相当するフィールドを持たず、
   `build_issue_prompt`の出力にコメントは含まれない。Adapter側にメソッドが追加された時点で
   `ReviewContext`と同様の形に拡張する
-- Issueを実際にClaude Code Runner(`SubprocessClaudeCodeRunner.run`)へ渡してヘッドレス
-  実行するJobハンドラの実装(M4-3「要求分析フェーズ」等)はスコープ外。本節は
-  「正規化ロジックとその単体テスト」までを対象とする
+- Issueを実際にClaude Code Runnerへ渡してヘッドレス実行するJobハンドラの実装は
+  M4-2時点ではスコープ外だった(「正規化ロジックとその単体テスト」までが対象)。
+  M4-3で`run_prompt`(次節)と`cli/dispatcher.py`の`build_issue_analysis_handler`として
+  実装した
+
+## Runnerへの組み立て済みプロンプトの実行(`run_prompt`、M4-3)
+
+実装場所: `src/gitlab_ai_platform/runner/protocol.py`・`subprocess_runner.py`。
+対応Issue: [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3)。
+関連ADR: [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)。
+
+`run`は`instructions`+`ReviewContext`をRunner内部(`build_prompt`)で結合するMRレビュー専用の
+経路のままとし(シグネチャ・挙動とも変更していない)、`run_prompt`を呼び出し側が組み立て済みの
+プロンプト文字列をそのまま実行する汎用の経路として追加した(ADR-0027「`run`とプロンプト組み立て
+の責務を分離する」)。
+
+```python
+def run_prompt(
+    self,
+    worktree_path: Path,
+    prompt: str,
+    *,
+    log_key: str,
+    timeout_seconds: int,
+    allowed_tools: Sequence[str] = (),
+    disallowed_tools: Sequence[str] = (),
+    permission_mode: str | None = None,
+) -> RunResult:
+```
+
+- `prompt`: `claude -p`にそのまま渡す完成後のプロンプト文字列。`run`と異なり、Runnerは
+  instructions+contextの結合を一切行わない
+- `log_key`: 実行ログの保存先ディレクトリ(`log_dir`からの相対パス)を決めるための
+  呼び出し側指定の識別子。Runnerはこの文字列の中身を解釈しない
+  (`review`固有・`issue-analysis`固有のどちらの知識も持たない)。issue-analysisの
+  JobHandler(`cli/dispatcher.py`の`build_issue_analysis_handler`)は
+  `f"{slugify_project(project)}/issue-{issue_iid}"`を渡す
+- タイムアウト・強制終了・`allowed_tools`等の意味・実装(SIGTERM→SIGKILLの2段階、
+  Popen起動、JSON結果パース)は`run`と共有する(`SubprocessClaudeCodeRunner._execute`)
+
+実行ログの保存先は`log_dir`配下に`<log_key>/<timestamp>.json`(`run`の
+`<log_key>/mr-<iid>/<sha先頭12桁>-<timestamp>.json`と異なり、ファイル名にprefixを持たない)。
+
+`issue-analysis`のJobHandlerはWorkspace Manager(worktree)を使わず、Job処理の間だけ存在する
+一時ディレクトリ(`tempfile.TemporaryDirectory`)を`worktree_path`として`run_prompt`に渡す
+(要求分析はIssue本文の読解のみを対象とし、リポジトリ探索を必要としない設計のため、
+ADR-0027「決定」参照)。
 
 ## エラー時の振る舞い
 
@@ -188,15 +248,18 @@ OS上限、Linuxの`MAX_ARG_STRLEN`)で、同じ閾値(100,000バイト)まで�
 
 ## 実行ログ(`log_dir`への保存)
 
-実装場所: `src/gitlab_ai_platform/runner/subprocess_runner.py`の`SubprocessClaudeCodeRunner._write_log`。
+実装場所: `src/gitlab_ai_platform/runner/subprocess_runner.py`の`SubprocessClaudeCodeRunner._execute`/
+`_write_log`。
 
-- 保存先: `<log_dir>/<projectスラッグ>/mr-<iid>/<sha先頭12桁>-<timestamp>.json`
+- 保存先(`run`): `<log_dir>/<projectスラッグ>/mr-<iid>/<sha先頭12桁>-<timestamp>.json`
   (`projectスラッグ`はWorkspace Manager, ADR-0004と同じパーセントエンコーディング方式)
+- 保存先(`run_prompt`、M4-3): `<log_dir>/<log_key>/<timestamp>.json`
 - 内容: `command`(実行コマンド。プロンプト文字列も含むがシークレットは含まない) /
   `cwd` / `started_at` / `duration_seconds` / `timed_out` / `returncode` / `stdout` / `stderr`
 - 認証情報(Bedrock/AWS等)は`env`経由で`Popen`にのみ渡され、`command`にもログにも含まれない
 - 正常終了・タイムアウト・出力エラーのいずれの場合も、例外送出前に必ずログを保存してから
-  例外を送出する(失敗時の調査可能性を優先する)
+  例外を送出する(失敗時の調査可能性を優先する)。`run`/`run_prompt`共通の実行本体`_execute`が
+  この契約を保証する
 
 ## テスト方針
 
@@ -207,9 +270,9 @@ OS上限、Linuxの`MAX_ARG_STRLEN`)で、同じ閾値(100,000バイト)まで�
 - `test_types.py`: `ReviewContext`/`RunResult`のイミュータブル性(`frozen=True`)を検証する
 - `test_errors.py`: 各例外が`RunnerError`のサブクラスであること、保持する属性
   (`log_path`等)を検証する
-- `test_protocol.py`: `ClaudeCodeRunner`の公開メソッド集合が`run`と完全一致することを検証する。
-  Protocolを満たすダミー実装に対して`isinstance(impl, ClaudeCodeRunner)`が`True`になることも
-  検証する
+- `test_protocol.py`: `ClaudeCodeRunner`の公開メソッド集合が`run`/`run_prompt`(M4-3)と
+  完全一致することを検証する。Protocolを満たすダミー実装に対して
+  `isinstance(impl, ClaudeCodeRunner)`が`True`になることも検証する
 - `test_subprocess_runner.py`:
   - 正常系: コマンド組み立て(`claude -p <prompt> --output-format json`)、`cwd`が
     `worktree_path`になること、JSON出力が`RunResult`へ正しくマッピングされることを検証する
@@ -224,6 +287,10 @@ OS上限、Linuxの`MAX_ARG_STRLEN`)で、同じ閾値(100,000バイト)まで�
     ことを検証する
   - 標準出力がJSONとして解釈できない場合に`ClaudeCodeOutputError`を送出することを検証する
   - 実行ログが期待するパスに保存され、認証情報等のシークレットが含まれないことを検証する
+  - `run_prompt`(M4-3): `prompt`をそのままargvへ渡すこと(instructions+contextの結合を
+    行わないこと)、ログ保存先が`<log_key>/<timestamp>.json`になること(`run`のような
+    sha prefixを持たないこと)、`allowed_tools`等の権限フラグ・エラー系(コマンド未検出/
+    JSON解釈失敗)が`run`と同じ挙動になることを検証する
 - `test_issue_prompt.py`: `build_issue_prompt`が`instructions`・Issueのタイトル・説明・
   ラベルをプロンプトに含めること、`description`/`labels`が空の場合に対応する見出しを
   省略すること、切り詰め(`MAX_ARG_STRLEN`対策)が`build_prompt`と同じ閾値で働くことを検証する
@@ -232,6 +299,8 @@ OS上限、Linuxの`MAX_ARG_STRLEN`)で、同じ閾値(100,000バイト)まで�
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のClaude Code Runner行
 - [ADR-0005: Claude Code Runner の設計](../adr/0005-claude-code-runner-design.md)
+- [ADR-0027: 要求分析フェーズのRunner実行方式](../adr/0027-issue-analysis-runner-execution.md)
+- [specs/issue-analysis.md](issue-analysis.md) — `run_prompt`の呼び出し元(M4-3)
 - `references/spike-s1-claude-code-headless.md` — ヘッドレス実行方式・タイムアウト・
   権限設定・Bedrock認証に関する実機検証結果
 - ソースコード: `src/gitlab_ai_platform/runner/`

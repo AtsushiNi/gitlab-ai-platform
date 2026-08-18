@@ -16,6 +16,10 @@ M3-2 [#92](https://github.com/AtsushiNi/gitlab-ai-platform/issues/92)、
   `database is locked`にしない)。既存5メソッド(`enqueue`/`get`/`update_status`/
   `list_by_status`/`close`)の挙動は変更していない(`enqueue`はキーワード専用引数
   `max_attempts`の追加のみ)。
+- M4-3([#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109)、ADR-0026):
+  `complete`と対になる`wait_for_human`を追加した。`complete`の実装(`update_status`で
+  `RUNNING → DONE`へ遷移させてからリースをクリアする)と同じ構造で、遷移先だけが
+  `WAITING_HUMAN`になる。
 """
 
 from __future__ import annotations
@@ -345,6 +349,19 @@ class SqliteJobRepository:
         with self._lock:
             self._require_leased_locked(job_id, worker_id)
             return self._fail_locked(job_id, error, retry)
+
+    def wait_for_human(
+        self, job_id: str, worker_id: str, result: dict[str, Any] | None = None
+    ) -> Job:
+        with self._lock:
+            self._require_leased_locked(job_id, worker_id)
+            # RUNNING → WAITING_HUMANは既存のupdate_status(ADR-0016で許可済みの遷移)を
+            # そのまま使う(`complete`のRUNNING → DONEと同じ構造、ADR-0026)
+            self.update_status(job_id, JobStatus.WAITING_HUMAN, result=result)
+            self._clear_lease_locked(job_id)
+            updated = self.get(job_id)
+            assert updated is not None
+            return updated
 
     def list_dead_letters(self) -> list[Job]:
         with self._lock:
