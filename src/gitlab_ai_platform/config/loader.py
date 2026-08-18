@@ -33,6 +33,10 @@ DEFAULT_ENV_PATH = Path(".env")
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 DEFAULT_MAX_PARALLEL = 5
 DEFAULT_REVIEW_LABEL = "レビュー待ち"
+# Issue Poller(M4-1, docs/adr/0025-issue-poller-dedup.md)。無人実行に回すことを人間が明示した
+# Issueにこのラベルを付ける運用を想定する
+DEFAULT_ISSUE_LABEL = "AI実装"
+DEFAULT_ISSUE_TICKET_DB_PATH = "issue_tickets.db"
 DEFAULT_WORKSPACE_ROOT = "workspace"
 DEFAULT_WORKSPACE_MAX_DISK_MB = 5000
 DEFAULT_RUNNER_LOG_DIR = "logs/runner"
@@ -120,6 +124,7 @@ def load_config(
     gitlab_section = raw.get("gitlab", {})
     poller_section = raw.get("poller", {})
     review_section = raw.get("review", {})
+    issue_section = raw.get("issue", {})
     workspace_section = raw.get("workspace", {})
     runner_section = raw.get("runner", {})
     reviews_section = raw.get("reviews", {})
@@ -139,6 +144,10 @@ def load_config(
         ),
         max_parallel=poller_section.get("max_parallel", DEFAULT_MAX_PARALLEL),
         review_label=review_section.get("label", DEFAULT_REVIEW_LABEL),
+        issue_label=issue_section.get("label", DEFAULT_ISSUE_LABEL),
+        issue_ticket_db_path=issue_section.get(
+            "ticket_db_path", DEFAULT_ISSUE_TICKET_DB_PATH
+        ),
         workspace_root=workspace_section.get("root", DEFAULT_WORKSPACE_ROOT),
         workspace_max_disk_mb=workspace_section.get(
             "max_disk_mb", DEFAULT_WORKSPACE_MAX_DISK_MB

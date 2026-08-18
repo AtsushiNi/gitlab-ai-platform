@@ -13,6 +13,10 @@ max_parallel = 5
 [review]
 label = "レビュー待ち"
 
+[issue]
+label = "AI実装"
+ticket_db_path = "issue_tickets.db"
+
 [workspace]
 root = "workspace"
 max_disk_mb = 5000

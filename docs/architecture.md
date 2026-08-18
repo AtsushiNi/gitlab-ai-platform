@@ -83,6 +83,8 @@ flowchart TD
 | State Store | `store/` | `(project, mr_iid, commit_sha)` 単位でレビュー状態(`status` / `reviewed_at` / 結果パス)を記録し、二重レビューを防ぐ。リポジトリ層を抽象化しSQLite/PostgreSQL両対応にする | ビジネスロジック(レビューするか否かの判断)は持たない。単なる状態の記録・照会 | M1-4 |
 | MR Poller | `poller/` | 30〜60秒間隔で対象プロジェクトを走査し、`レビュー待ち` ラベルのMRを抽出、State Storeと突き合わせて未処理commitを検出、レビューを起票する | GitLabへの書き込みはしない | M1-5 |
 | Webhook Receiver | `webhook/` | GitLab Merge Request Hookを受信し、MR Pollerと共通の二重起票防止ロジック(`ticket_if_unprocessed`)でレビューを起票する。任意有効化(既定OFF)で`watch`サブコマンドに統合される | Push Hookは扱わない。MR Pollerを置き換えない(併存が前提)。HMAC署名検証はしない(Secret Token方式のみ) | M3-6 |
+| Issue Ticket Store | `issue_store/` | `(project, issue_iid)` 単位で無人実行Jobの起票済み状態を記録し、二重投入を防ぐ。State Storeとは別コンポーネントとして併存させる([ADR-0025](adr/0025-issue-poller-dedup.md)) | ビジネスロジック(無人実行すべきか否かの判断)は持たない。`status`のような進行状態も持たない(Jobが管理) | M4-1 |
+| Issue Poller | `poller/` (`issue_poller.py`) | 対象プロジェクトを定期走査し、無人実行ラベル(既定`AI実装`)の付いたIssueを抽出、Issue Ticket Storeと突き合わせて未処理Issueを検出し、`issue-analysis`種別のJobをJob Queueへ投入する | GitLabへの書き込みはしない。Jobの実行自体(Issue取得・要求分析)はしない | M4-1 |
 | Workspace Manager | `workspace/` | プロジェクトごとのbare clone、MR単位のworktree作成/更新/破棄、ディスク上限とGCを管理する。並列レビューでworking treeを共有しない | git操作以外(ビルド・テスト実行など)はしない | M1-6 |
 | Claude Code Runner | `runner/` | worktree上でClaude Codeをヘッドレス実行し、MRタイトル・説明・コメント・diffをコンテキストとして渡す。タイムアウト・異常終了のハンドリング、実行ログ保存を行う | レビュー観点の判断そのもの(何を重大とするか)はプロンプト側の責務であり、Runnerは実行制御のみ | M1-7 |
 | Review | `review/` | レビュープロンプトの設計(`docs/specs/prompts.md`)と、結果スキーマ(重要度/ファイル/行/根拠/提案)の定義。JSON(機械可読)とMarkdown(人間可読)の両方を出力する | GitLabへの自動投稿はしない。最終判断は人間 | M1-8, M1-9 |

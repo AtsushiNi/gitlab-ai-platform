@@ -25,6 +25,10 @@ max_parallel = 3
 [review]
 label = "レビュー待ち"
 
+[issue]
+label = "AI実装"
+ticket_db_path = "custom-issue-tickets.db"
+
 [workspace]
 root = "custom-workspace"
 max_disk_mb = 1000
@@ -112,6 +116,8 @@ def test_load_config_merges_config_file_and_env_file(tmp_path):
     assert config.poll_interval_seconds == 30
     assert config.max_parallel == 3
     assert config.review_label == "レビュー待ち"
+    assert config.issue_label == "AI実装"
+    assert config.issue_ticket_db_path == "custom-issue-tickets.db"
     assert config.workspace_root == "custom-workspace"
     assert config.workspace_max_disk_mb == 1000
     assert config.runner_log_dir == "custom-logs"
@@ -184,6 +190,8 @@ def test_load_config_applies_defaults_when_optional_sections_missing(
     assert config.poll_interval_seconds == 60
     assert config.max_parallel == 5
     assert config.review_label == "レビュー待ち"
+    assert config.issue_label == "AI実装"
+    assert config.issue_ticket_db_path == "issue_tickets.db"
     assert config.workspace_root == "workspace"
     assert config.workspace_max_disk_mb == 5000
     assert config.runner_log_dir == "logs/runner"
