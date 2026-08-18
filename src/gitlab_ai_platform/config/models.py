@@ -23,7 +23,7 @@ class Config:
     poll_interval_seconds: int
     max_parallel: int
     review_label: str
-    # Issue Poller(M4-1, docs/adr/0024-issue-poller-dedup.md)が検出対象とするラベル名。
+    # Issue Poller(M4-1, docs/adr/0025-issue-poller-dedup.md)が検出対象とするラベル名。
     # review_labelと同じ設定機構(config.toml)に準拠する
     issue_label: str
     # Issue Ticket Store(二重投入防止用の専用DB、state.db/job.dbとは別ファイル)

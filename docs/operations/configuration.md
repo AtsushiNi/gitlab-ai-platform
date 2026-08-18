@@ -67,7 +67,7 @@
 ### `[issue]`
 
 M4-1([specs/issue-poller.md](../specs/issue-poller.md)、
-[ADR-0024](../adr/0024-issue-poller-dedup.md))。Issue Pollerが無人実行トラックへ振り分ける
+[ADR-0025](../adr/0025-issue-poller-dedup.md))。Issue Pollerが無人実行トラックへ振り分ける
 Issueを検出するための設定。**現時点ではCLIに未配線**(`IssuePoller`単体のコンストラクタ引数として
 利用可能。配線は別Issue)。
 

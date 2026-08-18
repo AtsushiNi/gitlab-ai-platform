@@ -1,7 +1,7 @@
 """Issue Poller が扱うデータの型。
 
 ポーリング1サイクル分の結果(新規起票・継続可能なエラー)を表す型を定義する
-(`docs/adr/0024-issue-poller-dedup.md`)。MR Poller(`poller/types.py`)と対になる構成だが、
+(`docs/adr/0025-issue-poller-dedup.md`)。MR Poller(`poller/types.py`)と対になる構成だが、
 Issueには`commit_sha`に相当する版の概念がないため、別の型として定義する(既存の
 `DetectedReview`/`PollError`/`PollResult`を流用・変更しない)。
 """

@@ -33,7 +33,7 @@ DEFAULT_ENV_PATH = Path(".env")
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 DEFAULT_MAX_PARALLEL = 5
 DEFAULT_REVIEW_LABEL = "レビュー待ち"
-# Issue Poller(M4-1, docs/adr/0024-issue-poller-dedup.md)。無人実行に回すことを人間が明示した
+# Issue Poller(M4-1, docs/adr/0025-issue-poller-dedup.md)。無人実行に回すことを人間が明示した
 # Issueにこのラベルを付ける運用を想定する
 DEFAULT_ISSUE_LABEL = "AI実装"
 DEFAULT_ISSUE_TICKET_DB_PATH = "issue_tickets.db"

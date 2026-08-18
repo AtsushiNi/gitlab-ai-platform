@@ -1,7 +1,7 @@
 """Issue Ticket Store のインターフェース定義。
 
 方針(M4-1 [#107](https://github.com/AtsushiNi/gitlab-ai-platform/issues/107)、
-`docs/adr/0024-issue-poller-dedup.md`):
+`docs/adr/0025-issue-poller-dedup.md`):
 
 - State Store(`store/protocol.py`)と同じ`typing.Protocol`による抽象化パターンを踏襲するが、
   別コンポーネントとして新設する(State Storeを拡張しない)。State Storeの主キー
@@ -14,7 +14,7 @@
   実装側のDBスキーマ・制約が担う、`StateStore.create`と同じ設計)。
 - ビジネスロジック(Issueを無人実行すべきか否かの判断)は持たない。単なる状態の記録・照会のみ。
 - `status`のような進行状態は持たない。Issueの無人実行の進行状態はJob
-  (`job/protocol.py`の`JobStatus`)が単独で管理する(`docs/adr/0024-issue-poller-dedup.md`
+  (`job/protocol.py`の`JobStatus`)が単独で管理する(`docs/adr/0025-issue-poller-dedup.md`
   「決定」参照)。
 """
 

@@ -1,4 +1,4 @@
-# ADR-0024: Issue Poller の二重投入防止設計
+# ADR-0025: Issue Poller の二重投入防止設計
 
 - Issue: [#107](https://github.com/AtsushiNi/gitlab-ai-platform/issues/107) (M4-1)
 - 状態: 決定

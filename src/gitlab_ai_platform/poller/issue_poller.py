@@ -1,7 +1,7 @@
 """対象プロジェクトを定期走査し、無人実行ラベル付きIssueを検出してJobをキューへ投入するIssue Poller。
 
 方針(M4-1 [#107](https://github.com/AtsushiNi/gitlab-ai-platform/issues/107)、
-`docs/adr/0024-issue-poller-dedup.md`、`docs/architecture.md`):
+`docs/adr/0025-issue-poller-dedup.md`、`docs/architecture.md`):
 
 - MR Poller(`poller/poller.py`)と同じ設計パターンを踏襲する: GitLab Adapter(M1-1/M1-2)の
   `GitLabReader`のみに依存し、書き込み操作(`GitLabWriter`)は型ヒントにも登場させない。
@@ -16,11 +16,11 @@
 - 二重投入防止は専用のIssue Ticket Store(`issue_store/`)が担う。State Storeのような
   `(project, mr_iid, commit_sha)`の「版」の概念がIssueには無いため、`(project, issue_iid)`が
   一度でも起票されたら以後は永続的にスキップする(MRの「新しいcommit_shaなら再起票」に相当する
-  仕組みは持たない。ADR-0024「却下した選択肢」参照)。
+  仕組みは持たない。ADR-0025「却下した選択肢」参照)。
 - `ticket_issue_if_unprocessed`は「Issue Ticket Storeへの記録」→「Job Queueへの投入」の順で
   行う。Job投入が失敗した場合、Issue Ticket Storeのレコードは残ったままになり(次回以降の
   ポーリングでは再試行されない)、これは意図的に受け入れているリスクである
-  (ADR-0024「影響」参照。MR PollerのState Storeレコードが`execute_review`失敗後もPENDINGの
+  (ADR-0025「影響」参照。MR PollerのState Storeレコードが`execute_review`失敗後もPENDINGの
   まま残りうるのと同種のトレードオフ)。
 """
 
@@ -150,7 +150,7 @@ def ticket_issue_if_unprocessed(
     既に起票済みなら`None`を返す。`find`から`create`までの間に別プロセス(複数Poller稼働時)が
     同じレコードを作っていた場合は、`create`が送出する`DuplicateIssueTicketError`を
     「既に起票済み」として無視する(二重投入防止自体はIssue Ticket Store側の一意制約が担う、
-    `docs/adr/0024-issue-poller-dedup.md`)。
+    `docs/adr/0025-issue-poller-dedup.md`)。
     """
     try:
         if store.find(project, issue_iid) is not None:

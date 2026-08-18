@@ -1,7 +1,7 @@
 """`IssueTicketStore` を満たすSQLite実装。
 
 方針(M4-1 [#107](https://github.com/AtsushiNi/gitlab-ai-platform/issues/107)、
-`docs/adr/0024-issue-poller-dedup.md`):
+`docs/adr/0025-issue-poller-dedup.md`):
 
 - 標準ライブラリの`sqlite3`のみを使う(ADR-0001が許可する外部依存は`requests`/`pytest`のみ)。
 - `(project, issue_iid)`をPRIMARY KEYとし、二重投入防止の一意制約をDBスキーマで機構として

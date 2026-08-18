@@ -3,7 +3,7 @@
 - 実装場所: `src/gitlab_ai_platform/poller/issue_poller.py`(型は`poller/issue_types.py`)、
   二重投入防止用の状態管理は`src/gitlab_ai_platform/issue_store/`
 - 対応Issue: [#107](https://github.com/AtsushiNi/gitlab-ai-platform/issues/107) (M4-1)
-- 関連ADR: [ADR-0024](../adr/0024-issue-poller-dedup.md)
+- 関連ADR: [ADR-0025](../adr/0025-issue-poller-dedup.md)
 - ステータス: 実装済み(検出・二重投入防止・Job投入までが対象。CLI結線・Job実行は別Issue)
 
 ## 責務
@@ -15,7 +15,7 @@ Issue Ticket Storeにレコードを作成する(起票する)と同時に、`Jo
 
 MR Poller([poller.md](poller.md)、M1-5)と同じ設計パターン(GitLabReaderのみに依存、1件の
 失敗が他を止めない、`run`ループ+`on_detected`コールバック)を踏襲するが、**起票先が
-Job Queueへの直接投入である点がMR Pollerと異なる**([ADR-0024](../adr/0024-issue-poller-dedup.md)
+Job Queueへの直接投入である点がMR Pollerと異なる**([ADR-0025](../adr/0025-issue-poller-dedup.md)
 「背景・制約」)。MR Pollerは検出をState Storeへの記録に留め、実際のレビュー実行(Job化)は
 CLI側の`on_detected`が担うが、Issue Pollerは検出と同時にJobを投入する。
 
@@ -40,7 +40,7 @@ CLI側の`on_detected`が担うが、Issue Pollerは検出と同時にJobを投�
     ([#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108)、
     [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109))のスコープ
   - 走査対象プロジェクトはPoller構築時に渡された一覧固定で、実行中の動的な追加/削除は
-    扱わない。Webhookは扱わない(MR Pollerと同じ、[ADR-0024](../adr/0024-issue-poller-dedup.md)
+    扱わない。Webhookは扱わない(MR Pollerと同じ、[ADR-0025](../adr/0025-issue-poller-dedup.md)
     「背景・制約」)
   - プロセスのgraceful shutdown(シグナルハンドリング)・多重起動防止はしない。`run`は
     `stop_event`(`threading.Event`)を受け取って停止するだけで、シグナルの登録自体は
@@ -50,7 +50,7 @@ CLI側の`on_detected`が担うが、Issue Pollerは検出と同時にJobを投�
     同じ切り方)
   - 一度`(project, issue_iid)`が起票されると、以後は永続的にスキップされる。MRの
     「新しいcommit_shaなら再起票」に相当する再処理の仕組みは持たない(Issueには`commit_sha`に
-    相当する「版」の概念が無いため。[ADR-0024](../adr/0024-issue-poller-dedup.md)「決定」参照)
+    相当する「版」の概念が無いため。[ADR-0025](../adr/0025-issue-poller-dedup.md)「決定」参照)
 
 ## 公開インターフェース
 
@@ -124,7 +124,7 @@ def ticket_issue_if_unprocessed(
 `payload`の組み立て・分解を行うヘルパー(`review/job.py`の`build_review_job_payload`と同じ役割)。
 payloadは`{"project": str, "issue_iid": int}`のみを持ち、Issueのタイトル・説明等は含めない
 (実行時にJobHandler側が`GitLabReader.get_issue`で最新の内容を取得する設計、
-[ADR-0024](../adr/0024-issue-poller-dedup.md)「影響」)。
+[ADR-0025](../adr/0025-issue-poller-dedup.md)「影響」)。
 
 ## 入出力スキーマ
 
@@ -151,7 +151,7 @@ Store(`issue_store.errors`)・Job Repository(`job.errors`)の例外型を握り�
 | `GitLabAdapterError`(`GitLabApiError`等) | `adapter.list_issues` | そのプロジェクトの走査を打ち切り、`IssuePollError(issue_iid=None)`として記録して継続(ログ`issue_poller.project_scan_failed`) |
 | `DuplicateIssueTicketError` | `store.create` | 無視する(既に起票済みとして扱う。ログには`debug`レベルで記録`issue_poller.duplicate_ticket_ignored`) |
 | `DuplicateIssueTicketError`以外の`IssueTicketStoreError` | `store.find` / `store.create` | そのIssueの処理を打ち切り、`IssuePollError(issue_iid=...)`として記録して継続(ログ`issue_poller.ticket_creation_failed`) |
-| `JobError` | `job_repo.enqueue` | そのIssueの処理を打ち切り、`IssuePollError(issue_iid=...)`として記録して継続(ログ`issue_poller.job_enqueue_failed`)。**Issue Ticket Storeへの記録は既に成功しているため、そのIssueは次回以降のポーリングで再試行されない**([ADR-0024](../adr/0024-issue-poller-dedup.md)「決定」の意図的なトレードオフ) |
+| `JobError` | `job_repo.enqueue` | そのIssueの処理を打ち切り、`IssuePollError(issue_iid=...)`として記録して継続(ログ`issue_poller.job_enqueue_failed`)。**Issue Ticket Storeへの記録は既に成功しているため、そのIssueは次回以降のポーリングで再試行されない**([ADR-0025](../adr/0025-issue-poller-dedup.md)「決定」の意図的なトレードオフ) |
 
 `run`自体は例外を送出しない前提(`poll_once`が内部で継続可能なエラーを吸収するため)。
 `store`/`job_repo`/`adapter`の初期化失敗など、継続不能な設定不備は呼び出し側(CLI)が
@@ -190,7 +190,7 @@ Poller構築前に検知する。
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のIssue Poller /
   Issue Ticket Store行
-- [ADR-0024: Issue Poller の二重投入防止設計](../adr/0024-issue-poller-dedup.md)
+- [ADR-0025: Issue Poller の二重投入防止設計](../adr/0025-issue-poller-dedup.md)
 - [poller.md](poller.md) — MR Poller(M1-5)の仕様。設計パターンの元
 - [job-model.md](job-model.md) — Job抽象・状態機械(M3-1)の仕様。`JobType.ISSUE_ANALYSIS`への
   投入先
