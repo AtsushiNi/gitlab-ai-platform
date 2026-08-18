@@ -25,14 +25,12 @@
 手間から解放され、**AIの事前レビュー結果を確認するところから始められる**。結果の読み方は
 [reading-results.md](reading-results.md)を参照。
 
-**現時点(本ドキュメント作成時点)では、この実行は `review` サブコマンドで対象の
-project/MR IIDを人間が都度指定する形。**`レビュー待ち` ラベル付きMRを自動検出して
-横断的にキューイングするMR Pollerというコンポーネントは設計・実装済みだが、CLIへの配線
-(常駐のwatchモード、M1-11)はまだ行われておらず、`config.toml` の `gitlab.projects` /
-`review.label` もまだ参照されない([cli.md](../specs/cli.md)、
-[operations/configuration.md](../operations/configuration.md)参照)。ラベル付与だけで
-自動的にレビューが始まる運用は今後のマイルストーンで実現する想定。日々の運用手順は
-[review-workflow.md](review-workflow.md)(ステータス: 未着手)を参照。
+1件のMRだけ試したいときは `review` サブコマンドで対象のproject/MR IIDを指定して単発実行する。
+日々の運用では `watch` サブコマンドで常駐させれば、MR Pollerが`config.toml`の
+`gitlab.projects` / `review.label`(既定`"レビュー待ち"`)を使って対象プロジェクトを定期走査し、
+ラベル付きMRを自動検出してバックグラウンドでレビューし続ける
+([cli.md](../specs/cli.md)、[operations/configuration.md](../operations/configuration.md)参照)。
+日々の運用手順は[review-workflow.md](review-workflow.md)(ステータス: 未着手)を参照。
 
 ## 何をしないか(重要)
 

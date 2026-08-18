@@ -49,20 +49,20 @@
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
 | `url` | なし | str(`http://`または`https://`で始まる) | 必須 | GitLab REST APIのベースURL(`gitlab_adapter/rest.py`の`_api_base`)。git clone URL(`<url>/<project>.git`)の構築にも使う。末尾の`/`は自動で取り除かれる |
-| `projects` | なし | `list[str]`(1件以上、空文字列不可) | 必須 | MR Poller(`poller/poller.py`)が走査対象とするプロジェクトパス(`group/project`形式)の一覧。**現時点ではCLIの`review`単発実行(M1-10)からは参照されない。MrPollerを配線するwatchモード(M1-11)向け** |
+| `projects` | なし | `list[str]`(1件以上、空文字列不可) | 必須 | MR Poller(`poller/poller.py`)が走査対象とするプロジェクトパス(`group/project`形式)の一覧。`watch`サブコマンド(M1-11)が使用する。`review`単発実行では参照されない |
 
 ### `[poller]`
 
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
-| `interval_seconds` | `60` | int(正の整数) | 省略可 | `MrPoller.run(interval_seconds=...)`のポーリング間隔秒。**現時点では未配線(M1-11で使用予定)** |
+| `interval_seconds` | `60` | int(正の整数) | 省略可 | `MrPoller.run(interval_seconds=...)`のポーリング間隔秒(`watch`サブコマンドが使用) |
 | `max_parallel` | `5` | int(正の整数) | 省略可 | `watch`サブコマンドが検出したMRを並行実行する際のワーカースレッド数の上限(M2-1、[specs/cli.md](../specs/cli.md)、ADR-0015)。`review`単発実行では使われない |
 
 ### `[review]`
 
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
-| `label` | `"レビュー待ち"` | str | 省略可 | `MrPoller.poll_once`が`list_merge_requests(labels=(label,))`で絞り込むGitLab MRラベル名。**現時点では未配線(M1-11で使用予定)** |
+| `label` | `"レビュー待ち"` | str | 省略可 | `MrPoller.poll_once`が`list_merge_requests(labels=(label,))`で絞り込むGitLab MRラベル名(`watch`サブコマンドが使用) |
 
 ### `[issue]`
 
