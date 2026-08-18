@@ -40,7 +40,7 @@ CLAUDE.mdの「次に着手すべきIssueはGitHub Projectsの着手順フィー
 | M1 | レビュー自動化MVP | レビュー待ちMRを自動検出→AIレビュー→ローカル保存まで一気通貫 | 完了 (12/12) |
 | M2 | 実運用強化 | 並列・再レビュー・人間のレビュー体験・GitLabへの選択投稿 | 進行中 (5/12) |
 | M3 | AI Platform基盤化 | Job/Queue/Runner分離、Linux+Docker、PostgreSQL | 完了 (8/8) |
-| M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 進行中 (3/11) |
+| M4 | Issue駆動開発 | Issue→要求分析→設計→実装→MR、WAITING_HUMAN による停止 | 進行中 (4/11) |
 | X  | 横断 | セキュリティ・コスト・可観測性 | 未起票 (0/2) |
 
 ## M0. 土台整備
@@ -170,7 +170,7 @@ M2-12 は完了後にフォローアップIssueが複数派生している(い�
 |-------|--------|------|
 | [#107](https://github.com/AtsushiNi/gitlab-ai-platform/issues/107) | M4-1 Issue用ラベルポーリング(Issue Poller) | 完了 |
 | [#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108) | M4-2 Issue取得とRunnerプロンプトへの正規化 | 完了 |
-| [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) | M4-3 要求分析フェーズ(Job種別 issue-analysis) | 未着手 |
+| [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) | M4-3 要求分析フェーズ(Job種別 issue-analysis) | 完了 |
 | [#110](https://github.com/AtsushiNi/gitlab-ai-platform/issues/110) | M4-4 質問する/仮定して進める判断ロジック | 完了 |
 | [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111) | M4-5 人間への質問提示と回答の取り込み | 未着手 |
 | [#112](https://github.com/AtsushiNi/gitlab-ai-platform/issues/112) | M4-6 設計フェーズ(Job種別 design) | 未着手 |

@@ -410,6 +410,54 @@ def test_complete_raises_lease_lost_error_for_wrong_worker(repo):
         repo.complete(job.id, "worker-2")
 
 
+# --- wait_for_human(人間の確認待ちへの遷移、M4-3, ADR-0026) -----------------------------------
+
+
+def test_wait_for_human_marks_job_waiting_human_and_clears_lease(repo):
+    job = repo.enqueue(JobType.ISSUE_ANALYSIS, {})
+    repo.claim("worker-1")
+
+    waiting = repo.wait_for_human(job.id, "worker-1", result={"questions": ["x?"]})
+
+    assert waiting.status == JobStatus.WAITING_HUMAN
+    assert waiting.result == {"questions": ["x?"]}
+    assert waiting.lease_owner is None
+    assert waiting.lease_expires_at is None
+    assert repo.get(job.id).status == JobStatus.WAITING_HUMAN
+
+
+def test_wait_for_human_raises_lease_lost_error_for_wrong_worker(repo):
+    job = repo.enqueue(JobType.ISSUE_ANALYSIS, {})
+    repo.claim("worker-1")
+
+    with pytest.raises(LeaseLostError):
+        repo.wait_for_human(job.id, "worker-2")
+
+
+def test_wait_for_human_raises_lease_lost_error_for_unclaimed_job(repo):
+    job = repo.enqueue(JobType.ISSUE_ANALYSIS, {})
+
+    with pytest.raises(LeaseLostError):
+        repo.wait_for_human(job.id, "worker-1")
+
+
+def test_wait_for_human_raises_job_not_found_for_unknown_job(repo):
+    with pytest.raises(JobNotFoundError):
+        repo.wait_for_human("unknown-id", "worker-1")
+
+
+def test_job_can_resume_from_waiting_human_via_update_status(repo):
+    # wait_for_humanで止まったJobは、update_status(WAITING_HUMAN -> RUNNING)で
+    # 再開できる(既存の許可遷移、M4-5で実際に使う想定)
+    job = repo.enqueue(JobType.ISSUE_ANALYSIS, {})
+    repo.claim("worker-1")
+    repo.wait_for_human(job.id, "worker-1", result={"questions": ["x?"]})
+
+    resumed = repo.update_status(job.id, JobStatus.RUNNING)
+
+    assert resumed.status == JobStatus.RUNNING
+
+
 # --- fail(失敗の報告): リトライ・デッドレター ------------------------------------------------
 
 

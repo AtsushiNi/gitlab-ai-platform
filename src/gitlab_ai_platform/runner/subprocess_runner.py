@@ -18,6 +18,11 @@
 - 実行ログ(コマンド・標準出力・標準エラー・所要時間)は`log_dir`配下に
   `<projectスラッグ>/mr-<iid>/<sha先頭12桁>-<timestamp>.json`として保存する。認証情報は
   `env`経由でPopenに渡すのみでコマンド引数には含めないため、ログには含まれない。
+- M4-3([#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109)、ADR-0027)で
+  `run_prompt`(呼び出し側が組み立て済みのプロンプトをそのまま実行する汎用の経路)を追加した。
+  実行本体(Popen起動・タイムアウト処理・ログ保存・結果パース)は`_execute`として`run`と共有し、
+  ログ保存先は`log_dir`配下に`<log_key>/<timestamp>.json`として保存する(`log_key`は
+  呼び出し側が指定する、MRの`sha`に相当するファイル名prefixは持たない)。
 """
 
 from __future__ import annotations
@@ -32,7 +37,6 @@ from pathlib import Path
 from typing import Any
 
 from .._paths import slugify_project
-from ..gitlab_adapter.types import MergeRequest
 from ..logging_ import get_logger
 from .errors import (
     ClaudeCodeNotFoundError,
@@ -86,6 +90,63 @@ class SubprocessClaudeCodeRunner:
         permission_mode: str | None = None,
     ) -> RunResult:
         prompt = build_prompt(instructions, context)
+        mr = context.merge_request
+        log_dir = self._log_dir / slugify_project(mr.project) / f"mr-{mr.iid}"
+        sha_prefix = (mr.sha or "unknown")[:12]
+        return self._execute(
+            worktree_path,
+            prompt,
+            log_dir=log_dir,
+            # MRの場合はcommit shaをファイル名の先頭に含める(既存の運用ログの並びを維持)
+            log_filename_prefix=f"{sha_prefix}-",
+            timeout_seconds=timeout_seconds,
+            allowed_tools=allowed_tools,
+            disallowed_tools=disallowed_tools,
+            permission_mode=permission_mode,
+        )
+
+    def run_prompt(
+        self,
+        worktree_path: Path,
+        prompt: str,
+        *,
+        log_key: str,
+        timeout_seconds: int,
+        allowed_tools: Sequence[str] = (),
+        disallowed_tools: Sequence[str] = (),
+        permission_mode: str | None = None,
+    ) -> RunResult:
+        return self._execute(
+            worktree_path,
+            prompt,
+            log_dir=self._log_dir / log_key,
+            log_filename_prefix="",
+            timeout_seconds=timeout_seconds,
+            allowed_tools=allowed_tools,
+            disallowed_tools=disallowed_tools,
+            permission_mode=permission_mode,
+        )
+
+    # -- 内部ヘルパー ----------------------------------------------------------
+
+    def _execute(
+        self,
+        worktree_path: Path,
+        prompt: str,
+        *,
+        log_dir: Path,
+        log_filename_prefix: str,
+        timeout_seconds: int,
+        allowed_tools: Sequence[str],
+        disallowed_tools: Sequence[str],
+        permission_mode: str | None,
+    ) -> RunResult:
+        """`run`/`run_prompt`共通の実行本体(ADR-0027で`run`から切り出した)。
+
+        プロンプト組み立て(instructions+contextの結合、またはそれをしない`run_prompt`)は
+        呼び出し元(`run`/`run_prompt`)の責務で、ここでは組み立て済みの`prompt`文字列と
+        ログ保存先(`log_dir`/`log_filename_prefix`)だけを受け取る。
+        """
         command = _build_command(
             self._claude_command,
             prompt,
@@ -97,6 +158,9 @@ class SubprocessClaudeCodeRunner:
 
         started_at = datetime.now(UTC)
         start = time.monotonic()
+        log_filename = (
+            f"{log_filename_prefix}{started_at.strftime('%Y%m%dT%H%M%S%fZ')}.json"
+        )
         try:
             proc = self._popen(
                 command,
@@ -110,7 +174,8 @@ class SubprocessClaudeCodeRunner:
             # 他の例外(Timeout/OutputError)と同様、例外送出前に必ずログを保存する
             # (docs/specs/claude-code-runner.mdの「いずれの例外もlog_pathを保持する」契約)
             log_path = self._write_log(
-                context.merge_request,
+                log_dir,
+                log_filename,
                 command=command,
                 worktree_path=worktree_path,
                 started_at=started_at,
@@ -132,7 +197,8 @@ class SubprocessClaudeCodeRunner:
         duration = time.monotonic() - start
 
         log_path = self._write_log(
-            context.merge_request,
+            log_dir,
+            log_filename,
             command=command,
             worktree_path=worktree_path,
             started_at=started_at,
@@ -154,8 +220,6 @@ class SubprocessClaudeCodeRunner:
         return _build_run_result(
             data, timed_out=timed_out, duration_seconds=duration, log_path=log_path
         )
-
-    # -- 内部ヘルパー ----------------------------------------------------------
 
     def _communicate_with_timeout(
         self, proc: subprocess.Popen[str], timeout_seconds: int
@@ -182,7 +246,8 @@ class SubprocessClaudeCodeRunner:
 
     def _write_log(
         self,
-        merge_request: MergeRequest,
+        log_dir: Path,
+        log_filename: str,
         *,
         command: list[str],
         worktree_path: Path,
@@ -193,15 +258,8 @@ class SubprocessClaudeCodeRunner:
         stdout: str,
         stderr: str,
     ) -> Path:
-        log_dir = (
-            self._log_dir
-            / slugify_project(merge_request.project)
-            / f"mr-{merge_request.iid}"
-        )
         log_dir.mkdir(parents=True, exist_ok=True)
-        sha_prefix = (merge_request.sha or "unknown")[:12]
-        timestamp = started_at.strftime("%Y%m%dT%H%M%S%fZ")
-        log_path = log_dir / f"{sha_prefix}-{timestamp}.json"
+        log_path = log_dir / log_filename
 
         log_path.write_text(
             json.dumps(
@@ -222,12 +280,7 @@ class SubprocessClaudeCodeRunner:
         )
         _logger.info(
             "runner.execution_log_saved",
-            extra={
-                "project": merge_request.project,
-                "mr_iid": merge_request.iid,
-                "log_path": str(log_path),
-                "timed_out": timed_out,
-            },
+            extra={"log_path": str(log_path), "timed_out": timed_out},
         )
         return log_path
 

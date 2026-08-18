@@ -68,6 +68,10 @@
   Jobを投入する
 - [specs/orchestrator.md](specs/orchestrator.md) — Orchestrator(M3-7, M4-1〜M4-6, M4-9〜M4-10)の仕様。
   現時点では「質問する / 仮定して進める」判断ロジック(M4-4)のみを実装済み
+- [specs/issue-analysis.md](specs/issue-analysis.md) — 要求分析フェーズ(M4-3、Job種別
+  `issue-analysis`)の仕様。Issueを分析し要求・受入条件・前提・不足情報を構造化して出力する。
+  `WAITING_HUMAN`遷移(`job/protocol.py`の`wait_for_human`)・Runnerへの組み立て済みプロンプト
+  実行(`run_prompt`)を含む
 
 ## 更新ルール
 

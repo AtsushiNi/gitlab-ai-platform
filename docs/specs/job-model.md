@@ -3,12 +3,14 @@
 - 実装場所: `src/gitlab_ai_platform/job/`
 - 対応Issue: [#91](https://github.com/AtsushiNi/gitlab-ai-platform/issues/91) (M3-1)、
   [#92](https://github.com/AtsushiNi/gitlab-ai-platform/issues/92) (M3-2)、
-  [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3、Runner Dispatcher側の実配線)
+  [#93](https://github.com/AtsushiNi/gitlab-ai-platform/issues/93) (M3-3、Runner Dispatcher側の実配線)、
+  [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3、`wait_for_human`の追加)
 - 関連ADR: [ADR-0016](../adr/0016-job-abstraction.md)、[ADR-0017](../adr/0017-job-queue.md)、
-  [ADR-0022](../adr/0022-runner-process-separation.md)
+  [ADR-0022](../adr/0022-runner-process-separation.md)、
+  [ADR-0026](../adr/0026-job-waiting-human-transition.md)
 - ステータス: 実装済み(Protocol定義 + SQLite実装 + 既存レビュー処理のJob化 [M3-1] +
   取得の排他・可視性タイムアウト・リトライ・デッドレター [M3-2] +
-  Runner Dispatcherによる実配線 [M3-3])
+  Runner Dispatcherによる実配線 [M3-3] + `WAITING_HUMAN`遷移の`wait_for_human` [M4-3])
 
 ## 責務
 
@@ -174,6 +176,16 @@ class JobRepository(Protocol):
         上限到達または`retry=False`なら`FAILED`へ遷移させデッドレターとして確定する。"""
         ...
 
+    def wait_for_human(
+        self, job_id: str, worker_id: str, result: dict[str, Any] | None = None
+    ) -> Job:
+        """claim済みJobが人間の確認を必要とすると報告し`WAITING_HUMAN`へ遷移させる(M4-3)。
+
+        `complete`と対になるメソッドで、`RUNNING → WAITING_HUMAN`へ遷移させたうえで
+        リース情報をクリアする。
+        """
+        ...
+
     def list_dead_letters(self) -> list[Job]:
         """デッドレター化したJobを一覧する。"""
         ...
@@ -183,9 +195,9 @@ SQLite実装: `src/gitlab_ai_platform/job/sqlite.py`の`SqliteJobRepository`。
 `SqliteJobRepository(db_path: Path | str = ":memory:")`でDBファイルパス(またはインメモリ)を
 指定して構築する。State Store(`SqliteStateStore`)と同じく`threading.RLock`で全メソッドの
 本体を直列化しており、`ReviewWorkerPool`(M2-1)のような複数ワーカースレッドから同一インスタンス
-を安全に共有できる。`heartbeat`/`complete`/`fail`は、要求元の`worker_id`が対象Jobの現在の
-リース所有者と一致しない場合`LeaseLostError`を送出する(可視性タイムアウトで別workerに
-再取得された後の遅延報告を検知するため、[ADR-0017](../adr/0017-job-queue.md))。
+を安全に共有できる。`heartbeat`/`complete`/`fail`/`wait_for_human`は、要求元の`worker_id`が
+対象Jobの現在のリース所有者と一致しない場合`LeaseLostError`を送出する(可視性タイムアウトで
+別workerに再取得された後の遅延報告を検知するため、[ADR-0017](../adr/0017-job-queue.md))。
 
 ### review Jobのpayload/result構造
 
@@ -273,7 +285,7 @@ def build_job_handlers(
     store: StateStore,
     config: Config,
 ) -> dict[JobType, JobHandler]:
-    """JobType → JobHandlerのディスパッチテーブルを組み立てる。現時点ではreviewのみ実装済み。"""
+    """JobType → JobHandlerのディスパッチテーブルを組み立てる。M4-3時点でreview/issue-analysisが実装済み。"""
 
 
 class RunnerDispatcher:
@@ -300,12 +312,16 @@ class RunnerDispatcher:
 ```
 
 - `review`種別の`JobHandler`(`build_review_handler`)は`execute_review`本体(GitLab Adapter→
-  Workspace Manager→Claude Code Runner→Review→State Storeの結線、変更しない)をそのまま呼び出す
-- 未指定時の`job_types`は`handlers`に登録済みの種別のみ(M3-3時点では`review`のみ)。未実装の
-  種別を誤ってclaimしてデッドレター化させないための既定挙動
+  Workspace Manager→Claude Code Runner→Review→State Storeの結線、変更しない)をそのまま呼び出す。
+  `issue-analysis`種別の`JobHandler`(`build_issue_analysis_handler`、M4-3)は
+  [specs/issue-analysis.md](issue-analysis.md)を参照
+- 未指定時の`job_types`は`handlers`に登録済みの種別のみ(M4-3時点では`review`/`issue-analysis`)。
+  未実装の種別を誤ってclaimしてデッドレター化させないための既定挙動
 - Jobの処理中は専用のdaemonスレッドが`heartbeat_interval_seconds`ごとに`heartbeat`を呼び、
   可視性タイムアウトのリースを延長する
-- `handler`が正常終了 → `complete`。`NotImplementedError`(未対応のJobType、
+- `handler`が正常終了 → `complete`。`WaitingForHumanError`(人間の確認が必要、M4-3、
+  [ADR-0026](../adr/0026-job-waiting-human-transition.md)の契約)→ `wait_for_human`で
+  `WAITING_HUMAN`へ遷移。`NotImplementedError`(未対応のJobType、
   [ADR-0016](../adr/0016-job-abstraction.md)の契約)→ `fail(..., retry=False)`で即デッドレター化。
   それ以外の例外 → `fail(..., retry=True)`でリトライ判定を`JobRepository`(`attempts`/
   `max_attempts`)に委ねる。1件のJobの失敗は他のJobの処理を止めない
@@ -322,7 +338,7 @@ class RunnerDispatcher:
 
 | 型 | フィールド | 補足 |
 |---|---|---|
-| `JobType` (Enum) | `REVIEW` / `ISSUE_ANALYSIS` / `DESIGN` / `IMPLEMENT` | タスク種別。M3-1で実際にRunnerが処理できるのは`REVIEW`のみ。他はM4での実装を見越した予約値 |
+| `JobType` (Enum) | `REVIEW` / `ISSUE_ANALYSIS` / `DESIGN` / `IMPLEMENT` | タスク種別。M4-3時点で実際にRunnerが処理できるのは`REVIEW`/`ISSUE_ANALYSIS`。`DESIGN`/`IMPLEMENT`はM4での実装を見越した予約値 |
 | `JobStatus` (Enum) | `PENDING` / `RUNNING` / `WAITING_HUMAN` / `DONE` / `FAILED` | Jobの進行状態(状態機械)。M3-2でもこの5値のまま変更していない([ADR-0017](../adr/0017-job-queue.md)) |
 | `Job` (frozen dataclass) | `id: str`, `job_type: JobType`, `status: JobStatus`, `payload: dict[str, Any]`, `result: dict[str, Any] \| None`, `error: str \| None`, `created_at: datetime`, `updated_at: datetime`, `attempts: int = 0`, `max_attempts: int = 3`, `lease_owner: str \| None = None`, `lease_expires_at: datetime \| None = None`, `dead_letter_at: datetime \| None = None` | `id`はUUID(SQLite実装が`uuid.uuid4()`で生成)。`attempts`以降はM3-2で追加(末尾にデフォルト値付き) |
 
@@ -385,6 +401,17 @@ review Jobの`payload`/`result`(`review/job.py`):
 | `result.project` / `result.mr_iid` / `result.sha` | `str` / `int` / `str` | 実行結果(`SingleRunResult`)から転記 |
 | `result.result_path` | `str` | レビュー結果(JSON/Markdown)の保存先ディレクトリ(`docs/specs/review-output.md`) |
 
+issue-analysis Jobの`payload`/`result`(payloadは`poller/issue_poller.py`、resultは
+`issue_analysis/job.py`。詳細は[specs/issue-analysis.md](issue-analysis.md)、M4-3):
+
+| フィールド | 型 | 補足 |
+|---|---|---|
+| `payload.project` | `str` | 対象プロジェクトパス |
+| `payload.issue_iid` | `int` | 対象IssueのIID |
+| `result.requirements` / `result.acceptance_criteria` / `result.assumptions` | `string[]` | Claude Codeの要求分析結果 |
+| `result.assumed_uncertainties` | `object[]` | `ASSUME`判定された不明点(M4-9で使用予定) |
+| `result.questions` | `object[]` | `ASK`判定された不明点。`WAITING_HUMAN`のときのみ非空 |
+
 ## エラー時の振る舞い
 
 実装場所: `src/gitlab_ai_platform/job/errors.py`。
@@ -396,10 +423,10 @@ review Jobの`payload`/`result`(`review/job.py`):
 - `JobNotFoundError(JobError)` — `update_status`が存在しない`job_id`に対して呼ばれたことを
   表す。呼び出し側は先に`enqueue`を呼ぶべきだったことを意味し、通常は呼び出し側のバグとして
   扱う(リトライで解決しない)
-- `LeaseLostError(JobError)` — `heartbeat`/`complete`/`fail`が、要求元の`worker_id`と対象Jobの
-  現在のリース所有者が一致しない状態で呼ばれたことを表す(M3-2、[ADR-0017](../adr/0017-job-queue.md))。
-  可視性タイムアウトで別workerに再取得された後、元のworkerが遅れて完了/失敗を報告してきた
-  場合などに送出する
+- `LeaseLostError(JobError)` — `heartbeat`/`complete`/`fail`/`wait_for_human`が、要求元の
+  `worker_id`と対象Jobの現在のリース所有者が一致しない状態で呼ばれたことを表す(M3-2、
+  [ADR-0017](../adr/0017-job-queue.md))。可視性タイムアウトで別workerに再取得された後、
+  元のworkerが遅れて完了/失敗/`WAITING_HUMAN`遷移を報告してきた場合などに送出する
 
 `execute_review_job`は`execute_review`が送出する例外(`GitLabAdapterError`/`WorkspaceError`/
 `RunnerError`/`ReviewError`/`StateStoreError`等)を捕まえてJobを`FAILED`へ更新したうえで、
@@ -414,10 +441,10 @@ review Jobの`payload`/`result`(`review/job.py`):
 
 - `job/test_protocol.py`: `JobRepository`の公開メソッド集合が`enqueue`/`get`/
   `update_status`/`list_by_status`/`close`/`claim`/`heartbeat`/`complete`/`fail`/
-  `list_dead_letters`と完全一致することを検証する(将来メソッドが意図せず増減した場合に
-  このテストで落ちる)。`Job`の`frozen=True`、`JobType`/`JobStatus`の値、M3-2で追加した
-  フィールドの既定値(`attempts=0`等)、Protocolを満たすダミー実装(新メソッドのスタブ実装を
-  含む)への`isinstance`も検証する
+  `list_dead_letters`/`wait_for_human`と完全一致することを検証する(将来メソッドが意図せず
+  増減した場合にこのテストで落ちる)。`Job`の`frozen=True`、`JobType`/`JobStatus`の値、
+  M3-2で追加したフィールドの既定値(`attempts=0`等)、Protocolを満たすダミー実装
+  (新メソッドのスタブ実装を含む)への`isinstance`も検証する
 - `job/test_errors.py`: `InvalidJobTransitionError`/`JobNotFoundError`/`LeaseLostError`が
   `JobError`のサブクラスであることを検証する
 - `job/test_sqlite.py`: `SqliteJobRepository`をインメモリDB(`:memory:`)で実行し、実DB・
@@ -439,6 +466,9 @@ review Jobの`payload`/`result`(`review/job.py`):
     `LeaseLostError`になること
   - `complete`: `DONE`へ遷移しリース情報をクリアすること、`worker_id`不一致で
     `LeaseLostError`になること
+  - `wait_for_human`(M4-3、ADR-0026): `WAITING_HUMAN`へ遷移しリース情報をクリアすること、
+    `worker_id`不一致で`LeaseLostError`になること、未claimのJobで`LeaseLostError`になること、
+    `WAITING_HUMAN`から`update_status`で`RUNNING`へ再開できること(既存の許可遷移)
   - `fail`: リトライ余地があれば`PENDING`へ戻すこと、`retry=False`または上限到達時に
     `FAILED`+デッドレター化すること、`worker_id`不一致で`LeaseLostError`になること
   - 可視性タイムアウト: 期限切れのリースを次の`claim`が回収し、リトライ余地があれば
@@ -454,18 +484,20 @@ review Jobの`payload`/`result`(`review/job.py`):
 - `cli/test_watch.py`: `build_on_detected`/`run_watch_loop`が検出したMRをreview Jobとして
   起票し、`execute_review`の成否に応じて`DONE`/`FAILED`へ更新することを検証する
   (既存のState Store側のアサーションに加え、Job側のアサーションを追加)
-- `cli/test_dispatcher.py`(M3-3): `build_review_handler`/`build_job_handlers`を手書きフェイクで
-  検証する(`execute_review`を実際に呼び出し、`result`の組み立てが正しいこと)。
-  `RunnerDispatcher`は`claim`/`heartbeat`/`complete`/`fail`のみを満たす手書きフェイク
+- `cli/test_dispatcher.py`(M3-3、M4-3): `build_review_handler`/`build_issue_analysis_handler`/
+  `build_job_handlers`を手書きフェイクで検証する(`execute_review`/`ClaudeCodeRunner.run_prompt`を
+  実際に呼び出し、`result`の組み立てが正しいこと。`build_issue_analysis_handler`は
+  [specs/issue-analysis.md](issue-analysis.md)のテスト方針も参照)。`RunnerDispatcher`は
+  `claim`/`heartbeat`/`complete`/`fail`/`wait_for_human`のみを満たす手書きフェイク
   `JobRepository`で制御フローを検証する: `run_once`がJobの有無に応じて`True`/`False`を
-  返すこと、handler成功時に`complete`、例外送出時に`fail(..., retry=True)`、未対応JobType
-  (handlerが無い)時に`fail(..., retry=False)`を呼ぶこと、`job_types`省略時は`handlers`に
-  登録済みの種別のみをclaim対象にすること、Job処理中に`heartbeat_interval_seconds`ごとに
-  `heartbeat`が呼ばれること、`heartbeat`が`LeaseLostError`を送出してもhandler本体は
-  中断されず完了すること、`run_forever`が`stop_event`まで空振り時のみ`poll_interval_seconds`
-  待ってポーリングし続けること。`run_dispatcher`(合成ルート)は実サービスに繋がない範囲
-  (`stop_event`を起動前にセットする、Jobが無い状態で`run_once=True`を渡す)で、具象実装の
-  組み立てが例外を出さないことを検証する
+  返すこと、handler成功時に`complete`、`WaitingForHumanError`送出時に`wait_for_human`
+  (ADR-0026)、例外送出時に`fail(..., retry=True)`、未対応JobType(handlerが無い)時に
+  `fail(..., retry=False)`を呼ぶこと、`job_types`省略時は`handlers`に登録済みの種別のみを
+  claim対象にすること、Job処理中に`heartbeat_interval_seconds`ごとに`heartbeat`が呼ばれること、
+  `heartbeat`が`LeaseLostError`を送出してもhandler本体は中断されず完了すること、`run_forever`が
+  `stop_event`まで空振り時のみ`poll_interval_seconds`待ってポーリングし続けること。
+  `run_dispatcher`(合成ルート)は実サービスに繋がない範囲(`stop_event`を起動前にセットする、
+  Jobが無い状態で`run_once=True`を渡す)で、具象実装の組み立てが例外を出さないことを検証する
 
 ## 関連ドキュメント
 

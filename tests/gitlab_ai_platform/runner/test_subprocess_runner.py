@@ -285,6 +285,116 @@ def test_write_log_saves_command_and_output_without_leaking_env(
     assert "super-secret" not in result.log_path.read_text(encoding="utf-8")
 
 
+def test_run_prompt_executes_claude_with_prompt_verbatim(tmp_path: Path):
+    # run_promptは呼び出し側が組み立て済みの文字列をそのまま渡す(instructions+contextの
+    # 結合をRunner側で行わない、ADR-0027)
+    calls: list = []
+    runner = SubprocessClaudeCodeRunner(
+        tmp_path / "logs",
+        popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls),
+    )
+    worktree_path = tmp_path / "worktree"
+
+    result = runner.run_prompt(
+        worktree_path,
+        "Analyze this issue.",
+        log_key="group%2Fproject/issue-7",
+        timeout_seconds=60,
+    )
+
+    assert result.is_error is False
+    assert result.result_text == "LGTM"
+    assert result.log_path.exists()
+
+    (command, kwargs) = calls[0]
+    assert command[:2] == ["claude", "-p"]
+    assert command[2] == "Analyze this issue."
+    assert command[-2:] == ["--output-format", "json"]
+    assert kwargs["cwd"] == str(worktree_path)
+
+
+def test_run_prompt_saves_log_under_log_key_without_sha_prefix(tmp_path: Path):
+    log_dir = tmp_path / "logs"
+    runner = SubprocessClaudeCodeRunner(
+        log_dir, popen=_popen_factory([(_SUCCESS_JSON, "")])
+    )
+
+    result = runner.run_prompt(
+        tmp_path / "worktree",
+        "Analyze this issue.",
+        log_key="group%2Fproject/issue-7",
+        timeout_seconds=60,
+    )
+
+    expected_dir = log_dir / "group%2Fproject" / "issue-7"
+    assert result.log_path.parent == expected_dir
+    # runの`<sha先頭12桁>-<timestamp>.json`と異なり、run_promptにはprefixが無い
+    assert not result.log_path.name.startswith("-")
+
+
+def test_run_prompt_builds_permission_flags(tmp_path: Path):
+    calls: list = []
+    runner = SubprocessClaudeCodeRunner(
+        tmp_path / "logs",
+        popen=_popen_factory([(_SUCCESS_JSON, "")], recorded_calls=calls),
+    )
+
+    runner.run_prompt(
+        tmp_path / "worktree",
+        "prompt",
+        log_key="group%2Fproject/issue-7",
+        timeout_seconds=60,
+        allowed_tools=["Read"],
+        disallowed_tools=["Bash"],
+        permission_mode="acceptEdits",
+    )
+
+    command = calls[0][0]
+    assert "--permission-mode" in command
+    assert command[command.index("--permission-mode") + 1] == "acceptEdits"
+    assert "--allowedTools" in command
+    assert command[command.index("--allowedTools") + 1] == "Read"
+    assert "--disallowedTools" in command
+    assert command[command.index("--disallowedTools") + 1] == "Bash"
+    assert "--dangerously-skip-permissions" not in command
+
+
+def test_run_prompt_raises_claude_code_not_found_error_when_binary_missing(
+    tmp_path: Path,
+):
+    def factory(command, **kwargs):
+        raise FileNotFoundError()
+
+    runner = SubprocessClaudeCodeRunner(tmp_path / "logs", popen=factory)
+
+    with pytest.raises(ClaudeCodeNotFoundError) as excinfo:
+        runner.run_prompt(
+            tmp_path / "worktree",
+            "prompt",
+            log_key="group%2Fproject/issue-7",
+            timeout_seconds=60,
+        )
+
+    assert excinfo.value.log_path.exists()
+
+
+def test_run_prompt_raises_output_error_for_invalid_json(tmp_path: Path):
+    runner = SubprocessClaudeCodeRunner(
+        tmp_path / "logs", popen=_popen_factory([("not json", "some stderr")])
+    )
+
+    with pytest.raises(ClaudeCodeOutputError) as exc_info:
+        runner.run_prompt(
+            tmp_path / "worktree",
+            "prompt",
+            log_key="group%2Fproject/issue-7",
+            timeout_seconds=60,
+        )
+
+    assert exc_info.value.log_path.exists()
+    assert exc_info.value.stdout == "not json"
+
+
 def test_run_truncates_prompt_when_diff_exceeds_max_arg_size(
     tmp_path: Path, merge_request, review_context: ReviewContext
 ):

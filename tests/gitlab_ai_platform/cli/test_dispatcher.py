@@ -6,10 +6,14 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from gitlab_ai_platform.cli.dispatcher import (
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_POLL_INTERVAL_SECONDS,
     RunnerDispatcher,
+    WaitingForHumanError,
+    build_issue_analysis_handler,
     build_job_handlers,
     build_review_handler,
     default_worker_id,
@@ -18,17 +22,20 @@ from gitlab_ai_platform.cli.dispatcher import (
 from gitlab_ai_platform.config import Config
 from gitlab_ai_platform.gitlab_adapter.types import (
     Discussion,
+    Issue,
     MergeRequest,
     MergeRequestDiff,
 )
 from gitlab_ai_platform.job.errors import LeaseLostError
 from gitlab_ai_platform.job.protocol import Job, JobStatus, JobType
+from gitlab_ai_platform.poller.issue_poller import build_issue_analysis_job_payload
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.store import ReviewStatus, SqliteStateStore
 from gitlab_ai_platform.workspace import WorktreeHandle
 
 _PROJECT = "group/project"
 _MR_IID = 1
+_ISSUE_IID = 7
 _SHA = "abcdef0123456789"
 _WORKER_ID = "worker-1"
 
@@ -86,10 +93,13 @@ def _job(**overrides) -> Job:
 
 
 class _FakeGitLabReader:
-    """`GitLabReader`を満たすテスト用フェイク(固定のMRを1件だけ返す)。"""
+    """`GitLabReader`を満たすテスト用フェイク(固定のMR/Issueを1件だけ返す)。"""
 
-    def __init__(self, merge_request: MergeRequest) -> None:
+    def __init__(
+        self, merge_request: MergeRequest | None = None, issue: Issue | None = None
+    ) -> None:
         self._merge_request = merge_request
+        self._issue = issue
 
     def get_version(self) -> str:
         raise NotImplementedError
@@ -98,6 +108,7 @@ class _FakeGitLabReader:
         raise NotImplementedError
 
     def get_merge_request(self, project: str, mr_iid: int) -> MergeRequest:
+        assert self._merge_request is not None
         return self._merge_request
 
     def get_merge_request_diffs(self, project: str, mr_iid: int):
@@ -116,6 +127,13 @@ class _FakeGitLabReader:
         self, project: str, mr_iid: int
     ) -> list[Discussion]:
         return []
+
+    def list_issues(self, project: str, *, labels=(), state="opened"):
+        raise NotImplementedError
+
+    def get_issue(self, project: str, issue_iid: int) -> Issue:
+        assert self._issue is not None
+        return self._issue
 
 
 class _FakeWorkspaceManager:
@@ -141,9 +159,12 @@ class _FakeWorkspaceManager:
 
 
 class _FakeClaudeCodeRunner:
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, *, open_questions: list | None = None) -> None:
         self._tmp_path = tmp_path
+        # issue-analysisの結果に含める不足情報(既定は無し=WAITING_HUMANにならない)
+        self._open_questions = open_questions if open_questions is not None else []
         self.run_calls: list[tuple[str, int]] = []
+        self.run_prompt_calls: list[tuple[Path, str, str]] = []
 
     def run(
         self,
@@ -176,9 +197,45 @@ class _FakeClaudeCodeRunner:
             raw={},
         )
 
+    def run_prompt(
+        self,
+        worktree_path,
+        prompt,
+        *,
+        log_key,
+        timeout_seconds,
+        allowed_tools=(),
+        disallowed_tools=(),
+        permission_mode=None,
+    ) -> RunResult:
+        self.run_prompt_calls.append((worktree_path, prompt, log_key))
+        payload = {
+            "requirements": ["要求1"],
+            "acceptance_criteria": ["条件1"],
+            "assumptions": ["前提1"],
+            "open_questions": self._open_questions,
+        }
+        result_text = "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
+        log_path = self._tmp_path / "run_prompt_log.json"
+        log_path.write_text(json.dumps({"command": ["claude"]}), encoding="utf-8")
+        return RunResult(
+            is_error=False,
+            result_text=result_text,
+            session_id="session-issue",
+            terminal_reason="success",
+            permission_denials=(),
+            num_turns=1,
+            total_cost_usd=0.01,
+            timed_out=False,
+            duration_seconds=1.0,
+            log_path=log_path,
+            raw={},
+        )
+
 
 class _FakeJobRepository:
-    """`RunnerDispatcher`が使うメソッド(claim/heartbeat/complete/fail)だけを満たす手書きフェイク。
+    """`RunnerDispatcher`が使うメソッド(claim/heartbeat/complete/fail/wait_for_human)だけを
+    満たす手書きフェイク。
 
     `claim`は`jobs_to_claim`を先頭から1件ずつ返し、尽きたら`None`を返し続ける。
     """
@@ -195,6 +252,7 @@ class _FakeJobRepository:
         self.heartbeat_calls: list[tuple[str, str, int]] = []
         self.complete_calls: list[tuple[str, str, dict | None]] = []
         self.fail_calls: list[tuple[str, str, str, bool]] = []
+        self.wait_for_human_calls: list[tuple[str, str, dict | None]] = []
 
     def claim(self, worker_id, *, job_types=None, visibility_timeout_seconds=600):
         self.claim_calls.append((worker_id, job_types, visibility_timeout_seconds))
@@ -213,6 +271,9 @@ class _FakeJobRepository:
     def fail(self, job_id, worker_id, error, *, retry=True):
         self.fail_calls.append((job_id, worker_id, error, retry))
 
+    def wait_for_human(self, job_id, worker_id, result=None):
+        self.wait_for_human_calls.append((job_id, worker_id, result))
+
 
 def _merge_request() -> MergeRequest:
     return MergeRequest(
@@ -225,6 +286,18 @@ def _merge_request() -> MergeRequest:
         target_branch="main",
         sha=_SHA,
         author="alice",
+    )
+
+
+def _issue() -> Issue:
+    return Issue(
+        project=_PROJECT,
+        iid=_ISSUE_IID,
+        title="Add feature Y",
+        description="We need feature Y.",
+        state="opened",
+        author="carol",
+        labels=("要求分析待ち",),
     )
 
 
@@ -258,9 +331,9 @@ def test_build_review_handler_runs_execute_review_and_returns_result_dict(tmp_pa
         store.close()
 
 
-def test_build_job_handlers_registers_only_review_type(tmp_path):
+def test_build_job_handlers_registers_review_and_issue_analysis_types(tmp_path):
     config = _config(tmp_path)
-    adapter = _FakeGitLabReader(_merge_request())
+    adapter = _FakeGitLabReader(_merge_request(), _issue())
     worktree_path = tmp_path / "worktree"
     worktree_path.mkdir()
     workspace = _FakeWorkspaceManager(worktree_path)
@@ -269,10 +342,103 @@ def test_build_job_handlers_registers_only_review_type(tmp_path):
 
     try:
         handlers = build_job_handlers(adapter, workspace, runner, store, config)
-        # M3-3時点で実際にRunnerが処理できるのはreviewのみ(ADR-0016)
-        assert set(handlers) == {JobType.REVIEW}
+        # M4-3時点で実際にRunnerが処理できるのはreview/issue-analysis(ADR-0016)
+        assert set(handlers) == {JobType.REVIEW, JobType.ISSUE_ANALYSIS}
     finally:
         store.close()
+
+
+# --- build_issue_analysis_handler ---
+
+
+def _issue_analysis_job(**overrides) -> Job:
+    now = datetime(2026, 8, 16, 12, 0, 0, tzinfo=UTC)
+    kwargs = dict(
+        id="job-analysis-1",
+        job_type=JobType.ISSUE_ANALYSIS,
+        status=JobStatus.RUNNING,
+        payload=build_issue_analysis_job_payload(_PROJECT, _ISSUE_IID),
+        result=None,
+        error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    kwargs.update(overrides)
+    return Job(**kwargs)
+
+
+def test_build_issue_analysis_handler_returns_result_dict_when_no_open_questions(
+    tmp_path,
+):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[])
+
+    handler = build_issue_analysis_handler(adapter, runner, config)
+    job = _issue_analysis_job()
+
+    result = handler(job)
+
+    assert result["project"] == _PROJECT
+    assert result["issue_iid"] == _ISSUE_IID
+    assert result["requirements"] == ["要求1"]
+    assert result["acceptance_criteria"] == ["条件1"]
+    assert result["assumptions"] == ["前提1"]
+    assert result["assumed_uncertainties"] == []
+    assert result["questions"] == []
+    assert len(runner.run_prompt_calls) == 1
+    _, prompt, log_key = runner.run_prompt_calls[0]
+    assert "Add feature Y" in prompt
+    assert log_key == f"group%2Fproject/issue-{_ISSUE_IID}"
+
+
+def test_build_issue_analysis_handler_raises_waiting_for_human_when_critical_question(
+    tmp_path,
+):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {"question": "対象範囲は?", "severity": "critical"},
+        ],
+    )
+
+    handler = build_issue_analysis_handler(adapter, runner, config)
+    job = _issue_analysis_job()
+
+    with pytest.raises(WaitingForHumanError) as excinfo:
+        handler(job)
+
+    assert excinfo.value.result["questions"] == [
+        {"question": "対象範囲は?", "severity": "critical"}
+    ]
+
+
+def test_build_issue_analysis_handler_completes_when_only_minor_question(tmp_path):
+    # MINORな不明点はASSUME判定になり、WAITING_HUMANにはならない(orchestrator.judge_uncertainty)
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {
+                "question": "文言は?",
+                "severity": "minor",
+                "assumption": "一般的な文言を使う",
+            },
+        ],
+    )
+
+    handler = build_issue_analysis_handler(adapter, runner, config)
+    job = _issue_analysis_job()
+
+    result = handler(job)
+
+    assert result["questions"] == []
+    assert result["assumed_uncertainties"] == [
+        {"question": "文言は?", "severity": "minor", "assumption": "一般的な文言を使う"}
+    ]
 
 
 # --- RunnerDispatcher.run_once ---
@@ -324,6 +490,27 @@ def test_run_once_fails_with_retry_true_when_handler_raises(caplog):
     assert processed is True
     assert repo.complete_calls == []
     assert repo.fail_calls == [(job.id, _WORKER_ID, "boom", True)]
+
+
+def test_run_once_waits_for_human_when_handler_raises_waiting_for_human_error():
+    # ADR-0026: WaitingForHumanErrorはfail/completeどちらでもなくwait_for_humanを呼ぶ
+    job = _job()
+    repo = _FakeJobRepository([job])
+    questions_result = {"questions": [{"question": "q?", "severity": "critical"}]}
+
+    def _handler(received_job: Job) -> dict:
+        raise WaitingForHumanError(questions_result)
+
+    dispatcher = RunnerDispatcher(
+        repo, {JobType.REVIEW: _handler}, worker_id=_WORKER_ID
+    )
+
+    processed = dispatcher.run_once()
+
+    assert processed is True
+    assert repo.complete_calls == []
+    assert repo.fail_calls == []
+    assert repo.wait_for_human_calls == [(job.id, _WORKER_ID, questions_result)]
 
 
 def test_run_once_fails_with_retry_false_when_job_type_not_implemented():
