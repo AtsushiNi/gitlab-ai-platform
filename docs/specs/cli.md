@@ -949,7 +949,9 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   `respond`の`design`種別Jobへの対応拡張
 - [ADR-0035: Issue→MRパイプラインのオーケストレーション](../adr/0035-pipeline-orchestration.md) —
   `worker`(`RunnerDispatcher`)・`respond`(`respond_to_job`)双方の`on_job_completed`フックが
-  `orchestrator.pipeline.advance_pipeline_hook`を経てフェーズ連鎖を実現する設計(M4-10)
+  `orchestrator.pipeline.advance_pipeline_hook`を経てフェーズ連鎖を実現する設計(M4-10)。
+  M4-11(ADR-0036)で`push`完了後の`review`Job自動投入がこの連鎖に加わったが、`worker`/`respond`
+  側のフック配線自体は変更していない
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信
   サーバー(M3-6)の仕様

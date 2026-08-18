@@ -2,21 +2,25 @@
 
 - 実装場所: `src/gitlab_ai_platform/orchestrator/`
 - 対応Issue: [#110](https://github.com/AtsushiNi/gitlab-ai-platform/issues/110) (M4-4)、
-  [#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116) (M4-10)
+  [#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116) (M4-10)、
+  [#117](https://github.com/AtsushiNi/gitlab-ai-platform/issues/117) (M4-11)
 - 関連ADR: [ADR-0024](../adr/0024-ask-or-assume-judgment.md)、
-  [ADR-0035](../adr/0035-pipeline-orchestration.md)
+  [ADR-0035](../adr/0035-pipeline-orchestration.md)、
+  [ADR-0036](../adr/0036-self-review-connection.md)
 - ステータス: 実装中(「質問する / 仮定して進める」判断ロジック(M4-4)、フェーズ間の連鎖
-  (M4-10)を実装済み。HTTP API/サーバ層による外部連携は未実装)
+  (M4-10)、push完了後のreview自動投入(M4-11)を実装済み。HTTP API/サーバ層による外部連携は未実装)
 
 ## 責務
 
-無人実行パイプライン(Issue → 要求分析 → 設計 → 実装計画 → 実装 → push/MR作成、
+無人実行パイプライン(Issue → 要求分析 → 設計 → 実装計画 → 実装 → push/MR作成 → 自己レビュー、
 `docs/architecture.md`の「Orchestrator」)のうち、本パッケージがカバーするのは以下の2つ:
 
 - (M4-4、`judgment.py`)要求分析・設計・実装計画・実装の各フェーズが検出した不明点について、
   処理を止めて人間に確認すべきか、仮定を明示して継続してよいかを判定する
-- (M4-10、`pipeline.py`)`issue-analysis → design → plan → implement → push`という5フェーズの
-  連鎖(あるフェーズのJobが完了したら、その結果から次フェーズのJobを組み立てて投入する)を担う
+- (M4-10/M4-11、`pipeline.py`)`issue-analysis → design → plan → implement → push → review`
+  という6フェーズの連鎖(あるフェーズのJobが完了したら、その結果から次フェーズのJobを組み立てて
+  投入する)を担う。`review`(M1で完成済みのMRレビューパイプライン)は次フェーズを持たない
+  最終フェーズで、人間がレビュー結果を見て判断する
 
 HTTP API/サーバ層による外部連携は未実装。
 
@@ -49,6 +53,11 @@ HTTP API/サーバ層による外部連携は未実装。
     新しい変換ロジックは持たない(ADR-0035)
   - Issue単位の進捗を横断的に追跡する専用索引。既存のJob `payload`/`result`の`project`/
     `issue_iid`と`JobRepository`の一覧機能で足りると判断した(ADR-0035「論点3」)
+  - `review`Jobの実行内容そのもの(GitLab Adapter→Workspace Manager→Claude Code Runner→
+    Review→State Storeの結線)。M1で完成済みの`review`パッケージ・`cli/dispatcher.py`の
+    `build_review_handler`をそのまま再利用する。無人実行由来の`review`Jobと人間が手動投入する
+    `review`Jobを区別する仕組みも追加しない(`build_review_job_payload`のシグネチャは
+    投入元を区別しない、ADR-0036「論点2」)
 
 ## 公開インターフェース
 
@@ -111,9 +120,10 @@ def assume_judgments(
     """`ASSUME`判定のみを抽出する(MRに残す仮定一覧の元、M4-9で使用予定)。"""
 ```
 
-`pipeline.py`(M4-10, ADR-0035)。**`orchestrator/__init__.py`からは意図的に再エクスポートしない**
-(`design`/`plan`/`implement`/`push`各パッケージへの依存と、それらパッケージの`orchestrator`本体
-への依存が循環importになりうるため、ADR-0035「論点4」)。呼び出し側は
+`pipeline.py`(M4-10/M4-11, ADR-0035/ADR-0036)。**`orchestrator/__init__.py`からは意図的に
+再エクスポートしない**(`design`/`plan`/`implement`/`push`各パッケージへの依存と、それらパッケージの
+`orchestrator`本体への依存が循環importになりうるため、ADR-0035「論点4」。`review`パッケージは
+`orchestrator`本体に依存しないためこの制約は無いが、統一のため同じ方針を適用する)。呼び出し側は
 `from gitlab_ai_platform.orchestrator.pipeline import advance_pipeline_hook`と
 サブモジュールを明示的にimportする。
 
@@ -126,7 +136,7 @@ from gitlab_ai_platform.job.protocol import Job, JobRepository
 def advance_pipeline(job_repo: JobRepository, completed_job: Job) -> Job | None:
     """完了したJobを受け取り、パイプラインの次フェーズのJobを投入する。
 
-    `completed_job.status`が`DONE`でない場合、次フェーズが無い場合(`review`/`push`)、
+    `completed_job.status`が`DONE`でない場合、次フェーズが無い場合(`review`のみ)、
     次フェーズのpayload組み立てに必要なフィールドが`completed_job.result`に無い場合、
     次フェーズJobの`enqueue`が失敗した場合はいずれも例外を送出せず`None`を返す。
     """
@@ -140,9 +150,15 @@ def advance_pipeline_hook(job_repo: JobRepository) -> Callable[[Job], None]:
 
 呼び出し元(`cli/dispatcher.py`の`RunnerDispatcher._process`、`cli/respond.py`の
 `respond_to_job`)は、いずれもJobを`DONE`へ遷移させた**後**にのみ`advance_pipeline_hook`が
-返すフックを呼ぶ。フェーズ対応表(`issue-analysis→design→plan→implement→push`)は
+返すフックを呼ぶ。フェーズ対応表(`issue-analysis→design→plan→implement→push→review`)は
 `pipeline.py`内の非公開の`_NEXT_JOB_TYPE`が持ち、呼び出し元には一切公開しない
 (`RunnerDispatcher`/`respond_to_job`がフェーズ順序を知らずに済む、ADR-0022/ADR-0035)。
+
+`push`完了後は、`push`Job `result`の`merge_request_iid`/`pushed_commit_sha`から
+`build_review_job_payload(project, mr_iid, sha=...)`(`review`パッケージ既存、M1)を呼んで
+`review`Jobを投入する(ADR-0036)。「`implement`完了後」ではなく「`push`完了後」なのは、
+MR IIDが`push`完了時のresultで初めて手に入るため(`implement`フェーズはworktree上でcommitする
+だけでまだMRを作らない)。
 
 ## 入出力スキーマ
 
@@ -157,7 +173,7 @@ def advance_pipeline_hook(job_repo: JobRepository) -> Callable[[Job], None]:
 | `JudgmentPolicy` (frozen dataclass) | `ask_severities: frozenset[UncertaintySeverity]` | この集合に含まれる重要度は`ASK`、含まれない重要度は`ASSUME`と判定する。既定値は`{CRITICAL}` |
 
 `pipeline.py`は新しい型を持たない。`_NEXT_JOB_TYPE: dict[JobType, JobType]`(非公開)が
-`issue-analysis → design → plan → implement → push`の対応を表す。
+`issue-analysis → design → plan → implement → push → review`の対応を表す。
 
 ## エラー時の振る舞い
 
@@ -174,10 +190,16 @@ def advance_pipeline_hook(job_repo: JobRepository) -> Callable[[Job], None]:
 
 - `completed_job.status`が`JobStatus.DONE`でない場合(`WAITING_HUMAN`・`FAILED`を連鎖させない
   境界。ただし呼び出し元はJobを`DONE`にした直後にのみ呼ぶ設計のため、通常この分岐には来ない)
-- `completed_job.job_type`に次フェーズが無い場合(`review`/`push`)
+- `completed_job.job_type`に次フェーズが無い場合(`review`のみ)
 - `completed_job.result`に次フェーズのpayload組み立てに必要なフィールドが無い場合
-  (`project`/`issue_iid`が無い、または`push`投入に必要な`commit_sha`等が無い、`KeyError`を変換)
+  (`project`/`issue_iid`が無い、または`push`投入に必要な`commit_sha`等、`review`投入に必要な
+  `merge_request_iid`/`pushed_commit_sha`等が無い、`KeyError`を変換)
 - 次フェーズJobの`enqueue`が`JobError`で失敗した場合(ログにのみ記録する)
+
+なお`review`フェーズ自体(`review/`パッケージ、`cli/dispatcher.py`の`build_review_handler`)は
+`WaitingForHumanError`を送出しない設計(常に`DONE`または`FAILED`で完結する。M1のレビューは
+不明点の判断を伴わないため)。したがって無人実行由来の`review`Jobが`WAITING_HUMAN`になり、
+連鎖が宙に浮くケースは無い(ADR-0036「論点3」)。
 
 ## テスト方針
 
@@ -203,12 +225,15 @@ def advance_pipeline_hook(job_repo: JobRepository) -> Callable[[Job], None]:
 - `test_pipeline.py`:
   - `completed_job.status`が`DONE`以外(`PENDING`/`RUNNING`/`WAITING_HUMAN`/`FAILED`)の場合、
     `advance_pipeline`が`None`を返し`enqueue`を一切呼ばないこと
-  - `review`/`push`種別(次フェーズが無い)の場合に`None`を返すこと
-  - `issue-analysis`/`design`/`plan`/`implement`それぞれの完了Jobから、正しい次フェーズ
-    (`design`/`plan`/`implement`/`push`)のJobが正しいpayloadで`enqueue`されること。
-    `implement → push`のみ`completed_job.payload`/`result`の両方を使うこと(ADR-0034「論点2」)
-  - `result`に`project`/`issue_iid`が無い場合、`push`投入に必要なフィールドが無い場合に
-    `None`を返し`enqueue`しないこと
+  - `review`種別(次フェーズが無い)の場合に`None`を返すこと
+  - `issue-analysis`/`design`/`plan`/`implement`/`push`それぞれの完了Jobから、正しい次フェーズ
+    (`design`/`plan`/`implement`/`push`/`review`)のJobが正しいpayloadで`enqueue`されること。
+    `implement → push`のみ`completed_job.payload`/`result`の両方を使うこと(ADR-0034「論点2」)。
+    `push → review`は`push`Job `result`の`merge_request_iid`/`pushed_commit_sha`から
+    `review`Job payloadが組み立てられること(ADR-0036)
+  - `result`に`project`/`issue_iid`が無い場合、`push`投入に必要なフィールドが無い場合、
+    `review`投入に必要なフィールド(`merge_request_iid`等)が無い場合に`None`を返し
+    `enqueue`しないこと
   - `enqueue`が`JobError`を送出した場合に`None`を返すこと(例外を伝播させない)
   - `advance_pipeline_hook`が`Job | None`ではなく`None`を返す(戻り値を握りつぶす)こと
 
@@ -222,15 +247,18 @@ def advance_pipeline_hook(job_repo: JobRepository) -> Callable[[Job], None]:
 
 ## 関連ドキュメント
 
-- [architecture.md](../architecture.md) の「Orchestrator」の行(M3-7, M4-1〜M4-6, M4-9〜M4-10)
+- [architecture.md](../architecture.md) の「Orchestrator」の行(M3-7, M4-1〜M4-6, M4-9〜M4-11)
 - [requirements.md](../requirements.md) の「B. Issue駆動開発(将来)」節 — 本モジュールが解決する
   「AIが分からないことを勝手に推測してしまう問題」の背景
 - [ADR-0024: 「質問する / 仮定して進める」判断ロジックの設計](../adr/0024-ask-or-assume-judgment.md)
 - [ADR-0035: Issue→MRパイプラインのオーケストレーション](../adr/0035-pipeline-orchestration.md)
+- [ADR-0036: 自己レビュー接続](../adr/0036-self-review-connection.md)
 - [specs/job-model.md](job-model.md) — `JobStatus.WAITING_HUMAN`と許可される状態遷移の定義。
   本モジュールが「いつ発動させるか」を判断する対象
 - [specs/issue-analysis.md](issue-analysis.md) / [specs/design-phase.md](design-phase.md) /
   [specs/plan-phase.md](plan-phase.md) / [specs/implement-phase.md](implement-phase.md) /
-  [specs/push-phase.md](push-phase.md) — `pipeline.py`が連鎖させる5フェーズそれぞれの仕様
+  [specs/push-phase.md](push-phase.md) / [specs/review-output.md](review-output.md) —
+  `pipeline.py`が連鎖させる6フェーズそれぞれの仕様(reviewの入出力Job形式は
+  [specs/job-model.md](job-model.md)、レビュー結果の保存形式は`review-output.md`)
 - ソースコード: `src/gitlab_ai_platform/orchestrator/`(`types.py` / `judgment.py` / `errors.py` /
   `pipeline.py` / `__init__.py`)

@@ -14,8 +14,10 @@
 `GitLabWriter.push_file_changes`(Commits API経由)でGitLabへ実際に反映し、
 `GitLabWriter.create_merge_request`でMRを作成するJobフェーズ。Job種別`push`
 (`job/protocol.py`の`JobType.PUSH`)として、`RunnerDispatcher`(M3-3、`cli/dispatcher.py`)の
-`JobHandler`(`build_push_handler`)で処理する。無人実行トラック(Issue→MR)の最終ステップで、
-このフェーズで初めてGitLabへの実際の書き込み(push・MR作成)が発生する。
+`JobHandler`(`build_push_handler`)で処理する。無人実行トラック(Issue→MR)でMRを作成する
+ステップで、このフェーズで初めてGitLabへの実際の書き込み(push・MR作成)が発生する。
+M4-11(ADR-0036)以降、このフェーズの完了後に自動で`review`Jobが投入され、作成したMRの
+一次チェックが行われる(`docs/specs/orchestrator.md`)。
 
 **無人実行トラック限定の機能。** 対話型トラック(VS Code拡張)では人間が直接pushするため、
 このフェーズ自体は使われない。
@@ -33,7 +35,8 @@
     組み立てたもの)の**両方**を入力として`push.build_push_job_payload`で組み立てて
     `JobRepository.enqueue`されたもの。投入者(「implement完了 → push投入」の橋渡し)自体は
     M4-10(Issue→MRパイプラインのオーケストレーション)のスコープで、本パッケージには
-    含まない
+    含まない。push完了後の「push完了 → review投入」の橋渡しも同様にM4-11
+    (`docs/adr/0036-self-review-connection.md`)のスコープで本パッケージには含まない
   - 実装フェーズが作成したIssue単位のworktree(`Workspace Manager.prepare_for_issue`、
     ADR-0031)が、pushフェーズの実行時点でまだ`worktree_path`に存在していること
     (`implement`は実装成功時に`discard_for_issue`を呼ばない設計のため保証される、ADR-0033)
