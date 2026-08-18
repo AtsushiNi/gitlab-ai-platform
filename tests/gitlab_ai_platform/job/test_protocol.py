@@ -46,6 +46,7 @@ def test_job_type_values():
     assert JobType.DESIGN == "design"
     assert JobType.PLAN == "plan"
     assert JobType.IMPLEMENT == "implement"
+    assert JobType.PUSH == "push"
 
 
 def test_job_status_values():

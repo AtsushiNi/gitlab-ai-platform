@@ -17,6 +17,12 @@
   タスクへ具体化する「実装計画」フェーズ用に`PLAN = "plan"`を追加した。`job_type`列は
   `TEXT NOT NULL`で許容値を列挙する`CHECK`制約を持たない(`sqlite.py`)ため、既存レコードとの
   互換性を壊さずに列挙値を追加できる(ADR-0030「決定」参照)
+- M4-9([#115](https://github.com/AtsushiNi/gitlab-ai-platform/issues/115)、
+  `docs/adr/0034-push-and-mr-phase.md`)で、実装フェーズの成果(worktree内のローカルcommit)を
+  GitLabへ実際にpushしMRを作成する「push」フェーズ用に`PUSH = "push"`を追加した。
+  Claude Code Runnerを呼び出さない初めての種別(git diff計算とGitLab Adapter呼び出しのみの
+  機械的な処理)だが、Job Queueの観測性・再試行/デッドレター機構(ADR-0017)を再利用する
+  利点は他の種別と変わらないため、同じ「1フェーズ1Job種別」の枠組みに含めた(ADR-0034「論点3」)
 - `JobStatus`の遷移は`PENDING → RUNNING → (DONE | FAILED | WAITING_HUMAN)`を基本とし、
   `WAITING_HUMAN`からの復帰(`RUNNING`)・却下(`FAILED`)のみ例外的に許可する。許可される
   遷移の一覧は`sqlite.py`の`_ALLOWED_TRANSITIONS`を参照。妥当性チェックは
@@ -66,6 +72,7 @@ class JobType(str, Enum):
     DESIGN = "design"  # M4で実装
     PLAN = "plan"  # M4-7で実装(ADR-0030)。設計の成果物をタスクへ具体化する
     IMPLEMENT = "implement"  # M4で実装
+    PUSH = "push"  # M4-9で実装(ADR-0034)。実装成果をpushしMRを作成する
 
 
 class JobStatus(str, Enum):

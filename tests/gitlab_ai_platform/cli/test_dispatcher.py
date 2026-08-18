@@ -18,6 +18,7 @@ from gitlab_ai_platform.cli.dispatcher import (
     build_issue_analysis_handler,
     build_job_handlers,
     build_plan_handler,
+    build_push_handler,
     build_review_handler,
     default_worker_id,
     run_dispatcher,
@@ -27,6 +28,8 @@ from gitlab_ai_platform.design.job import build_design_job_payload
 from gitlab_ai_platform.gitlab_adapter.errors import GitLabApiError
 from gitlab_ai_platform.gitlab_adapter.types import (
     Branch,
+    CommitAction,
+    CommitActionType,
     Discussion,
     Issue,
     MergeRequest,
@@ -39,6 +42,7 @@ from gitlab_ai_platform.job.errors import LeaseLostError
 from gitlab_ai_platform.job.protocol import Job, JobStatus, JobType
 from gitlab_ai_platform.plan.job import build_plan_job_payload
 from gitlab_ai_platform.poller.issue_poller import build_issue_analysis_job_payload
+from gitlab_ai_platform.push.errors import NoFileChangesError
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.store import ReviewStatus, SqliteStateStore
 from gitlab_ai_platform.workspace import IssueWorktreeHandle, WorktreeHandle
@@ -428,7 +432,7 @@ def test_build_review_handler_runs_execute_review_and_returns_result_dict(tmp_pa
         store.close()
 
 
-def test_build_job_handlers_registers_all_five_job_types(tmp_path):
+def test_build_job_handlers_registers_all_six_job_types(tmp_path):
     config = _config(tmp_path)
     adapter = _FakeGitLabReader(_merge_request(), _issue())
     worktree_path = tmp_path / "worktree"
@@ -439,14 +443,15 @@ def test_build_job_handlers_registers_all_five_job_types(tmp_path):
 
     try:
         handlers = build_job_handlers(adapter, workspace, runner, store, config)
-        # M4-8時点で実際にRunnerが処理できるのはreview/issue-analysis/design/plan/implement
-        # (ADR-0016で予約済みの4種+plan、ADR-0030)
+        # M4-9時点で実際にRunnerが処理できるのはreview/issue-analysis/design/plan/implement/push
+        # (ADR-0016で予約済みの4種+plan+push、ADR-0030/0034)
         assert set(handlers) == {
             JobType.REVIEW,
             JobType.ISSUE_ANALYSIS,
             JobType.DESIGN,
             JobType.PLAN,
             JobType.IMPLEMENT,
+            JobType.PUSH,
         }
     finally:
         store.close()
@@ -1033,6 +1038,289 @@ def test_build_implement_handler_does_not_discard_worktree_on_success(tmp_path):
         adapter, workspace, runner, config, read_worktree_state=state_reader
     )
     handler(_implement_job())
+
+    assert workspace.discard_for_issue_calls == []
+
+
+# --- build_push_handler ---
+
+
+class _FakeGitLabPushWriter:
+    """`GitLabReader.get_default_branch`と`GitLabWriter`の`push`が使う書き込みメソッド
+    (`push_file_changes`/`create_merge_request`)だけを満たすテスト用フェイク。"""
+
+    def __init__(
+        self,
+        *,
+        default_branch: str = "main",
+        merge_request: MergeRequest | None = None,
+        push_error: Exception | None = None,
+        create_merge_request_error: Exception | None = None,
+    ) -> None:
+        self._default_branch = default_branch
+        self._merge_request = merge_request or MergeRequest(
+            project=_PROJECT,
+            iid=42,
+            title="[Issue #7] タスク1を実装した",
+            description="...",
+            state="opened",
+            source_branch=f"ai/issue-{_ISSUE_IID}",
+            target_branch=default_branch,
+            sha="pushed-sha",
+            author="ai-bot",
+            web_url="https://gitlab.example.com/group/project/-/merge_requests/42",
+        )
+        self._push_error = push_error
+        self._create_merge_request_error = create_merge_request_error
+        self.push_file_changes_calls: list[tuple] = []
+        self.create_merge_request_calls: list[tuple] = []
+
+    def get_default_branch(self, project: str) -> str:
+        return self._default_branch
+
+    def push_file_changes(self, project, branch, commit_message, actions) -> str:
+        self.push_file_changes_calls.append((project, branch, commit_message, actions))
+        if self._push_error is not None:
+            raise self._push_error
+        return "pushed-sha"
+
+    def create_merge_request(
+        self, project, source_branch, target_branch, title, description=""
+    ) -> MergeRequest:
+        self.create_merge_request_calls.append(
+            (project, source_branch, target_branch, title, description)
+        )
+        if self._create_merge_request_error is not None:
+            raise self._create_merge_request_error
+        return self._merge_request
+
+
+class _FakeComputeCommitActions:
+    """`build_push_handler`へ注入する`compute_commit_actions`のテスト用フェイク。実gitに繋がない。"""
+
+    def __init__(self, actions: list | None = None) -> None:
+        self._actions = (
+            actions
+            if actions is not None
+            else [
+                CommitAction(
+                    action=CommitActionType.CREATE,
+                    file_path="new_file.py",
+                    content="print('new')\n",
+                )
+            ]
+        )
+        self.calls: list[tuple[Path, str, str]] = []
+
+    def __call__(self, worktree_path: Path, default_branch: str, commit_sha: str):
+        self.calls.append((worktree_path, default_branch, commit_sha))
+        return list(self._actions)
+
+
+def _push_job(**overrides) -> Job:
+    now = datetime(2026, 8, 16, 12, 0, 0, tzinfo=UTC)
+    kwargs = dict(
+        id="job-push-1",
+        job_type=JobType.PUSH,
+        status=JobStatus.RUNNING,
+        payload={
+            "project": _PROJECT,
+            "issue_iid": _ISSUE_IID,
+            "plan_document": "# 概要\n実装計画の本文です。",
+            "summary": "タスク1を実装した",
+            "commit_message": "タスク1を実装",
+            "commit_sha": "after-sha",
+            "remote_branch": f"ai/issue-{_ISSUE_IID}",
+            "local_branch": f"issue-{_ISSUE_IID}",
+            "worktree_path": "/tmp/workspace/issue-7",
+            "assumed_uncertainties": [
+                {
+                    "question": "エラーメッセージの文言は?",
+                    "severity": "minor",
+                    "assumption": "一般的な文言を使う",
+                }
+            ],
+        },
+        result=None,
+        error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    kwargs.update(overrides)
+    return Job(**kwargs)
+
+
+def test_build_push_handler_returns_result_dict_on_success(tmp_path):
+    adapter = _FakeGitLabPushWriter()
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+    result = handler(_push_job())
+
+    assert result == {
+        "project": _PROJECT,
+        "issue_iid": _ISSUE_IID,
+        "pushed_commit_sha": "pushed-sha",
+        "remote_branch": f"ai/issue-{_ISSUE_IID}",
+        "merge_request_iid": 42,
+        "merge_request_web_url": "https://gitlab.example.com/group/project/-/merge_requests/42",
+    }
+
+
+def test_build_push_handler_computes_actions_against_default_branch(tmp_path):
+    adapter = _FakeGitLabPushWriter(default_branch="develop")
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+    handler(_push_job())
+
+    assert compute_actions.calls == [
+        (Path("/tmp/workspace/issue-7"), "develop", "after-sha")
+    ]
+
+
+def test_build_push_handler_pushes_actions_to_remote_branch(tmp_path):
+    adapter = _FakeGitLabPushWriter()
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+    handler(_push_job())
+
+    assert len(adapter.push_file_changes_calls) == 1
+    project, branch, commit_message, actions = adapter.push_file_changes_calls[0]
+    assert project == _PROJECT
+    assert branch == f"ai/issue-{_ISSUE_IID}"
+    assert commit_message == "タスク1を実装"
+    assert actions == compute_actions._actions
+
+
+def test_build_push_handler_falls_back_to_summary_when_commit_message_is_none(
+    tmp_path,
+):
+    adapter = _FakeGitLabPushWriter()
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+    job = _push_job(payload={**_push_job().payload, "commit_message": None})
+    handler(job)
+
+    assert adapter.push_file_changes_calls[0][2] == "タスク1を実装した"
+
+
+def test_build_push_handler_creates_merge_request_with_required_sections(tmp_path):
+    adapter = _FakeGitLabPushWriter()
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+    handler(_push_job())
+
+    assert len(adapter.create_merge_request_calls) == 1
+    project, source_branch, target_branch, title, description = (
+        adapter.create_merge_request_calls[0]
+    )
+    assert project == _PROJECT
+    assert source_branch == f"ai/issue-{_ISSUE_IID}"
+    assert target_branch == "main"
+    assert f"Closes #{_ISSUE_IID}" in description
+    assert "実装計画の本文です。" in description
+    assert "と仮定して実装した" in description
+
+
+def test_build_push_handler_discards_worktree_after_success(tmp_path):
+    # push・MR作成の両方が成功した後にworktreeを破棄する(ADR-0034「論点4」)
+    adapter = _FakeGitLabPushWriter()
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+    handler(_push_job())
+
+    assert workspace.discard_for_issue_calls == [(_PROJECT, _ISSUE_IID)]
+
+
+def test_build_push_handler_raises_no_file_changes_error_when_actions_empty(tmp_path):
+    adapter = _FakeGitLabPushWriter()
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions(actions=[])
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+
+    with pytest.raises(NoFileChangesError):
+        handler(_push_job())
+
+    assert adapter.push_file_changes_calls == []
+    assert adapter.create_merge_request_calls == []
+    assert workspace.discard_for_issue_calls == []
+
+
+def test_build_push_handler_does_not_discard_worktree_when_push_fails(tmp_path):
+    adapter = _FakeGitLabPushWriter(push_error=GitLabApiError("boom", status_code=500))
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+
+    with pytest.raises(GitLabApiError):
+        handler(_push_job())
+
+    assert adapter.create_merge_request_calls == []
+    assert workspace.discard_for_issue_calls == []
+
+
+def test_build_push_handler_does_not_discard_worktree_when_merge_request_creation_fails(
+    tmp_path,
+):
+    adapter = _FakeGitLabPushWriter(
+        create_merge_request_error=GitLabApiError("boom", status_code=500)
+    )
+    worktree_path = tmp_path / "worktree"
+    worktree_path.mkdir()
+    workspace = _FakeWorkspaceManager(worktree_path)
+    compute_actions = _FakeComputeCommitActions()
+
+    handler = build_push_handler(
+        adapter, workspace, compute_commit_actions=compute_actions
+    )
+
+    with pytest.raises(GitLabApiError):
+        handler(_push_job())
 
     assert workspace.discard_for_issue_calls == []
 

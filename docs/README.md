@@ -86,6 +86,12 @@
   ローカルにcommitする。無人実行トラック限定・Issue単位の実際のworktreeを使う設計
   (ADR-0031)、Claude CodeへのEdit/Write/Bash権限付与(ADR-0033)、`WAITING_HUMAN`遷移・
   `respond`サブコマンド対応を含む。GitLabへの実際のpush/MR作成は含まない(M4-9)
+- [specs/push-phase.md](specs/push-phase.md) — push と MR 作成フェーズ(M4-9、Job種別
+  `push`)の仕様。実装フェーズがworktreeに残したローカルcommitをGitLab Commits API経由で
+  実際にpushし、MRを作成する。このフェーズで初めてGitLabへの実際の書き込みが発生する。
+  `ClaudeCodeRunner`を呼び出さない初めてのフェーズ(ADR-0034)、`git merge-base`によるdiffの
+  base決定、MR本文テンプレート(「対応Issue」「設計要約」「○○と仮定して実装した」)、
+  push成功後のworktree後片付け(`discard_for_issue`)を含む
 
 ## 更新ルール
 
