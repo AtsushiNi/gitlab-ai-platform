@@ -11,9 +11,12 @@
   再利用して取得する。このモジュール自身がコマンドライン引数や環境変数を直接パースして
   認証情報を扱うことはしない(`config`層への一本化)。
 - この経路は`GitLabWriter`(書き込み)まで使う対話型経路のため、`config.gitlab_token`
-  (自動実行系向け、`read_api`スコープを推奨)ではなく`config.gitlab_token_mcp`
-  (`api`スコープが必要)を使う。用途別トークンを分けない運用では`config`層が
-  `config.gitlab_token`と同じ値へフォールバックする(M3-8, `docs/adr/0019-gitlab-token-scoping.md`)。
+  (自動実行系向け)ではなく`config.gitlab_token_mcp`を使う。アカウントを分離することで
+  GitLab監査ログ上「無人実行/対話型どちらの操作か」を区別できるようにする狙いであり、
+  両トークンとも`api`スコープを必要とする(M4フォローアップで自動実行系も`api`スコープに
+  引き上げた、`docs/adr/0037-automated-token-scope-upgrade.md`)。用途別トークンを分けない
+  運用では`config`層が`config.gitlab_token`と同じ値へフォールバックする
+  (M3-8, `docs/adr/0019-gitlab-token-scoping.md`)。
 """
 
 from __future__ import annotations

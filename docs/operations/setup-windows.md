@@ -70,14 +70,15 @@ State Store・Workspace Manager・Claude Code Runner・Review・MR Poller・CLI�
 ## 2. GitLab Personal Access Token(PAT)の発行
 
 参照: [spike-S2-gitlab-rest-api.md](../../references/spike-S2-gitlab-rest-api.md) §3、
-アカウント・トークンスコープの設計は[ADR-0019](../adr/0019-gitlab-token-scoping.md)(M3-8)。
+アカウント・トークンスコープの設計は[ADR-0019](../adr/0019-gitlab-token-scoping.md)(M3-8)・
+[ADR-0037](../adr/0037-automated-token-scope-upgrade.md)(M4フォローアップ)。
 
 **推奨構成は、用途別に2つのAI用GitLabアカウント・PATを用意すること**
 ([security.md §4.1](security.md)):
 
 | 用途 | ロール | PATスコープ | `.env`のキー |
 |---|---|---|---|
-| 自動実行系(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行) | Reporter | `read_api` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN` |
+| 自動実行系(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行に加え、`worker`経由の`implement`/`push`) | Developer | `api` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN` |
 | 対話型GitLab Adapter MCP Server | Developer | `api` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP`(省略可。未設定なら上記にフォールバック) |
 
 1. 社内GitLabの `User Settings > Access Tokens` から、用途ごとのアカウントでPATを発行する
@@ -88,9 +89,11 @@ State Store・Workspace Manager・Claude Code Runner・Review・MR Poller・CLI�
    (書き込み操作の許可制御はAdapter層のコードで機構的に絞り込む設計になっている)。
 3. 発行したトークンの値はこの時にしか表示されない。安全な場所に控える
    (Gitに含めない、Slack等に平文で貼らない)。
-4. AI用GitLabアカウントのロールは上表の通り、必要以上に強くしない。特に自動実行系用
-   アカウントをReporterに留めておくと、PATスコープの設定を誤った場合でもGitLab側で
-   書き込みAPIそのものが拒否される二重の防御になる。
+4. AI用GitLabアカウントのロールは上表の通り、Maintainer以上は与えない。GitLabロールによる
+   二重防御(ADR-0019時点の設計)は`ai-review-bot`もDeveloperロールになった
+   ([ADR-0037](../adr/0037-automated-token-scope-upgrade.md))ことで両アカウントとも
+   成立しない。書き込み操作の安全性はGitLab Adapter層の許可リスト(merge等がそもそも
+   メソッドとして存在しない、[security.md §2.3](security.md)参照)で担保している。
 
 トークン自体の運用ルール(禁止/許可操作、棚卸し、ローテーション、漏洩時の対応等)は
 [docs/operations/security.md](security.md)を参照。

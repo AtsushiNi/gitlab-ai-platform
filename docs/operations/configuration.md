@@ -232,7 +232,8 @@ user = "gitlab_ai_platform"
 ## `.env`の例
 
 ```text
-# 自動実行系(review/watch)用。read_apiスコープで足りる
+# 自動実行系(review/watch/worker)用。worker経由のimplement/pushが書き込みAPIを呼ぶため
+# apiスコープが必要(ADR-0037)
 GITLAB_AI_PLATFORM_GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
 # 対話型GitLab Adapter MCP Server用(省略可、未設定ならGITLAB_AI_PLATFORM_GITLAB_TOKENに
 # フォールバック)。書き込みを含むためapiスコープが必要
@@ -246,5 +247,5 @@ GITLAB_AI_PLATFORM_API_TOKEN=apitoken-xxxxxxxxxxxxxxxxxxxx
 ```
 
 雛形は`.env.example`(リポジトリ直下)を参照。PATのスコープ・アカウント分離・トークン管理の
-方針は [operations/security.md](security.md)・[ADR-0019](../adr/0019-gitlab-token-scoping.md)
-を参照(D-9・M3-8)。
+方針は [operations/security.md](security.md)・[ADR-0019](../adr/0019-gitlab-token-scoping.md)・
+[ADR-0037](../adr/0037-automated-token-scope-upgrade.md)を参照(D-9・M3-8・M4フォローアップ)。

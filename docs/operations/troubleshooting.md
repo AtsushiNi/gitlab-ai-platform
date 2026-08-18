@@ -59,8 +59,9 @@
 1. エラーメッセージに`401`/`403`相当の文言(GitLabのエラー本文)が含まれるか確認する
 2. 社内GitLabの `User Settings > Access Tokens` で新しいPATを発行する
    ([setup-windows.md §2](setup-windows.md#2-gitlab-personal-access-tokenpatの発行))。
-   `review`/`watch`サブコマンドは自動実行系用アカウント(`read_api`スコープの想定)を使う
-   経路のため、通常は同じ用途・スコープで再発行する
+   `review`/`watch`/`worker`サブコマンドは自動実行系用アカウント(`api`スコープ・Developer
+   ロール、[ADR-0037](../adr/0037-automated-token-scope-upgrade.md))を使う経路のため、
+   通常は同じ用途・スコープで再発行する
 3. `.env`の`GITLAB_AI_PLATFORM_GITLAB_TOKEN`を新しい値に更新する
    ([configuration.md](configuration.md)「シークレット」節)。OS環境変数で上書きしている
    場合はそちらも更新する。対話型GitLab Adapter MCP Serverが同様のエラーを返す場合は、
