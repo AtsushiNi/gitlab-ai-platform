@@ -9,7 +9,7 @@
 - 関連ADR: [ADR-0016](../adr/0016-job-abstraction.md)、[ADR-0017](../adr/0017-job-queue.md)、
   [ADR-0022](../adr/0022-runner-process-separation.md)、
   [ADR-0026](../adr/0026-job-waiting-human-transition.md)、
-  [ADR-0030](../adr/0030-implementation-plan-phase.md)
+  ADR-0030
 - ステータス: 実装済み(Protocol定義 + SQLite実装 + 既存レビュー処理のJob化 [M3-1] +
   取得の排他・可視性タイムアウト・リトライ・デッドレター [M3-2] +
   Runner Dispatcherによる実配線 [M3-3] + `WAITING_HUMAN`遷移の`wait_for_human` [M4-3] +
@@ -37,7 +37,7 @@ Job Repositoryのメソッドとして追加した([ADR-0017](../adr/0017-job-qu
     フィールド(対象project/MR/commit、結果保存先パス)はJob抽象そのものには持たせず、
     呼び出し側(`review/job.py`)が定義する([ADR-0016](../adr/0016-job-abstraction.md)
     「Jobはペイロード・結果を種別非依存のdictとして持つ」)
-  - State Store(`store/`、[ADR-0003](../adr/0003-state-store-interface.md))は
+  - State Store(`store/`、ADR-0003)は
     `(project, mr_iid, commit_sha)`単位の二重レビュー防止に責務を絞ったまま残る。Jobは
     State Storeを置き換えず、統合もしない、別コンポーネントとして併存する
   - `enqueue`/`get`/`update_status`/`list_by_status`/`close`(M3-1)は、既存の
@@ -524,17 +524,10 @@ issue-analysis Jobの`payload`/`result`(payloadは`poller/issue_poller.py`、res
 - [ADR-0016: Job抽象・状態機械のインターフェース設計](../adr/0016-job-abstraction.md)
 - [ADR-0017: Job Queue(取得の排他・可視性タイムアウト・リトライ・デッドレター)の設計](../adr/0017-job-queue.md)
 - [ADR-0022: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0022-runner-process-separation.md)
-- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) — SQLite実装の
-  ロック方針(`threading.RLock`)の前例、複数プロセス/ホストからの同時アクセスの検討経緯
-- [ADR-0003: State Store のインターフェースとスキーマ設計](../adr/0003-state-store-interface.md) —
-  State StoreとJobを別コンポーネントとして併存させる設計判断
 - [specs/state-store.md](state-store.md) — State Store(併存する二重レビュー防止の仕組み)の仕様
 - [specs/cli.md](cli.md) — `execute_review_job`の呼び出し元(単発実行・watchモード)、
   `RunnerDispatcher`の呼び出し元(`worker`サブコマンド)、`WAITING_HUMAN → RUNNING → DONE`を
   非リース方式(`update_status`)で辿る`respond`サブコマンド(M4-5)の仕様
-- [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md) —
-  `wait_for_human`で`WAITING_HUMAN`にしたJobを、非リース方式の`update_status`で
-  `RUNNING`→`DONE`へ再開させる`respond`サブコマンド(M4-5)の設計判断
 - [ADR-0035: Issue→MRパイプラインのオーケストレーション](../adr/0035-pipeline-orchestration.md) —
   `RunnerDispatcher`/`respond_to_job`の`on_job_completed`フックが、`orchestrator.pipeline`の
   `advance_pipeline`/`advance_pipeline_hook`を経てJob完了後のフェーズ連鎖を実現する設計(M4-10)

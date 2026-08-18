@@ -4,9 +4,9 @@
 - 対応Issue: [#34](https://github.com/AtsushiNi/gitlab-ai-platform/issues/34) (M1-6)、
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、並列アクセスの排他制御)、
   [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8、Issue単位worktree対応)
-- 関連ADR: [ADR-0004](../adr/0004-workspace-manager-design.md)、
-  [ADR-0015](../adr/0015-parallel-review-execution.md)、
-  [ADR-0031](../adr/0031-issue-workspace.md)(Issue単位worktreeの追加)
+- 関連ADR: ADR-0004、
+  ADR-0015、
+  ADR-0031(Issue単位worktreeの追加)
 - ステータス: 実装済み(Protocol定義 + git実装)
 
 ## 責務
@@ -32,12 +32,12 @@
 - 非対象:
   - git操作以外(ビルド・テスト実行など)はしない(`docs/architecture.md`の境界)
   - GitLabの認証方式そのものの決定(PAT vs SSH、credential helperの実装)はこのモジュールの
-    責務外([ADR-0004](../adr/0004-workspace-manager-design.md)参照)。GitLab Adapter
+    責務外(ADR-0004参照)。GitLab Adapter
     (M1-1〜M1-3)/configの責務
   - 複数**プロセス**からの同時実行時の排他制御(ファイルロック等)は対象外。`GitWorkspaceManager`が
     保証するのは同一プロセス内(=同一`watch`プロセスの複数ワーカースレッド)からの並行呼び出しの
     安全性のみ。複数プロセスの同時起動自体は`ProcessLock`(`cli/lock.py`、
-    [ADR-0009](../adr/0009-cli-watch-design.md))が別途防ぐ
+    ADR-0009)が別途防ぐ
 
 ## 並行アクセスの安全性(M2-1、ADR-0015)
 
@@ -53,7 +53,7 @@
 - `collect_garbage`(GC)は退避対象のprojectロックを`acquire(blocking=False)`で試み、
   取得できない(他スレッドが操作中の)候補はスキップして次に古いものを試す。ブロッキング
   待ちにしないのは、GC実行中のスレッドと`prepare`実行中の別スレッドが互いのロックを
-  待ち合う循環待ち(デッドロック)を構造的に起こさないため(詳細は[ADR-0015](../adr/0015-parallel-review-execution.md)参照)
+  待ち合う循環待ち(デッドロック)を構造的に起こさないため(詳細はADR-0015参照)
 
 ## 公開インターフェース
 
@@ -135,9 +135,9 @@ worktrees/<slug>/issue-<iid>/ # Issue単位のworktree(M4-8, ADR-0031)
 `slug`はproject名をパーセントエンコーディング(`urllib.parse.quote`)したもの
 (単純な`/`→`__`置換は単射でなく別プロジェクトと衝突しうるため不採用。詳細はADR-0004)。
 worktreeのローカルbranch名は`mr-<iid>`(MR単位)/`issue-<iid>`(Issue単位)
-(ソースbranch名はディレクトリ名・branch名に含めない。[ADR-0004](../adr/0004-workspace-manager-design.md)参照)。
+(ソースbranch名はディレクトリ名・branch名に含めない。ADR-0004参照)。
 `mr-<iid>`と`issue-<iid>`は名前空間が完全に分離されているため、MRとIssueのIIDが数値として
-偶然一致してもworktree・ローカルbranchが衝突しない([ADR-0031](../adr/0031-issue-workspace.md))。
+偶然一致してもworktree・ローカルbranchが衝突しない(ADR-0031)。
 
 ## エラー時の振る舞い
 
@@ -173,7 +173,7 @@ worktreeのローカルbranch名は`mr-<iid>`(MR単位)/`issue-<iid>`(Issue単�
     checkoutできること
   - 同一プロジェクトの2件目のMRに対する`prepare`が、bare cloneを再利用すること
   - 既存worktreeに対する`prepare`が、origin側の新しいcommitまで最新化すること
-    ([ADR-0004](../adr/0004-workspace-manager-design.md)の`refs/remotes/origin/*`経由の
+    (ADR-0004の`refs/remotes/origin/*`経由の
     fetch戦略・branch名解決の回帰テストを兼ねる)
   - 異なるMRのworktreeが別ディレクトリになり、互いのファイルを共有しないこと
   - `discard`がworktreeディレクトリを削除すること、および対象が存在しない場合も例外を
@@ -197,11 +197,6 @@ worktreeのローカルbranch名は`mr-<iid>`(MR単位)/`issue-<iid>`(Issue単�
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のWorkspace Manager行
-- [ADR-0004: Workspace Manager の設計](../adr/0004-workspace-manager-design.md)
-- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
-  project単位ロックの設計判断・却下した選択肢
-- [ADR-0031: Workspace ManagerのIssue単位worktree対応](../adr/0031-issue-workspace.md) —
-  `prepare_for_issue`/`discard_for_issue`の設計判断・却下した選択肢
 - `references/spike-S3-git-worktree-windows.md` — fetch戦略・パス長制限に関する検証結果
 - [specs/implement-phase.md](implement-phase.md) — `prepare_for_issue`の呼び出し元(M4-8)
 - ソースコード: `src/gitlab_ai_platform/workspace/`

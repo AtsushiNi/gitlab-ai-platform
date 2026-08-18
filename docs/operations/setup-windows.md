@@ -71,7 +71,7 @@ State Store・Workspace Manager・Claude Code Runner・Review・MR Poller・CLI�
 
 参照: [spike-S2-gitlab-rest-api.md](../../references/spike-S2-gitlab-rest-api.md) §3、
 アカウント・トークンスコープの設計は[ADR-0019](../adr/0019-gitlab-token-scoping.md)(M3-8)・
-[ADR-0037](../adr/0037-automated-token-scope-upgrade.md)(M4フォローアップ)。
+ADR-0037(M4フォローアップ)。
 
 **推奨構成は、用途別に2つのAI用GitLabアカウント・PATを用意すること**
 ([security.md §4.1](security.md)):
@@ -91,7 +91,7 @@ State Store・Workspace Manager・Claude Code Runner・Review・MR Poller・CLI�
    (Gitに含めない、Slack等に平文で貼らない)。
 4. AI用GitLabアカウントのロールは上表の通り、Maintainer以上は与えない。GitLabロールによる
    二重防御(ADR-0019時点の設計)は`ai-review-bot`もDeveloperロールになった
-   ([ADR-0037](../adr/0037-automated-token-scope-upgrade.md))ことで両アカウントとも
+   (ADR-0037)ことで両アカウントとも
    成立しない。書き込み操作の安全性はGitLab Adapter層の許可リスト(merge等がそもそも
    メソッドとして存在しない、[security.md §2.3](security.md)参照)で担保している。
 

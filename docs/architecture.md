@@ -83,7 +83,7 @@ flowchart TD
 | State Store | `store/` | `(project, mr_iid, commit_sha)` 単位でレビュー状態(`status` / `reviewed_at` / 結果パス)を記録し、二重レビューを防ぐ。リポジトリ層を抽象化しSQLite/PostgreSQL両対応にする | ビジネスロジック(レビューするか否かの判断)は持たない。単なる状態の記録・照会 | M1-4 |
 | MR Poller | `poller/` | 30〜60秒間隔で対象プロジェクトを走査し、`レビュー待ち` ラベルのMRを抽出、State Storeと突き合わせて未処理commitを検出、レビューを起票する | GitLabへの書き込みはしない | M1-5 |
 | Webhook Receiver | `webhook/` | GitLab Merge Request Hookを受信し、MR Pollerと共通の二重起票防止ロジック(`ticket_if_unprocessed`)でレビューを起票する。任意有効化(既定OFF)で`watch`サブコマンドに統合される | Push Hookは扱わない。MR Pollerを置き換えない(併存が前提)。HMAC署名検証はしない(Secret Token方式のみ) | M3-6 |
-| Issue Ticket Store | `issue_store/` | `(project, issue_iid)` 単位で無人実行Jobの起票済み状態を記録し、二重投入を防ぐ。State Storeとは別コンポーネントとして併存させる([ADR-0025](adr/0025-issue-poller-dedup.md)) | ビジネスロジック(無人実行すべきか否かの判断)は持たない。`status`のような進行状態も持たない(Jobが管理) | M4-1 |
+| Issue Ticket Store | `issue_store/` | `(project, issue_iid)` 単位で無人実行Jobの起票済み状態を記録し、二重投入を防ぐ。State Storeとは別コンポーネントとして併存させる(ADR-0025) | ビジネスロジック(無人実行すべきか否かの判断)は持たない。`status`のような進行状態も持たない(Jobが管理) | M4-1 |
 | Issue Poller | `poller/` (`issue_poller.py`) | 対象プロジェクトを定期走査し、無人実行ラベル(既定`AI実装`)の付いたIssueを抽出、Issue Ticket Storeと突き合わせて未処理Issueを検出し、`issue-analysis`種別のJobをJob Queueへ投入する | GitLabへの書き込みはしない。Jobの実行自体(Issue取得・要求分析)はしない | M4-1 |
 | Workspace Manager | `workspace/` | プロジェクトごとのbare clone、MR単位/Issue単位(M4-8)のworktree作成/更新/破棄、ディスク上限とGCを管理する。並列レビューでworking treeを共有しない | git操作以外(ビルド・テスト実行など)はしない | M1-6, M4-8 |
 | Claude Code Runner | `runner/` | worktree上でClaude Codeをヘッドレス実行し、MRタイトル・説明・コメント・diffをコンテキストとして渡す。タイムアウト・異常終了のハンドリング、実行ログ保存を行う | レビュー観点の判断そのもの(何を重大とするか)はプロンプト側の責務であり、Runnerは実行制御のみ | M1-7 |
@@ -107,7 +107,7 @@ flowchart TD
   フェーズでは、失敗時の隔離・並列実行時のリソース制御・再現性のためにDocker上のRunnerが必要になる。
   WindowsにはDocker Desktopが無いため、この段階で初めてLinux/Dockerへ処理を移す。
   実行環境(Claude Code + Bedrock認証を含むRunnerイメージ、ワークスペース用ボリューム)は
-  M3-4で構築済み([ADR-0020](adr/0020-docker-runtime.md)、
+  M3-4で構築済み(ADR-0020、
   [docs/operations/docker-runtime.md](operations/docker-runtime.md))
 
 共通コード([ADR-0001](adr/0001-repository-structure.md)の`src/`レイアウト)は両環境で動くことを
@@ -178,7 +178,7 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 - **Webhook受信は`watch`常駐モードへの任意有効化(既定OFF)として追加し、Pollerを置き換えない**:
   検出後の実行経路(ワーカープール・Job起票)をPoller/Webhookで完全に共有し、二重起票防止も
   同じState Store一意制約ダンス(`ticket_if_unprocessed`)を共有する。新規サーバー依存
-  (Flask等)は追加せず標準ライブラリ`http.server`で実装([ADR-0018](adr/0018-webhook-receiver.md)、
+  (Flask等)は追加せず標準ライブラリ`http.server`で実装(ADR-0018、
   M3-6で正式化)
 - **書き込み操作は許可リスト方式でAdapter層が機構として禁止する**: プロンプト上の約束事だけに
   依存しない。merge・protected branchへの直push・branch削除・管理操作用のメソッドは
@@ -190,12 +190,12 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
   別の経路(MCPサーバーでのラップ)で提供する**: GitLab Adapterというライブラリの存在だけでは
   Claude Codeエージェント自身が実行中に能動的にGitLab操作を呼び出せるわけではない、という
   区別を明文化した。GitLab Adapterに既に存在するメソッドのみを透過的に公開し、新しい権限は
-  追加しない([ADR-0010](adr/0010-gitlab-mcp-tool-bridge.md)、M2-12で正式化)
+  追加しない(ADR-0010、M2-12で正式化)
 - **複数MRの並列レビューは、別プロセス/コンテナではなくプロセス内のスレッドプールで行う**:
   「Windows/Linuxの分担」により、M1〜M2は人間の端末(Windows)上で完結させる方針であり、
   プロセス分離が要る無人実行はM3以降のLinux/Docker移行後のスコープ。Workspace
   Manager・State Store・Reviewの索引書き込みは、project単位のロック・`RLock`・
-  モジュール内`Lock`でそれぞれ並行アクセスに対して安全にした([ADR-0015](adr/0015-parallel-review-execution.md)、
+  モジュール内`Lock`でそれぞれ並行アクセスに対して安全にした(ADR-0015、
   M2-1で正式化)
 - **Job抽象はState Storeを置き換えず、別コンポーネントとして併存させる**: State Storeは
   レビューの二重実行防止に責務を絞ったまま残し、Job層はレビューに限らないタスク種別を横断的に
@@ -207,7 +207,7 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
   「コード・イメージにシークレットを焼き込まない」方針をコンテナ環境でも維持する。
   Workspace用ボリュームはbare clone・worktree・実行ログ・レビュー結果・State/Job DBを
   1つのマウントポイントにまとめ、`GitWorkspaceManager`の単一ルート前提と整合させる
-  ([ADR-0020](adr/0020-docker-runtime.md)、M3-4で正式化)
+  (ADR-0020、M3-4で正式化)
 
 ## 関連ドキュメント
 

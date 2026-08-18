@@ -9,8 +9,7 @@ Linux/Docker上で`gitlab-ai-platform`のRunnerを動かすまでの手順。
 本手順は**人間が張り付かない無人実行**(M3以降のJob Queue/Orchestratorから起動される
 Runner)を想定しており、単発の`review`実行や`watch`常駐も同じイメージで行える。
 
-設計判断の背景は[ADR-0020: Linux/Docker実行環境の構築](../adr/0020-docker-runtime.md)を
-参照。本ドキュメントは手順のみを扱う。
+本ドキュメントは手順のみを扱う。
 
 ## 前提
 
@@ -29,7 +28,7 @@ Runner)を想定しており、単発の`review`実行や`watch`常駐も同じ�
 docker compose build
 ```
 
-`Dockerfile`は以下を行う(詳細は[ADR-0020](../adr/0020-docker-runtime.md)参照):
+`Dockerfile`は以下を行う(詳細はADR-0020参照):
 
 - ベースイメージ`python:3.11-slim`([ADR-0001](../adr/0001-repository-structure.md)の
   Python 3.11以上に一致)
@@ -37,7 +36,7 @@ docker compose build
 - `pip install .`でこのリポジトリの実行時依存(`requests`・`mcp`)をインストール
 - 非rootユーザー(`runner`)で実行する設定
 
-`docker compose build`が失敗せず完了すれば、[ADR-0020](../adr/0020-docker-runtime.md)が
+`docker compose build`が失敗せず完了すれば、ADR-0020が
 定める「イメージのビルド確認」は完了。**この手順ではBedrock/GitLabへの実接続は行わない。**
 
 ## 2. シークレットの準備(`.env`)
@@ -65,7 +64,7 @@ ANTHROPIC_DEFAULT_SONNET_MODEL=<固定したいモデルのバージョン付き
 
 **シークレットはイメージに焼き込まない。** `.env`は`docker-compose.yml`の`env_file`経由で
 コンテナ起動時にのみ環境変数として渡され、`Dockerfile`側では一切参照しない
-([ADR-0020](../adr/0020-docker-runtime.md)「却下した選択肢」)。
+(ADR-0020「却下した選択肢」)。
 
 AWS SSO等、静的キーではなくプロファイル(`AWS_PROFILE`)を使いたい場合は、`.env`に
 `AWS_PROFILE=<プロファイル名>`を設定した上で、`docker-compose.yml`の
@@ -81,7 +80,7 @@ cp config.example.toml config.toml
 ```
 
 Docker環境では、bare clone・worktree・実行ログ・レビュー結果・State/Job DBを
-すべて`/data`配下の1つのボリュームへ永続化する設計のため([ADR-0020](../adr/0020-docker-runtime.md)
+すべて`/data`配下の1つのボリュームへ永続化する設計のため(ADR-0020
 「Workspace用ボリューム」)、以下のセクションを`/data`配下を指すよう上書きする
 (既定値のままだと`/app`相対のパスになり、コンテナを再作成するたびに消える):
 
@@ -157,8 +156,6 @@ docker compose down --volumes
 
 ## 関連ドキュメント
 
-- [ADR-0020: Linux/Docker実行環境の構築](../adr/0020-docker-runtime.md) — 本手順の設計判断
-  (ベースイメージ・認証情報の受け渡し・ボリューム設計)
 - [docs/adr/0001-repository-structure.md](../adr/0001-repository-structure.md) — Python版数の制約
 - [docs/architecture.md](../architecture.md)「Windows/Linuxの分担」節
 - [operations/setup-windows.md](setup-windows.md) — Windows版のセットアップ手順(対になる文書)

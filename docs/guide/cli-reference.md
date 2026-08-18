@@ -51,7 +51,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 このCLI自身はオーケストレーション(Job間の遷移)を行わない。`review`はMR Pollerによる
 複数MR横断の走査をせず、`project`/`mr_iid`は呼び出し時に人間が指定する。`watch`は失敗した
 レビューの自動リトライ・監視・プロセス再起動をしない
-([ADR-0009](../adr/0009-cli-watch-design.md)。M3以降のLinux/Docker移行後のスコープ)。
+(ADR-0009。M3以降のLinux/Docker移行後のスコープ)。
 いずれのサブコマンドもGitLabへの自動コメント投稿はしない(何をしないかの詳細は
 [getting-started.md](getting-started.md)「何をしないか」参照)。
 
@@ -177,8 +177,6 @@ graceful shutdownする(終了コード`0`)。
 ## 関連ドキュメント
 
 - [specs/cli.md](../specs/cli.md) — このCLIの仕様(処理の流れ・Python API・テスト方針を含む一次情報)
-- [ADR-0008: CLI 単発レビュー実行の設計](../adr/0008-cli-single-run-design.md)
-- [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md)
 - [getting-started.md](getting-started.md) — 何ができるツールか・最初の一歩
 - [reading-results.md](reading-results.md) — レビュー結果の読み方
 - [operations/configuration.md](../operations/configuration.md) — `config.toml`/`.env`の全項目リファレンス

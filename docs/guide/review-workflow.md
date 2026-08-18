@@ -65,7 +65,7 @@ gitlab-ai-platform watch
   同時に2つ起動しない
 - 1件のMRのレビューが失敗しても(GitLab Adapter/Workspace/Runner/Review/State Storeいずれかの
   エラー)、ログに記録して次のMR・次のサイクルへ処理を続ける。想定外の例外(バグ)だけは
-  プロセスごと落ちる([ADR-0009](../adr/0009-cli-watch-design.md)参照)
+  プロセスごと落ちる(ADR-0009参照)
 - `review`サブコマンドと違い、`watch`はMRごとの結果サマリを標準出力に表示しない。実行状況を
   追うには`--log-dir`で構造化ログを出力するか(下記)、`reviews/index.jsonl`を見る
   ([reading-results.md](reading-results.md)参照)

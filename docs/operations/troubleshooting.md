@@ -60,7 +60,7 @@
 2. 社内GitLabの `User Settings > Access Tokens` で新しいPATを発行する
    ([setup-windows.md §2](setup-windows.md#2-gitlab-personal-access-tokenpatの発行))。
    `review`/`watch`/`worker`サブコマンドは自動実行系用アカウント(`api`スコープ・Developer
-   ロール、[ADR-0037](../adr/0037-automated-token-scope-upgrade.md))を使う経路のため、
+   ロール、ADR-0037)を使う経路のため、
    通常は同じ用途・スコープで再発行する
 3. `.env`の`GITLAB_AI_PLATFORM_GITLAB_TOKEN`を新しい値に更新する
    ([configuration.md](configuration.md)「シークレット」節)。OS環境変数で上書きしている
@@ -189,7 +189,7 @@
 (ロックファイル: <path>)`。`watch`サブコマンド専用。
 
 **原因**([`cli/lock.py`](../../src/gitlab_ai_platform/cli/lock.py)、
-[ADR-0009](../adr/0009-cli-watch-design.md)):
+ADR-0009):
 
 - 同一`state_db_path`(`config.toml`の`store.db_path`)に対して2つ目の`watch`プロセスを
   起動しようとした。ロックファイルは`<db名>.lock`として`state_db_path`と同じディレクトリに
@@ -207,7 +207,7 @@
 3. **ロックはファイルディスクリプタに紐づくOSレベルの機構のため、プロセスが異常終了すれば
    OSがプロセス終了時に自動的に解放する。** そのため通常、「PIDのプロセスは存在しないのに
    ロックが取得できない」という状態は起きない設計になっている
-   ([ADR-0009](../adr/0009-cli-watch-design.md)「却下した選択肢」PIDファイル方式との比較)。
+   (ADR-0009「却下した選択肢」PIDファイル方式との比較)。
    この状態が実際に起きた場合(ネットワークドライブ等、advisory lockの解放保証が
    OSやファイルシステムによって弱いケース)は、プロセスが本当に存在しないことを
    慎重に確認した上でロックファイル自体を削除する
@@ -233,7 +233,5 @@
 - [operations/configuration.md](configuration.md) — `config.toml`/`.env`の全項目リファレンス
 - [operations/setup-windows.md](setup-windows.md) — PAT発行手順・Claude Code/Bedrock導入手順
 - [guide/faq.md](../guide/faq.md) — 短い疑問への即答集
-- [ADR-0008: CLI 単発レビュー実行の設計](../adr/0008-cli-single-run-design.md)
-- [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md)
 - ソースコード: `src/gitlab_ai_platform/cli/exit_codes.py`、各コンポーネントの`errors.py`
   (`gitlab_adapter/`・`workspace/`・`runner/`・`review/`・`store/`)

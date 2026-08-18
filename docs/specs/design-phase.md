@@ -4,10 +4,10 @@
   `WAITING_HUMAN`後の再開は`cli/respond.py`)
 - 対応Issue: [#112](https://github.com/AtsushiNi/gitlab-ai-platform/issues/112) (M4-6)
 - 関連ADR: [ADR-0026](../adr/0026-job-waiting-human-transition.md)(`WAITING_HUMAN`遷移の設計)、
-  [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)(要求分析フェーズがworktreeを
+  ADR-0027(要求分析フェーズがworktreeを
   使わない設計、設計フェーズも同じ方針を踏襲)、
-  [ADR-0028](../adr/0028-waiting-human-answer-integration.md)(`WAITING_HUMAN`後の回答取り込み)、
-  [ADR-0029](../adr/0029-design-phase.md)(設計フェーズの出力先・Runner実行方式)
+  ADR-0028(`WAITING_HUMAN`後の回答取り込み)、
+  ADR-0029(設計フェーズの出力先・Runner実行方式)
 - ステータス: 実装済み
 
 ## 責務
@@ -236,9 +236,6 @@ result(`build_design_job_result`が組み立てる。`complete`・`wait_for_huma
 
 - [architecture.md](../architecture.md) 「Orchestrator」の行(M4-1〜M4-6, M4-9〜M4-10)
 - [ADR-0026: Job Queue経由での`WAITING_HUMAN`遷移の設計](../adr/0026-job-waiting-human-transition.md)
-- [ADR-0027: 要求分析フェーズのRunner実行方式](../adr/0027-issue-analysis-runner-execution.md)
-- [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md)
-- [ADR-0029: 設計フェーズの出力先とRunner実行方式の設計](../adr/0029-design-phase.md)
 - [specs/issue-analysis.md](issue-analysis.md) — 要求分析フェーズ(M4-3)の仕様。
   `payload.requirements`等の転記元、同じ設計パターンの先行実装
 - [specs/claude-code-runner.md](claude-code-runner.md) — `IssueContext`/`build_issue_prompt`

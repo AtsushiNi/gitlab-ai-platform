@@ -2,7 +2,7 @@
 
 - 実装場所: `src/gitlab_ai_platform/api/`
 - 対応Issue: [#97](https://github.com/AtsushiNi/gitlab-ai-platform/issues/97) (M3-7)
-- 関連ADR: [ADR-0023](../adr/0023-http-api.md)
+- 関連ADR: ADR-0023
 - ステータス: 実装済み
 
 ## 責務
@@ -28,7 +28,7 @@
   - `claim`/`heartbeat`/`complete`/`fail`(Runner Dispatcher専用の操作、
     [ADR-0017](../adr/0017-job-queue.md))は公開しない
   - Webhookサーバー(`webhook/`、M3-6)とは別プロセス・別ポートで動く。同じプロセス内での
-    共存はしない([ADR-0023](../adr/0023-http-api.md)「決定」)
+    共存はしない(ADR-0023「決定」)
   - `GET /jobs`(全件一覧、`status`省略)は提供しない。`status`クエリパラメータは必須
   - ページネーション・レート制限・JWT等の高度な認可機構は持たない(静的トークンの
     定数時間比較のみ)
@@ -224,12 +224,11 @@ ISO 8601文字列、`JobType`/`JobStatus`は`.value`)。
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「MVP → AI Platformへの成長パス」のJob抽象・状態機械の行
-- [ADR-0023: 最小限の HTTP API / サーバ層の設計](../adr/0023-http-api.md)
 - [job-model.md](job-model.md) — このAPIが呼び出す`JobRepository`(`enqueue`/`get`/
   `list_by_status`/`list_dead_letters`)の仕様
 - [cli.md](cli.md) — `api`サブコマンドのCLI引数・終了コード
 - [webhook-receiver.md](webhook-receiver.md) — 同じ`http.server`ベースの実装パターンの前例。
-  Webhookサーバーとの共存を見送った判断は[ADR-0023](../adr/0023-http-api.md)参照
+  Webhookサーバーとの共存を見送った判断はADR-0023参照
 - [operations/configuration.md](../operations/configuration.md) — `[api]`セクションと
   `GITLAB_AI_PLATFORM_API_TOKEN`の設定方法
 - ソースコード: `src/gitlab_ai_platform/api/`(`server.py` / `errors.py` / `__init__.py`)、

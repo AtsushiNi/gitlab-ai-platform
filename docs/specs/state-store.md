@@ -4,9 +4,9 @@
 - 対応Issue: [#32](https://github.com/AtsushiNi/gitlab-ai-platform/issues/32) (M1-4、スキーマ設計・SQLite実装)、
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、並行アクセスの安全性)、
   [#95](https://github.com/AtsushiNi/gitlab-ai-platform/issues/95) (M3-5、PostgreSQL対応)
-- 関連ADR: [ADR-0003](../adr/0003-state-store-interface.md)、
-  [ADR-0015](../adr/0015-parallel-review-execution.md)、
-  [ADR-0021](../adr/0021-state-store-postgresql.md)
+- 関連ADR: ADR-0003、
+  ADR-0015、
+  ADR-0021
 - ステータス: 実装済み(Protocol定義 + SQLite実装 + PostgreSQL実装)
 
 ## 責務
@@ -28,12 +28,12 @@
   - M2-1(#80)以降、`SqliteStateStore`の同一インスタンスは複数のワーカースレッドから同時に
     呼ばれる(`ReviewWorkerPool`、`docs/specs/cli.md`)。`find`/`create`/`update_status`/`close`は
     すべて内部で`threading.RLock`により直列化されており、呼び出し側は追加の排他制御なしに
-    同一インスタンスを複数スレッドで共有できる([ADR-0015](../adr/0015-parallel-review-execution.md)参照)
+    同一インスタンスを複数スレッドで共有できる(ADR-0015参照)
 - 非対象:
   - ビジネスロジック(レビューするか否かの判断、`レビュー待ち`ラベルの走査等)は持たない。
     それらはMR Poller(M1-5)の責務
   - Job状態機械(M3-1、`PENDING`/`RUNNING`/`WAITING_HUMAN`/`DONE`/`FAILED`)そのものではない。
-    MVPのレビュー1回分の状態のみを扱う([ADR-0003](../adr/0003-state-store-interface.md)参照)
+    MVPのレビュー1回分の状態のみを扱う(ADR-0003参照)
   - `run_watch`(`cli/watch.py`)の多重起動防止(`ProcessLock`)は引き続き`state_db_path`を
     ロックファイルパスの元にする。`store.backend = "postgresql"`の場合でも`state_db_path`
     (既定値のまま使われる)を元にロックファイルが作られるため、複数のPostgreSQL接続先を
@@ -90,7 +90,7 @@ class StateStore(Protocol):
 SQLite実装: `src/gitlab_ai_platform/store/sqlite.py`の`SqliteStateStore`。
 `SqliteStateStore(db_path: Path | str = ":memory:")`でDBファイルパス(またはインメモリ)を指定して構築する。
 
-PostgreSQL実装(M3-5、[ADR-0021](../adr/0021-state-store-postgresql.md)):
+PostgreSQL実装(M3-5、ADR-0021):
 `src/gitlab_ai_platform/store/postgres.py`の`PostgresStateStore`。
 `PostgresStateStore(*, host, port, dbname, user, password="")`で構築する。ドライバは
 `psycopg`(psycopg3)の`binary`extra(`pip install ".[postgres]"`)を使う。
@@ -112,7 +112,7 @@ importは関数内に留めており、`store_backend = "sqlite"`(既定)の場�
 | `ReviewRecord` (frozen dataclass) | `project: str`, `mr_iid: int`, `commit_sha: str`, `status: ReviewStatus`, `reviewed_at: datetime \| None = None`, `result_path: str \| None = None` | `(project, mr_iid, commit_sha)`が一意キー |
 
 スキーマ(`review_records`テーブル、複合PRIMARY KEY)。SQLite/PostgreSQL両実装で
-**同一のDDL**を使う([ADR-0021](../adr/0021-state-store-postgresql.md)で確認済み。
+**同一のDDL**を使う(ADR-0021で確認済み。
 プレースホルダ構文(`?` vs `%s`)以外の方言差は無かった):
 
 ```sql
@@ -128,9 +128,9 @@ CREATE TABLE review_records (
 ```
 
 `reviewed_at`はDBにISO 8601文字列で保存し、呼び出し側には`datetime`として返す
-([ADR-0003](../adr/0003-state-store-interface.md))。PostgreSQL実装でも`TIMESTAMPTZ`型は
+(ADR-0003)。PostgreSQL実装でも`TIMESTAMPTZ`型は
 使わず同じくTEXTのまま保存する(両実装の入出力契約を完全に揃えるため、
-[ADR-0021](../adr/0021-state-store-postgresql.md)「却下した選択肢」)。
+ADR-0021「却下した選択肢」)。
 
 ## エラー時の振る舞い
 
@@ -148,7 +148,7 @@ CREATE TABLE review_records (
 `DuplicateReviewError`への変換元は実装ごとに異なる: SQLite実装は`sqlite3.IntegrityError`
 (かつメッセージに`UNIQUE constraint failed`を含む場合のみ)、PostgreSQL実装は
 `psycopg.errors.UniqueViolation`(制約違反の種別を専用の例外クラスで表現するため、
-メッセージ判定は不要)([ADR-0021](../adr/0021-state-store-postgresql.md))。
+メッセージ判定は不要)(ADR-0021)。
 
 ## テスト方針
 
@@ -176,7 +176,7 @@ CREATE TABLE review_records (
   契約テスト。`test_sqlite.py`と同等のシナリオを踏襲する。`psycopg`が未インストール、または
   接続先(環境変数`GITLAB_AI_PLATFORM_TEST_POSTGRES_*`、既定は`localhost:5432`)に接続できない
   場合は`pytest.skip`する。CI(PostgreSQLサービスコンテナ無し)では常にスキップされ、`pytest`
-  全体の成功/失敗には影響しない([ADR-0021](../adr/0021-state-store-postgresql.md)「テスト方針」)
+  全体の成功/失敗には影響しない(ADR-0021「テスト方針」)
 - `test_factory.py`(M3-5): `build_state_store`が`config.store_backend`に応じて
   `SqliteStateStore`/`PostgresStateStore`のどちらを構築するかを検証する。
   `postgresql`のケースは`PostgresStateStore`をフェイクに差し替え、実接続なしで
@@ -185,11 +185,6 @@ CREATE TABLE review_records (
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のState Store行
-- [ADR-0003: State Store のインターフェースとスキーマ設計](../adr/0003-state-store-interface.md)
-- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
-  `threading.RLock`による直列化の設計判断
-- [ADR-0021: State Store の PostgreSQL 対応](../adr/0021-state-store-postgresql.md) —
-  ドライバ選定・スキーマ移植性・接続設定・バックエンド切り替えの設計判断
 - [operations/configuration.md](../operations/configuration.md) `[store]`/`[store.postgres]`節 —
   `store.backend`等の設定項目一覧
 - ソースコード: `src/gitlab_ai_platform/store/`

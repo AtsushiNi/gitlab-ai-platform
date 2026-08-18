@@ -6,8 +6,8 @@
   [#111](https://github.com/AtsushiNi/gitlab-ai-platform/issues/111) (M4-5、`WAITING_HUMAN`後の
   再開)
 - 関連ADR: [ADR-0026](../adr/0026-job-waiting-human-transition.md)(`WAITING_HUMAN`遷移の設計)、
-  [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)(Runner実行方式・worktreeを
-  使わない設計)、[ADR-0028](../adr/0028-waiting-human-answer-integration.md)(`WAITING_HUMAN`後の
+  ADR-0027(Runner実行方式・worktreeを
+  使わない設計)、ADR-0028(`WAITING_HUMAN`後の
   回答取り込み・Job完了の設計)
 - ステータス: 実装済み(`WAITING_HUMAN`後の再開含む)
 
@@ -152,7 +152,7 @@ result(`build_issue_analysis_job_result`が組み立てる。`complete`・`wait_
 ## `WAITING_HUMAN`後の再開(M4-5)
 
 実装場所: `src/gitlab_ai_platform/cli/respond.py`(`respond`サブコマンド)。詳細な設計判断は
-[ADR-0028](../adr/0028-waiting-human-answer-integration.md)、コマンドラインの入出力は
+ADR-0028、コマンドラインの入出力は
 [specs/cli.md](cli.md)の`respond`サブコマンドの節を参照。ここでは`issue-analysis`のresult構造に
 関わる部分のみを扱う。
 
@@ -239,8 +239,6 @@ error=...)`を呼んでから元の例外を再送出し、`RUNNING`のまま孤
 
 - [architecture.md](../architecture.md) 「Orchestrator」の行(M4-1〜M4-6, M4-9〜M4-10)
 - [ADR-0026: Job Queue経由での`WAITING_HUMAN`遷移の設計](../adr/0026-job-waiting-human-transition.md)
-- [ADR-0027: 要求分析フェーズのRunner実行方式](../adr/0027-issue-analysis-runner-execution.md)
-- [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md)
 - [specs/issue-poller.md](issue-poller.md) — payloadの組み立て・分解元(M4-1)
 - [specs/claude-code-runner.md](claude-code-runner.md) — `IssueContext`/`build_issue_prompt`
   (M4-2)、`run_prompt`(M4-3、ADR-0027)
