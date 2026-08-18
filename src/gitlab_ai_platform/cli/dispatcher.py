@@ -37,6 +37,13 @@
   JobHandler(git diff計算とGitLab Adapter呼び出しのみの機械的な処理)だが、`JobHandler`の
   契約(`Callable[[Job], dict[str, Any] | None]`)自体は変更していないため、
   `RunnerDispatcher`は無改修で扱える。
+- M4-10([#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116)、ADR-0035)で、
+  `_process`が`complete`成功後に呼ぶ任意のフック`on_job_completed`を`RunnerDispatcher`に
+  追加した。`run_dispatcher`(合成ルート)が`orchestrator.pipeline.advance_pipeline`を束縛した
+  コールバックを渡すことで「issue-analysis完了→design投入」等のフェーズ連鎖を実現するが、
+  `RunnerDispatcher`自身はこのコールバックの中身(フェーズ順序)を一切知らない
+  (ADR-0022の設計原則を維持)。フックの例外は`_process`内で握りつぶし(ログのみ)、
+  既に成功した`complete`をこの後の失敗で巻き戻さない。
 """
 
 from __future__ import annotations
@@ -84,6 +91,7 @@ from ..job.protocol import (
 )
 from ..logging_ import execution_id_scope, get_logger
 from ..orchestrator import judge_uncertainties, requires_human
+from ..orchestrator.pipeline import advance_pipeline_hook
 from ..plan import (
     build_plan_instructions,
     build_plan_job_result,
@@ -563,7 +571,8 @@ class RunnerDispatcher:
     """`JobRepository.claim`でJobを取り出し、対応する`JobHandler`で処理するループ本体。
 
     `job_repo`/`handlers`ともにProtocol型・関数のマッピングのみに依存し、`review`固有の
-    ロジックを知らない(ADR-0022)。
+    ロジックを知らない(ADR-0022)。`on_job_completed`(M4-10, ADR-0035)も同じ理由で
+    ただの`Callable[[Job], None]`として受け取るだけで、フェーズ連鎖のルール自体は知らない。
     """
 
     def __init__(
@@ -576,6 +585,7 @@ class RunnerDispatcher:
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
         visibility_timeout_seconds: int = DEFAULT_VISIBILITY_TIMEOUT_SECONDS,
+        on_job_completed: Callable[[Job], None] | None = None,
     ) -> None:
         self._job_repo = job_repo
         self._handlers = dict(handlers)
@@ -588,6 +598,10 @@ class RunnerDispatcher:
         self._poll_interval_seconds = poll_interval_seconds
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._visibility_timeout_seconds = visibility_timeout_seconds
+        # Jobが`complete`された直後に呼ぶ任意のフック(M4-10, ADR-0035)。`run_dispatcher`が
+        # `orchestrator.pipeline.advance_pipeline`を束縛して渡す想定だが、本クラスはその中身を
+        # 知らない(単に`Job`を受け取るcallableとしてのみ扱う)
+        self._on_job_completed = on_job_completed
 
     def run_once(self) -> bool:
         """1件Jobをclaimして処理する。claimできるJobが無ければ`False`を返す。"""
@@ -660,11 +674,28 @@ class RunnerDispatcher:
                 },
             )
         else:
-            self._job_repo.complete(job.id, self._worker_id, result=result)
+            completed_job = self._job_repo.complete(
+                job.id, self._worker_id, result=result
+            )
             _logger.info(
                 "dispatcher.job_completed",
                 extra={"job_id": job.id, "job_type": job.job_type.value},
             )
+            if self._on_job_completed is not None:
+                # フェーズ連鎖(M4-10)の失敗は、既に成功した今回のJobの完了を巻き戻す
+                # 理由にはならない。ログのみに留め、他Jobの処理を止めない(ADR-0022の方針を
+                # `on_job_completed`にも適用)
+                try:
+                    self._on_job_completed(completed_job)
+                except Exception as exc:  # noqa: BLE001 - フック失敗でdispatcherを止めない
+                    _logger.error(
+                        "dispatcher.on_job_completed_failed",
+                        extra={
+                            "job_id": job.id,
+                            "job_type": job.job_type.value,
+                            "error": str(exc),
+                        },
+                    )
         finally:
             heartbeat_stop.set()
             heartbeat_thread.join()
@@ -733,6 +764,9 @@ def run_dispatcher(
             poll_interval_seconds=poll_interval_seconds,
             heartbeat_interval_seconds=heartbeat_interval_seconds,
             visibility_timeout_seconds=visibility_timeout_seconds,
+            # issue-analysis→design→plan→implement→pushの連鎖(M4-10, ADR-0035)。
+            # `job_repo`を束縛するだけで、`RunnerDispatcher`自体にはフェーズ順序を渡さない
+            on_job_completed=advance_pipeline_hook(job_repo),
         )
         if run_once:
             dispatcher.run_once()

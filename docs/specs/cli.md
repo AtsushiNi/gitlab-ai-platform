@@ -558,11 +558,14 @@ def respond_to_job(
     *,
     ask: Callable[[str], str] = input,
     output: Callable[[str], None] = print,
+    # `DONE`遷移成功直後に呼ぶ任意のフック(M4-10, ADR-0035)。フェーズ連鎖の失敗は
+    # 既に成功したこのJobの完了確定を巻き戻す理由にはならないため、例外はログのみに変換する
+    on_job_completed: Callable[[Job], None] | None = None,
 ) -> Job:
     """`WAITING_HUMAN`のJobに回答を取り込み、`RUNNING`を経て`DONE`へ遷移させる。
     質問提示・回答収集(`collect_answers`)はJobの状態を一切変更しない。`RUNNING`遷移後に
     例外(`KeyboardInterrupt`含む)が発生した場合は`FAILED`へ更新してから元の例外を
-    再送出する(ADR-0028)。"""
+    再送出する(ADR-0028)。`on_job_completed`は`DONE`遷移が成功した場合にのみ呼ぶ。"""
 
 
 def run_respond(
@@ -574,10 +577,13 @@ def run_respond(
 ) -> Job | None:
     """合成ルート。`config`から`SqliteJobRepository`を組み立てる。`job_id`省略時は
     `list_waiting_human_jobs`のみを呼び`None`を返す(状態変更なし)。指定時は対象Jobを取得し、
-    `WAITING_HUMAN`状態かつ対応済み種別(`_RESULT_RESOLVERS`に登録済みのJobType。M4-7時点で
-    `issue-analysis`/`design`/`plan`)であることを確認してから`respond_to_job`に委譲する。対象が
-    存在しない場合は`JobNotFoundError`、条件を満たさない場合は`InvalidJobTransitionError`を
-    送出する(いずれも`job.errors.JobError`のサブクラス)。"""
+    `WAITING_HUMAN`状態かつ対応済み種別(`_RESULT_RESOLVERS`に登録済みのJobType。M4-8時点で
+    `issue-analysis`/`design`/`plan`/`implement`)であることを確認してから`respond_to_job`に
+    委譲する。対象が存在しない場合は`JobNotFoundError`、条件を満たさない場合は
+    `InvalidJobTransitionError`を送出する(いずれも`job.errors.JobError`のサブクラス)。
+    `respond_to_job`の`on_job_completed`に`orchestrator.pipeline.advance_pipeline_hook(job_repo)`
+    を束縛して渡し、`RunnerDispatcher`(`worker`)と同じフェーズ連鎖(M4-10, ADR-0035)を
+    `respond`経由でも実現する。"""
 ```
 
 ## 入出力スキーマ
@@ -733,8 +739,8 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
    結果をターミナルに表示して終了する(状態変更なし)
 2. `job_id`指定時: `job_repo.get(job_id)`で対象Jobを取得する。存在しなければ
    `JobNotFoundError`、`WAITING_HUMAN`状態でなければ`InvalidJobTransitionError`、
-   `_RESULT_RESOLVERS`に未登録の`job_type`(M4-6時点では`implement`)であれば同じく
-   `InvalidJobTransitionError`を送出する
+   `_RESULT_RESOLVERS`に未登録の`job_type`(`review`/`push`は`WAITING_HUMAN`を使わないため
+   対象外)であれば同じく`InvalidJobTransitionError`を送出する
 3. `job.result["questions"]`を1件ずつ提示し、`input()`(既定)で回答を集める
    (`collect_answers`)。この間はJob Repositoryの状態を一切変更しない
 4. 回答が揃ってから`update_status(job_id, RUNNING)`を呼ぶ(`WAITING_HUMAN → RUNNING`)
@@ -743,6 +749,10 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
    `design.build_resolved_design_job_result`)で、`questions`と回答を統合した新しい`result`を
    組み立てる
 6. `update_status(job_id, DONE, result=統合後のresult)`でJobを完了させる
+6.5. `on_job_completed`(M4-10, ADR-0035)が渡されていれば、手順6で得た`DONE`のJobを渡して
+   呼ぶ。`run_respond`は`orchestrator.pipeline.advance_pipeline_hook(job_repo)`を渡すため、
+   実運用では次フェーズのJobがここで投入される。このフックの例外はログにのみ変換し、
+   手順6で確定した`DONE`を巻き戻さない
 7. 手順4〜6のいずれかで例外(`KeyboardInterrupt`含む)が発生した場合は
    `update_status(job_id, FAILED, error=...)`を呼んでから元の例外を再送出する。手順3で
    中断された場合はJobが`WAITING_HUMAN`のまま変化しないため、`respond`をそのまま
@@ -897,11 +907,16 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   失敗(`update_status(DONE)`だけを失敗させる手書きフェイク`JobRepository`で再現)では
   `FAILED`へ更新されてから元の例外が再送出されることを検証する。`run_respond`(合成ルート)は
   `job_id`省略時に一覧表示のみで状態変更しないこと、存在しない`job_id`で`JobNotFoundError`、
-  `WAITING_HUMAN`以外の状態や`_RESULT_RESOLVERS`未登録の`job_type`(`review`/`implement`)を
+  `WAITING_HUMAN`以外の状態や`_RESULT_RESOLVERS`未登録の`job_type`(`review`/`push`)を
   指定すると`InvalidJobTransitionError`を送出すること、正常系で`DONE`のJobを返すことを検証する
   (`unittest.mock`は使わず手書きフェイク、CLAUDE.mdのテスト方針)。M4-6(ADR-0029)で追加した
   `design`種別Jobについても、`issue-analysis`と同様に`WAITING_HUMAN → RUNNING → DONE`と正しく
   遷移し`design.build_resolved_design_job_result`で統合された`result`が永続化されることを
+  検証する。`on_job_completed`(M4-10, ADR-0035)は`DONE`遷移成功後にのみ呼ばれること
+  (`KeyboardInterrupt`で中断された場合は呼ばれないこと)、フック自体が例外を送出しても
+  `respond_to_job`の戻り値・DBの永続化状態(`DONE`のまま)に影響しないことを検証する。
+  `run_respond`は実際に`advance_pipeline_hook`が配線されていることを、モンキーパッチなしで
+  (`issue-analysis`完了後に`design`種別のPENDING Jobが実際に`enqueue`されることを確認する形で)
   検証する
 - `test_decompose.py`: 実`claude`・実MCPサーバーには繋がない(CLAUDE.mdのテスト方針)。
   `build_mcp_config`が`--config`/`--env`パスを`adapter_mcp_server`起動コマンドへ引き継ぎ、
@@ -932,6 +947,9 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
   `respond`サブコマンドの設計判断
 - [ADR-0029: 設計フェーズの出力先とRunner実行方式の設計](../adr/0029-design-phase.md) —
   `respond`の`design`種別Jobへの対応拡張
+- [ADR-0035: Issue→MRパイプラインのオーケストレーション](../adr/0035-pipeline-orchestration.md) —
+  `worker`(`RunnerDispatcher`)・`respond`(`respond_to_job`)双方の`on_job_completed`フックが
+  `orchestrator.pipeline.advance_pipeline_hook`を経てフェーズ連鎖を実現する設計(M4-10)
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信
   サーバー(M3-6)の仕様

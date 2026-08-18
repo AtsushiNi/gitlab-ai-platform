@@ -227,6 +227,85 @@ def test_respond_to_job_transitions_waiting_human_to_done_with_merged_result(
         repo.close()
 
 
+def test_respond_to_job_calls_on_job_completed_with_the_done_job(tmp_path):
+    # M4-10, ADR-0035: DONE遷移成功後にon_job_completedへ更新後のJobを渡す
+    job_db_path = str(tmp_path / "job.db")
+    job = _make_waiting_human_job(job_db_path)
+
+    repo = SqliteJobRepository(job_db_path)
+    answers = iter(["回答1", "回答2"])
+    completed_jobs: list[Job] = []
+    try:
+        done_job = respond_to_job(
+            repo,
+            job,
+            ask=lambda _: next(answers),
+            output=lambda _: None,
+            on_job_completed=completed_jobs.append,
+        )
+
+        assert len(completed_jobs) == 1
+        assert completed_jobs[0].id == done_job.id
+        assert completed_jobs[0].status == JobStatus.DONE
+    finally:
+        repo.close()
+
+
+def test_respond_to_job_does_not_call_on_job_completed_when_interrupted(tmp_path):
+    # RUNNING遷移後に中断された場合(FAILEDへ倒す経路)はon_job_completedを呼ばない
+    job_db_path = str(tmp_path / "job.db")
+    job = _make_waiting_human_job(job_db_path)
+
+    repo = SqliteJobRepository(job_db_path)
+    completed_jobs: list[Job] = []
+
+    def _ask(_: str) -> str:
+        raise KeyboardInterrupt
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            respond_to_job(
+                repo,
+                job,
+                ask=_ask,
+                output=lambda _: None,
+                on_job_completed=completed_jobs.append,
+            )
+
+        assert completed_jobs == []
+    finally:
+        repo.close()
+
+
+def test_respond_to_job_on_job_completed_exception_does_not_fail_the_response(
+    tmp_path,
+):
+    # フェーズ連鎖(M4-10)の失敗は、既に成功したこのJobのDONE確定を巻き戻す理由にはならない
+    job_db_path = str(tmp_path / "job.db")
+    job = _make_waiting_human_job(job_db_path)
+
+    repo = SqliteJobRepository(job_db_path)
+    answers = iter(["回答1", "回答2"])
+
+    def _failing_hook(completed_job: Job) -> None:
+        raise RuntimeError("advance_pipeline boom")
+
+    try:
+        done_job = respond_to_job(
+            repo,
+            job,
+            ask=lambda _: next(answers),
+            output=lambda _: None,
+            on_job_completed=_failing_hook,
+        )
+
+        assert done_job.status == JobStatus.DONE
+        # DBにもDONEとして永続化されたまま(フックの失敗で巻き戻らない)
+        assert repo.get(job.id).status == JobStatus.DONE
+    finally:
+        repo.close()
+
+
 def test_respond_to_job_interrupted_during_answer_collection_leaves_job_untouched(
     tmp_path,
 ):
@@ -349,6 +428,33 @@ def test_run_respond_with_valid_job_id_completes_the_job(tmp_path):
     assert done_job is not None
     assert done_job.status == JobStatus.DONE
     assert done_job.result["resolved_questions"][0]["answer"] == "回答1"
+
+
+def test_run_respond_advances_pipeline_to_design_after_issue_analysis_done(tmp_path):
+    # M4-10, ADR-0035: run_respond(合成ルート)がadvance_pipelineを実際に配線していることを
+    # 検証する。enqueueはDB書き込みのみで外部サービス(GitLab/Claude Code)には繋がらないため、
+    # モンキーパッチなしで実際の連鎖を確認できる
+    config = _config(tmp_path)
+    job = _make_waiting_human_job(config.job_db_path)  # 既定はissue-analysis種別
+    answers = iter(["回答1", "回答2"])
+
+    done_job = run_respond(
+        config, job_id=job.id, ask=lambda _: next(answers), output=lambda _: None
+    )
+    assert done_job is not None
+    assert done_job.status == JobStatus.DONE
+
+    repo = SqliteJobRepository(config.job_db_path)
+    try:
+        pending_jobs = repo.list_by_status(JobStatus.PENDING)
+        assert len(pending_jobs) == 1
+        next_job = pending_jobs[0]
+        assert next_job.job_type == JobType.DESIGN
+        assert next_job.payload["project"] == _PROJECT
+        assert next_job.payload["issue_iid"] == _ISSUE_IID
+        assert next_job.payload["requirements"] == ["要求1"]
+    finally:
+        repo.close()
 
 
 # --- design種別Job(M4-6, ADR-0029)---

@@ -23,6 +23,13 @@ M4-6([#112](https://github.com/AtsushiNi/gitlab-ai-platform/issues/112)、ADR-00
 ADR-0033)で`implement`種別Jobも追加し、ADR-0028が「今後の課題」としていたJobType予約4種
 すべてが揃った。`_RESULT_RESOLVERS`に含まれない種別を指定すると`InvalidJobTransitionError`を
 送出する。
+
+M4-10([#116](https://github.com/AtsushiNi/gitlab-ai-platform/issues/116)、ADR-0035)で、
+`respond_to_job`に`DONE`遷移成功後に呼ぶ任意のフック`on_job_completed`を追加した。
+`run_respond`(合成ルート)が`orchestrator.pipeline.advance_pipeline`を束縛したコールバックを
+渡すことで、`WAITING_HUMAN`を経由した場合も(`RunnerDispatcher`の`complete`経路と同様に)
+次フェーズへの連鎖が起きる。`respond_to_job`自身はこのコールバックの中身(フェーズ順序)を
+知らない。
 """
 
 from __future__ import annotations
@@ -37,6 +44,7 @@ from ..issue_analysis.job import build_resolved_issue_analysis_job_result
 from ..job import Job, JobRepository, JobStatus, JobType, SqliteJobRepository
 from ..job.errors import InvalidJobTransitionError, JobError, JobNotFoundError
 from ..logging_ import get_logger
+from ..orchestrator.pipeline import advance_pipeline_hook
 from ..plan.job import build_resolved_plan_job_result
 
 _logger = get_logger(__name__)
@@ -100,6 +108,7 @@ def respond_to_job(
     *,
     ask: Callable[[str], str] = input,
     output: Callable[[str], None] = print,
+    on_job_completed: Callable[[Job], None] | None = None,
 ) -> Job:
     """`WAITING_HUMAN`のJobに回答を取り込み、`RUNNING`を経て`DONE`へ遷移させる(ADR-0028)。
 
@@ -110,6 +119,10 @@ def respond_to_job(
     回答の統合先(`result`の組み立て方)は`job.job_type`に応じて`_RESULT_RESOLVERS`から
     選ぶ(M4-6、ADR-0029)。`run_respond`が事前に対応種別であることを確認済みの前提で呼ぶため、
     ここでの`KeyError`は呼び出し側の実装ミスとして扱う。
+
+    `on_job_completed`(M4-10, ADR-0035)は`DONE`遷移が成功した後にだけ呼ぶ。フェーズ連鎖の
+    失敗は、既に成功したこのJobの`DONE`確定を巻き戻す理由にはならないため、例外は`FAILED`
+    フォールバックの対象にはせずログのみに留める。
     """
     questions = (job.result or {}).get("questions", [])
     answers = collect_answers(questions, ask=ask, output=output)
@@ -118,7 +131,9 @@ def respond_to_job(
     job = job_repo.update_status(job.id, JobStatus.RUNNING)
     try:
         resolved_result = resolve_result(job.result or {}, answers)
-        return job_repo.update_status(job.id, JobStatus.DONE, result=resolved_result)
+        done_job = job_repo.update_status(
+            job.id, JobStatus.DONE, result=resolved_result
+        )
     except BaseException as exc:
         # KeyboardInterrupt(Ctrl+C)も含め、RUNNINGへ遷移させた後の失敗はJobを孤立させない
         # よう明示的にFAILEDへ倒す(ADR-0028「決定」)。FAILEDへの更新自体が失敗しても
@@ -131,6 +146,16 @@ def respond_to_job(
                 extra={"job_id": job.id, "error": str(update_exc)},
             )
         raise
+
+    if on_job_completed is not None:
+        try:
+            on_job_completed(done_job)
+        except Exception as exc:  # noqa: BLE001 - フック失敗で今回のDONE確定を巻き戻さない
+            _logger.error(
+                "respond.on_job_completed_failed",
+                extra={"job_id": done_job.id, "error": str(exc)},
+            )
+    return done_job
 
 
 def run_respond(
@@ -171,7 +196,15 @@ def run_respond(
                 f"respondがまだ対応していません({supported}のみ対応)"
             )
 
-        return respond_to_job(job_repo, job, ask=ask, output=output)
+        return respond_to_job(
+            job_repo,
+            job,
+            ask=ask,
+            output=output,
+            # issue-analysis→design→plan→implement→pushの連鎖(M4-10, ADR-0035)。
+            # `job_repo`を束縛するだけで、`respond_to_job`自体にはフェーズ順序を渡さない
+            on_job_completed=advance_pipeline_hook(job_repo),
+        )
     finally:
         job_repo.close()
 
