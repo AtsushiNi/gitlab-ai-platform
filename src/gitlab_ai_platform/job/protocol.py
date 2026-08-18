@@ -12,6 +12,11 @@
   Jobレコードは永続化されるため、後から列挙値を追加するとDBに保存済みの過去レコードとの
   互換性を考える必要が出るため。M3-1時点で実際にRunnerが処理できるのは`review`のみで、
   他の値は将来(M4)の予約
+- M4-7([#113](https://github.com/AtsushiNi/gitlab-ai-platform/issues/113)、
+  `docs/adr/0030-implementation-plan-phase.md`)で、設計フェーズの成果物を実装可能な粒度の
+  タスクへ具体化する「実装計画」フェーズ用に`PLAN = "plan"`を追加した。`job_type`列は
+  `TEXT NOT NULL`で許容値を列挙する`CHECK`制約を持たない(`sqlite.py`)ため、既存レコードとの
+  互換性を壊さずに列挙値を追加できる(ADR-0030「決定」参照)
 - `JobStatus`の遷移は`PENDING → RUNNING → (DONE | FAILED | WAITING_HUMAN)`を基本とし、
   `WAITING_HUMAN`からの復帰(`RUNNING`)・却下(`FAILED`)のみ例外的に許可する。許可される
   遷移の一覧は`sqlite.py`の`_ALLOWED_TRANSITIONS`を参照。妥当性チェックは
@@ -59,6 +64,7 @@ class JobType(str, Enum):
     REVIEW = "review"
     ISSUE_ANALYSIS = "issue-analysis"  # M4で実装
     DESIGN = "design"  # M4で実装
+    PLAN = "plan"  # M4-7で実装(ADR-0030)。設計の成果物をタスクへ具体化する
     IMPLEMENT = "implement"  # M4で実装
 
 

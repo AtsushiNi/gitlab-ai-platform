@@ -16,6 +16,7 @@ from gitlab_ai_platform.cli.dispatcher import (
     build_design_handler,
     build_issue_analysis_handler,
     build_job_handlers,
+    build_plan_handler,
     build_review_handler,
     default_worker_id,
     run_dispatcher,
@@ -30,6 +31,7 @@ from gitlab_ai_platform.gitlab_adapter.types import (
 )
 from gitlab_ai_platform.job.errors import LeaseLostError
 from gitlab_ai_platform.job.protocol import Job, JobStatus, JobType
+from gitlab_ai_platform.plan.job import build_plan_job_payload
 from gitlab_ai_platform.poller.issue_poller import build_issue_analysis_job_payload
 from gitlab_ai_platform.runner import RunResult
 from gitlab_ai_platform.store import ReviewStatus, SqliteStateStore
@@ -169,10 +171,10 @@ class _FakeClaudeCodeRunner:
         result_kind: str = "issue-analysis",
     ) -> None:
         self._tmp_path = tmp_path
-        # issue-analysis/designの結果に含める不足情報(既定は無し=WAITING_HUMANにならない)
+        # issue-analysis/design/planの結果に含める不足情報(既定は無し=WAITING_HUMANにならない)
         self._open_questions = open_questions if open_questions is not None else []
-        # run_promptが返すペイロードの形("issue-analysis"か"design")。
-        # build_design_handlerのテストでは"design"を指定する
+        # run_promptが返すペイロードの形("issue-analysis"/"design"/"plan")。
+        # build_design_handler/build_plan_handlerのテストではそれぞれ"design"/"plan"を指定する
         self._result_kind = result_kind
         self.run_calls: list[tuple[str, int]] = []
         self.run_prompt_calls: list[tuple[Path, str, str]] = []
@@ -223,6 +225,12 @@ class _FakeClaudeCodeRunner:
         if self._result_kind == "design":
             payload = {
                 "design_document": "# 責務\n設計文書の本文です。",
+                "open_questions": self._open_questions,
+            }
+        elif self._result_kind == "plan":
+            payload = {
+                "plan_document": "# 概要\n実装計画の本文です。",
+                "tasks": [{"title": "タスク1", "description": "内容1"}],
                 "open_questions": self._open_questions,
             }
         else:
@@ -348,7 +356,7 @@ def test_build_review_handler_runs_execute_review_and_returns_result_dict(tmp_pa
         store.close()
 
 
-def test_build_job_handlers_registers_review_issue_analysis_and_design_types(
+def test_build_job_handlers_registers_review_issue_analysis_design_and_plan_types(
     tmp_path,
 ):
     config = _config(tmp_path)
@@ -361,11 +369,12 @@ def test_build_job_handlers_registers_review_issue_analysis_and_design_types(
 
     try:
         handlers = build_job_handlers(adapter, workspace, runner, store, config)
-        # M4-6時点で実際にRunnerが処理できるのはreview/issue-analysis/design(ADR-0016)
+        # M4-7時点で実際にRunnerが処理できるのはreview/issue-analysis/design/plan(ADR-0016)
         assert set(handlers) == {
             JobType.REVIEW,
             JobType.ISSUE_ANALYSIS,
             JobType.DESIGN,
+            JobType.PLAN,
         }
     finally:
         store.close()
@@ -565,6 +574,110 @@ def test_build_design_handler_completes_when_only_minor_question(tmp_path):
             "question": "キャッシュ戦略は?",
             "severity": "minor",
             "assumption": "単純なTTLキャッシュを使う",
+        }
+    ]
+
+
+# --- build_plan_handler ---
+
+
+def _plan_job(**overrides) -> Job:
+    now = datetime(2026, 8, 16, 12, 0, 0, tzinfo=UTC)
+    kwargs = dict(
+        id="job-plan-1",
+        job_type=JobType.PLAN,
+        status=JobStatus.RUNNING,
+        payload=build_plan_job_payload(
+            _PROJECT,
+            _ISSUE_IID,
+            {
+                "design_document": "# 責務\n設計文書の本文です。",
+                "assumed_uncertainties": [],
+            },
+        ),
+        result=None,
+        error=None,
+        created_at=now,
+        updated_at=now,
+    )
+    kwargs.update(overrides)
+    return Job(**kwargs)
+
+
+def test_build_plan_handler_returns_result_dict_when_no_open_questions(tmp_path):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(tmp_path, open_questions=[], result_kind="plan")
+
+    handler = build_plan_handler(adapter, runner, config)
+    job = _plan_job()
+
+    result = handler(job)
+
+    assert result["project"] == _PROJECT
+    assert result["issue_iid"] == _ISSUE_IID
+    assert result["plan_document"] == "# 概要\n実装計画の本文です。"
+    assert result["tasks"] == [{"title": "タスク1", "description": "内容1"}]
+    assert result["assumed_uncertainties"] == []
+    assert result["questions"] == []
+    assert len(runner.run_prompt_calls) == 1
+    _, prompt, log_key = runner.run_prompt_calls[0]
+    assert "Add feature Y" in prompt
+    assert "設計文書の本文です。" in prompt
+    assert log_key == f"group%2Fproject/issue-{_ISSUE_IID}/plan"
+
+
+def test_build_plan_handler_raises_waiting_for_human_when_critical_question(
+    tmp_path,
+):
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {"question": "既存の移行ツールを再利用しますか?", "severity": "critical"},
+        ],
+        result_kind="plan",
+    )
+
+    handler = build_plan_handler(adapter, runner, config)
+    job = _plan_job()
+
+    with pytest.raises(WaitingForHumanError) as excinfo:
+        handler(job)
+
+    assert excinfo.value.result["questions"] == [
+        {"question": "既存の移行ツールを再利用しますか?", "severity": "critical"}
+    ]
+
+
+def test_build_plan_handler_completes_when_only_minor_question(tmp_path):
+    # MINORな不明点はASSUME判定になり、WAITING_HUMANにはならない(orchestrator.judge_uncertainty)
+    config = _config(tmp_path)
+    adapter = _FakeGitLabReader(issue=_issue())
+    runner = _FakeClaudeCodeRunner(
+        tmp_path,
+        open_questions=[
+            {
+                "question": "タスク粒度はこれでよいか?",
+                "severity": "minor",
+                "assumption": "1コミット相当の粒度とした",
+            },
+        ],
+        result_kind="plan",
+    )
+
+    handler = build_plan_handler(adapter, runner, config)
+    job = _plan_job()
+
+    result = handler(job)
+
+    assert result["questions"] == []
+    assert result["assumed_uncertainties"] == [
+        {
+            "question": "タスク粒度はこれでよいか?",
+            "severity": "minor",
+            "assumption": "1コミット相当の粒度とした",
         }
     ]
 

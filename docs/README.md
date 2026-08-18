@@ -77,6 +77,10 @@
   要求分析フェーズの結果を元に、実装前の設計をレビュー可能な成果物(Markdown、D-6フォーマット)
   として出力する。無人実行トラック限定・worktreeを使わない設計(ADR-0029)、`WAITING_HUMAN`
   遷移・`respond`サブコマンド対応を含む
+- [specs/plan-phase.md](specs/plan-phase.md) — 実装計画フェーズ(M4-7、Job種別`plan`)の仕様。
+  設計フェーズの結果を元に、実装可能な粒度のタスクへ分解し実装順に並べた計画として出力する。
+  無人実行トラック限定・worktreeを使わない設計(ADR-0030)、`WAITING_HUMAN`遷移・`respond`
+  サブコマンド対応を含む
 
 ## 更新ルール
 

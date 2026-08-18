@@ -89,6 +89,19 @@ def _design_result(**overrides) -> dict:
     return kwargs
 
 
+def _plan_result(**overrides) -> dict:
+    kwargs = dict(
+        project=_PROJECT,
+        issue_iid=_ISSUE_IID,
+        plan_document="# 概要\n...",
+        tasks=[{"title": "タスク1", "description": "内容1"}],
+        assumed_uncertainties=[],
+        questions=list(_QUESTIONS),
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
 def _make_waiting_human_job(
     job_db_path: str,
     *,
@@ -369,7 +382,7 @@ def test_run_respond_with_design_job_type_completes_the_job(tmp_path):
 def test_run_respond_with_implement_job_type_still_raises_invalid_transition(
     tmp_path,
 ):
-    # implement(M4の残り)はまだ_RESULT_RESOLVERSに未登録のため、designが追加された後も
+    # implement(M4の残り)はまだ_RESULT_RESOLVERSに未登録のため、design/planが追加された後も
     # 引き続き未対応として扱われることを確認する
     config = _config(tmp_path)
     job = _make_waiting_human_job(
@@ -378,3 +391,51 @@ def test_run_respond_with_implement_job_type_still_raises_invalid_transition(
 
     with pytest.raises(InvalidJobTransitionError):
         run_respond(config, job_id=job.id)
+
+
+# --- plan種別Job(M4-7, ADR-0030)---
+
+
+def test_respond_to_job_supports_plan_job_type(tmp_path):
+    # plan種別のWAITING_HUMAN Jobも、issue-analysis/designと同じ手順でDONEまで遷移できること
+    # (_RESULT_RESOLVERSの一般化、ADR-0030)
+    job_db_path = str(tmp_path / "job.db")
+    job = _make_waiting_human_job(
+        job_db_path, job_type=JobType.PLAN, result=_plan_result()
+    )
+
+    repo = SqliteJobRepository(job_db_path)
+    answers = iter(["回答1", "回答2"])
+    try:
+        done_job = respond_to_job(
+            repo, job, ask=lambda _: next(answers), output=lambda _: None
+        )
+
+        assert done_job.status == JobStatus.DONE
+        assert done_job.result["plan_document"] == "# 概要\n..."
+        assert done_job.result["tasks"] == [
+            {"title": "タスク1", "description": "内容1"}
+        ]
+        assert done_job.result["questions"] == []
+        assert done_job.result["resolved_questions"] == [
+            {**_QUESTIONS[0], "answer": "回答1"},
+            {**_QUESTIONS[1], "answer": "回答2"},
+        ]
+    finally:
+        repo.close()
+
+
+def test_run_respond_with_plan_job_type_completes_the_job(tmp_path):
+    config = _config(tmp_path)
+    job = _make_waiting_human_job(
+        config.job_db_path, job_type=JobType.PLAN, result=_plan_result()
+    )
+    answers = iter(["回答1", "回答2"])
+
+    done_job = run_respond(
+        config, job_id=job.id, ask=lambda _: next(answers), output=lambda _: None
+    )
+
+    assert done_job is not None
+    assert done_job.status == JobStatus.DONE
+    assert done_job.result["resolved_questions"][0]["answer"] == "回答1"
