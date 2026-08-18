@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..gitlab_adapter.types import Discussion, MergeRequest, MergeRequestDiff
+from ..gitlab_adapter.types import Discussion, Issue, MergeRequest, MergeRequestDiff
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,21 @@ class ReviewContext:
     merge_request: MergeRequest
     diffs: tuple[MergeRequestDiff, ...]
     discussions: tuple[Discussion, ...]
+
+
+@dataclass(frozen=True)
+class IssueContext:
+    """Claude Codeへ渡すIssueのコンテキスト(タイトル・説明・ラベル)。
+
+    `ReviewContext`と同じ設計方針(`docs/architecture.md`の境界)で、あくまで
+    「渡す事実」だけを持つ。GitLab Adapter(`gitlab_adapter/protocol.py`)には現時点で
+    MRの`list_merge_request_discussions`に相当するIssueコメント取得メソッドが存在しないため、
+    `ReviewContext.discussions`に相当するフィールドは持たない
+    ([#108](https://github.com/AtsushiNi/gitlab-ai-platform/issues/108)のスコープ。
+    Adapter側にメソッドが追加された時点で拡張する)。
+    """
+
+    issue: Issue
 
 
 @dataclass(frozen=True)
@@ -50,4 +65,4 @@ class RunResult:
     raw: Mapping[str, Any]
 
 
-__all__ = ["ReviewContext", "RunResult"]
+__all__ = ["IssueContext", "ReviewContext", "RunResult"]

@@ -66,6 +66,8 @@
 - [specs/issue-poller.md](specs/issue-poller.md) — Issue Poller(M4-1)の仕様。無人実行ラベルの
   付いたIssueを検出し、専用のIssue Ticket Storeで二重投入を防ぎながら`issue-analysis`種別の
   Jobを投入する
+- [specs/orchestrator.md](specs/orchestrator.md) — Orchestrator(M3-7, M4-1〜M4-6, M4-9〜M4-10)の仕様。
+  現時点では「質問する / 仮定して進める」判断ロジック(M4-4)のみを実装済み
 
 ## 更新ルール
 
