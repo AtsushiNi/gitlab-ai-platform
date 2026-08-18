@@ -20,9 +20,11 @@ class UncertaintySeverity(str, Enum):
     CRITICAL = "critical"  # 重要な不明点。ASK対象
     MINOR = "minor"  # 軽微な疑問。ASSUME対象
 
+
 class JudgmentAction(str, Enum):
     ASK = "ask"
     ASSUME = "assume"
+
 
 @dataclass(frozen=True)
 class Uncertainty:

@@ -20,7 +20,10 @@
 ```python
 JobHandler = Callable[[Job], dict[str, Any] | None]
 
-def build_job_handlers(adapter, workspace, runner, store, config) -> dict[JobType, JobHandler]: ...
+
+def build_job_handlers(
+    adapter, workspace, runner, store, config
+) -> dict[JobType, JobHandler]: ...
 ```
 
 `RunnerDispatcher`は`JobRepository`と`Mapping[JobType, JobHandler]`だけを知っていればよく、種別固有のロジックを一切知らない。M4で新しいJobHandlerを追加する際、`RunnerDispatcher`自体は無改修のまま辞書にエントリを足すだけで済む。`job_types`を明示指定しない場合、`handlers`に登録済みの種別のみを対象にする(未実装種別のうっかりclaimを避ける)。
