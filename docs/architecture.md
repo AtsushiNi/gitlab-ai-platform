@@ -14,63 +14,63 @@
 データフローは、すべて「MVPとして単体で動くこと」と「後から作り直さずにJob層を差し込めること」
 の両方を満たすように決めている。
 
-## 全体図
+## 全体図(現在の構成)
 
-### MVP(M1): レビュー自動化
+M1・M3・M4はすべて完了しており(詳細は[roadmap.md](roadmap.md))、実運用強化(M2)の一部項目のみ
+未着手。Windows側の人間トリガーのMRレビューと、Linux/Docker側の無人実行パイプラインが並行して
+動く構成が現状。
 
 ```mermaid
 flowchart TD
-    subgraph Windows["Windows"]
+    subgraph Windows["Windows(人間の端末)"]
         CLI["CLI\n(単発 / watch)"]
         Poller["MR Poller"]
-        Adapter["GitLab Adapter\n(Protocol + REST実装)"]
-        Store[("State Store\n(SQLite)")]
+        Webhook["Webhook Receiver\n(任意有効化)"]
+        Store[("State Store")]
         Workspace["Workspace Manager\n(bare clone + worktree)"]
-        Runner["Claude Code Runner\n(headless実行)"]
+        Runner["Claude Code Runner\n(reviewを同期実行)"]
+        MCPServer["GitLab Adapter\nMCP Server\n(対話型Claude Code用)"]
 
         CLI --> Poller
-        Poller -- "30〜60秒間隔" --> Adapter
+        CLI --> Webhook
         Poller -- "status照会/更新" --> Store
+        Webhook -- "status照会/更新" --> Store
         Poller -- "未処理commit検出" --> Workspace
+        Webhook -- "未処理commit検出" --> Workspace
         Workspace -- worktree --> Runner
     end
 
+    subgraph LinuxDocker["Linux/Docker(無人実行)"]
+        HTTPAPI["HTTP API"]
+        JobQueue[("Job Queue")]
+        Worker["worker\nOrchestrator + Runner群\n(issue-analysis/design/plan/implement/push)"]
+
+        HTTPAPI --> JobQueue
+        JobQueue --> Worker
+    end
+
+    IssuePoller["Issue Poller\n(実装済みだがCLIに未配線)"]
+    IssuePoller -.->|未接続| JobQueue
+
+    Adapter["GitLab Adapter\n(Protocol + REST実装)"]
+    Poller --> Adapter
+    Webhook --> Adapter
+    Runner --> Adapter
+    Worker --> Adapter
+    MCPServer --> Adapter
     Adapter -- "REST API" --> GitLab[("GitLab")]
+
     Runner --> ClaudeCode["Claude Code"]
+    Worker --> ClaudeCode
     ClaudeCode --> Bedrock["Amazon Bedrock"]
 ```
 
 レビュー結果は `reviews/<project>/<mr_iid>/<sha>/` にJSON+Markdownで保存され、人間がVS Code
-(GitLab拡張)で確認する。GitLabへの自動コメント投稿はしない(MVPのスコープ外。M2-5で要否を再判断)。
+(GitLab拡張)で確認する。GitLabへの自動コメント投稿はしない(M2-5で要否を再判断、未着手)。
 
-### 将来像(M3以降): AI Platform
-
-```mermaid
-flowchart TD
-    GitLab[("GitLab")]
-    Adapter["GitLab Adapter\n(REST / 将来一部MCP)"]
-    GitLab <--> Adapter
-
-    subgraph WindowsSide["Windows"]
-        ReviewTool["CLI → Review Tool\n(単発 / watchの後継・人間対話・確認)"]
-    end
-
-    subgraph LinuxSide["Linux / Docker"]
-        PollerWebhook["MR Poller / Webhook"]
-        Queue[("Job Queue")]
-        Orchestrator["Orchestrator\n(Job状態機械)"]
-        Runners["AI Runner群\n(プロセス分離)\nreview / issue-analysis / design / plan / implement"]
-    end
-
-    Adapter --> ReviewTool
-    Adapter --> PollerWebhook
-    PollerWebhook --> Queue
-    Queue --> Orchestrator
-    ReviewTool -- "追加調査等" --> Orchestrator
-    Orchestrator --> Runners
-    Runners --> ClaudeCode["Claude Code"]
-    ClaudeCode --> Bedrock["Amazon Bedrock"]
-```
+**Issue Poller(M4-1)は実装済みだが、`cli/watch.py` 等どのエントリポイントからも呼び出されて
+いない。** そのためIssueへのラベル付与から無人実行パイプラインが自動で起動することは今のところ
+なく、Linux/Docker側のJobは現状HTTP API経由の投入が起点になる。
 
 ## コンポーネントの責務と境界
 
@@ -83,7 +83,7 @@ flowchart TD
 | State Store | `store/` | `(project, mr_iid, commit_sha)` 単位でレビュー状態(`status` / `reviewed_at` / 結果パス)を記録し、二重レビューを防ぐ。リポジトリ層を抽象化しSQLite/PostgreSQL両対応にする | ビジネスロジック(レビューするか否かの判断)は持たない。単なる状態の記録・照会 | M1-4 |
 | MR Poller | `poller/` | 30〜60秒間隔で対象プロジェクトを走査し、`レビュー待ち` ラベルのMRを抽出、State Storeと突き合わせて未処理commitを検出、レビューを起票する | GitLabへの書き込みはしない | M1-5 |
 | Webhook Receiver | `webhook/` | GitLab Merge Request Hookを受信し、MR Pollerと共通の二重起票防止ロジック(`ticket_if_unprocessed`)でレビューを起票する。任意有効化(既定OFF)で`watch`サブコマンドに統合される | Push Hookは扱わない。MR Pollerを置き換えない(併存が前提)。HMAC署名検証はしない(Secret Token方式のみ) | M3-6 |
-| Issue Ticket Store | `issue_store/` | `(project, issue_iid)` 単位で無人実行Jobの起票済み状態を記録し、二重投入を防ぐ。State Storeとは別コンポーネントとして併存させる(ADR-0025) | ビジネスロジック(無人実行すべきか否かの判断)は持たない。`status`のような進行状態も持たない(Jobが管理) | M4-1 |
+| Issue Ticket Store | `issue_store/` | `(project, issue_iid)` 単位で無人実行Jobの起票済み状態を記録し、二重投入を防ぐ。State Storeとは別コンポーネントとして併存させる | ビジネスロジック(無人実行すべきか否かの判断)は持たない。`status`のような進行状態も持たない(Jobが管理) | M4-1 |
 | Issue Poller | `poller/` (`issue_poller.py`) | 対象プロジェクトを定期走査し、無人実行ラベル(既定`AI実装`)の付いたIssueを抽出、Issue Ticket Storeと突き合わせて未処理Issueを検出し、`issue-analysis`種別のJobをJob Queueへ投入する | GitLabへの書き込みはしない。Jobの実行自体(Issue取得・要求分析)はしない | M4-1 |
 | Workspace Manager | `workspace/` | プロジェクトごとのbare clone、MR単位/Issue単位(M4-8)のworktree作成/更新/破棄、ディスク上限とGCを管理する。並列レビューでworking treeを共有しない | git操作以外(ビルド・テスト実行など)はしない | M1-6, M4-8 |
 | Claude Code Runner | `runner/` | worktree上でClaude Codeをヘッドレス実行し、MRタイトル・説明・コメント・diffをコンテキストとして渡す。タイムアウト・異常終了のハンドリング、実行ログ保存を行う | レビュー観点の判断そのもの(何を重大とするか)はプロンプト側の責務であり、Runnerは実行制御のみ | M1-7 |
@@ -107,8 +107,7 @@ flowchart TD
   フェーズでは、失敗時の隔離・並列実行時のリソース制御・再現性のためにDocker上のRunnerが必要になる。
   WindowsにはDocker Desktopが無いため、この段階で初めてLinux/Dockerへ処理を移す。
   実行環境(Claude Code + Bedrock認証を含むRunnerイメージ、ワークスペース用ボリューム)は
-  M3-4で構築済み(ADR-0020、
-  [docs/operations/docker-runtime.md](operations/docker-runtime.md))
+  M3-4で構築済み([docs/operations/docker-runtime.md](operations/docker-runtime.md))
 
 共通コード([ADR-0001](adr/0001-repository-structure.md)の`src/`レイアウト)は両環境で動くことを
 制約として維持する。GitLab Adapter・Workspace Manager・Review pipelineのロジック自体は
@@ -154,60 +153,36 @@ Windows/Linuxで変わらず、実行環境(OS・コンテナの有無)だけが
 - **Job抽象・状態機械**(M3-1): `PENDING` `RUNNING` `WAITING_HUMAN` `DONE` `FAILED`。既存のレビュー
   処理をこの型に再構成し、Issue駆動開発(M4)の各フェーズ(要求分析/設計/実装)も同じ型で表現する
 - **Job Queue**(M3-2): まずDBベース。取得の排他・可視性タイムアウト・リトライ・デッドレター
-- **Orchestrator**(M3-7, M4-1〜M4-6, M4-9〜M4-11): フェーズ間の状態遷移、`WAITING_HUMAN`による停止判断、
-  HTTP API/サーバ層による外部連携の口(M4-8の実装フェーズはRunner+Workspace Manager、
-  M4-9のpush/MR作成はGitLab Adapterの担当)。M4-10でフェーズ間の連鎖(`issue-analysis → design →
-  plan → implement → push`、`orchestrator.pipeline.advance_pipeline`)を実装した
-  ([ADR-0035](adr/0035-pipeline-orchestration.md))。M4-11で`push`完了後に`review`Jobを自動投入する
-  接続を同じ`advance_pipeline`に追加し、`issue-analysis → design → plan → implement → push →
-  review`という6フェーズの連鎖になった([ADR-0036](adr/0036-self-review-connection.md))
+- **Orchestrator**(M3-7, M4-1〜M4-11): フェーズ間の状態遷移と`WAITING_HUMAN`による停止判断を担う。
+  `issue-analysis → design → plan → implement → push → review`の6フェーズを連鎖させる
+  ([ADR-0035](adr/0035-pipeline-orchestration.md)、[ADR-0036](adr/0036-self-review-connection.md))
 
-## 設計原則(ADR化する判断)
+## 設計原則
 
-以下は `references/AIとやりとりした履歴.md` に由来する設計上の決定。担当Issue着手時に
-[ADR-0001](adr/0001-repository-structure.md) に続く形でADR化していく
-([docs/README.md](README.md) の更新ルールに従う)。まだADR化されていないものは
-その旨を明記する。
+以下は主要な設計判断の一覧。理由の詳細は各ADR/仕様側を参照
+([docs/README.md](README.md) の更新ルールに従いADR化する)。
 
-- **GitLab Adapterのインターフェースをprotocol抽象にし、将来のMCP差し替えに備える**:
-  現在の社内GitLabは公式MCPが使えるバージョンではなく `glab` も導入できないためREST APIのみで
-  実装するが、実装をREST決め打ちにはしない
-  ([ADR-0002](adr/0002-gitlab-adapter-interface.md)、M1-1で正式化済み)
-- **Webhookではなくポーリングを選ぶ**: 社内GitLab側の設定変更を避けたいこと、MVPとしての
-  シンプルさを優先。将来M3-6でWebhookとの併用へ拡張可能な形にしておく(M1-5で正式化)
-- **Webhook受信は`watch`常駐モードへの任意有効化(既定OFF)として追加し、Pollerを置き換えない**:
-  検出後の実行経路(ワーカープール・Job起票)をPoller/Webhookで完全に共有し、二重起票防止も
-  同じState Store一意制約ダンス(`ticket_if_unprocessed`)を共有する。新規サーバー依存
-  (Flask等)は追加せず標準ライブラリ`http.server`で実装(ADR-0018、
-  M3-6で正式化)
-- **書き込み操作は許可リスト方式でAdapter層が機構として禁止する**: プロンプト上の約束事だけに
-  依存しない。merge・protected branchへの直push・branch削除・管理操作用のメソッドは
-  インターフェース側に存在しない([ADR-0002](adr/0002-gitlab-adapter-interface.md))。
-  ただしこれは「呼び出し側がProtocol型だけを見て実装する限り」の静的な保証であり、
-  具象クラス(M1-2のREST実装)自体が余分なメソッドを持つことまでは防げない。実行時の
-  権限チェック・具象クラス側の余剰メソッド検出はM1-3, X-1で正式化
-- **対話型Claude CodeからのGitLab操作は、Claude Code Runner(静的プロンプト埋め込み)とは
-  別の経路(MCPサーバーでのラップ)で提供する**: GitLab Adapterというライブラリの存在だけでは
-  Claude Codeエージェント自身が実行中に能動的にGitLab操作を呼び出せるわけではない、という
-  区別を明文化した。GitLab Adapterに既に存在するメソッドのみを透過的に公開し、新しい権限は
-  追加しない(ADR-0010、M2-12で正式化)
-- **複数MRの並列レビューは、別プロセス/コンテナではなくプロセス内のスレッドプールで行う**:
-  「Windows/Linuxの分担」により、M1〜M2は人間の端末(Windows)上で完結させる方針であり、
-  プロセス分離が要る無人実行はM3以降のLinux/Docker移行後のスコープ。Workspace
-  Manager・State Store・Reviewの索引書き込みは、project単位のロック・`RLock`・
-  モジュール内`Lock`でそれぞれ並行アクセスに対して安全にした(ADR-0015、
-  M2-1で正式化)
-- **Job抽象はState Storeを置き換えず、別コンポーネントとして併存させる**: State Storeは
-  レビューの二重実行防止に責務を絞ったまま残し、Job層はレビューに限らないタスク種別を横断的に
-  管理する新規リポジトリとして追加する。`JobType`(`review`/`issue-analysis`/`design`/`implement`)は
-  実装完了を待たず先に列挙し、後からの互換性問題を避ける
-  ([ADR-0016](adr/0016-job-abstraction.md)、M3-1で正式化)
-- **Runnerイメージはnpm経由でClaude Code CLIを導入し、シークレットは実行時の環境変数/
-  マウントされたファイル経由でのみ渡す**: `docs/operations/security.md`の
-  「コード・イメージにシークレットを焼き込まない」方針をコンテナ環境でも維持する。
-  Workspace用ボリュームはbare clone・worktree・実行ログ・レビュー結果・State/Job DBを
-  1つのマウントポイントにまとめ、`GitWorkspaceManager`の単一ルート前提と整合させる
-  (ADR-0020、M3-4で正式化)
+- **GitLab Adapterはprotocol抽象**: 現在の社内GitLabはREST APIのみで実装するが、
+  将来のMCP差し替えに備え実装をREST決め打ちにはしない
+  ([ADR-0002](adr/0002-gitlab-adapter-interface.md))
+- **検出はWebhookでなくポーリング**: 社内GitLab側の設定変更を避け、MVPのシンプルさを優先
+  (M3-6でWebhook併用に拡張)
+- **Webhook受信は既定OFFの任意機能**: Pollerを置き換えず、検出後の実行経路(ワーカープール・
+  Job起票・二重起票防止ロジック`ticket_if_unprocessed`)を完全に共有する
+- **書き込みは許可リスト方式でAdapter層が機構として禁止**: プロンプト上の約束事だけに
+  依存せず、merge・protected branchへの直push・branch削除・管理操作用のメソッドは
+  インターフェース側に存在しない([ADR-0002](adr/0002-gitlab-adapter-interface.md))
+- **対話型Claude CodeのGitLab操作はMCPサーバー経由**: Claude Code Runner(静的プロンプト
+  埋め込み)とは別経路。GitLab Adapterに既に存在するメソッドのみを透過的に公開し、
+  新しい権限は追加しない([specs/adapter-mcp-server.md](specs/adapter-mcp-server.md))
+- **並列レビューはプロセス内スレッドプール**: 「Windows/Linuxの分担」によりM1〜M2は
+  Windows単体で完結させる方針で、プロセス分離が要る無人実行はM3以降に先送り
+- **Job抽象はState Storeを置き換えず併存**: State Storeはレビューの二重実行防止に責務を
+  絞ったまま残し、Job層はレビューに限らないタスク種別を横断的に管理する
+  ([ADR-0016](adr/0016-job-abstraction.md))
+- **Runnerイメージのシークレットは実行時の環境変数/マウントファイル経由でのみ渡す**:
+  コード・イメージに焼き込まない方針をコンテナ環境でも維持する
+  ([docs/operations/docker-runtime.md](operations/docker-runtime.md))
 
 ## 関連ドキュメント
 
