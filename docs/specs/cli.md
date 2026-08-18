@@ -16,16 +16,16 @@
   `design`種別Jobへの対応拡張)、
   [#113](https://github.com/AtsushiNi/gitlab-ai-platform/issues/113) (M4-7、`respond`の
   `plan`種別Jobへの対応拡張)
-- 関連ADR: [ADR-0008](../adr/0008-cli-single-run-design.md)、
-  [ADR-0009](../adr/0009-cli-watch-design.md)、
-  [ADR-0012](../adr/0012-decompose-interactive-session.md)、
-  [ADR-0015](../adr/0015-parallel-review-execution.md)、
+- 関連ADR: ADR-0008、
+  ADR-0009、
+  ADR-0012、
+  ADR-0015、
   [ADR-0016](../adr/0016-job-abstraction.md)、
   [ADR-0022](../adr/0022-runner-process-separation.md)、
-  [ADR-0023](../adr/0023-http-api.md)、
-  [ADR-0028](../adr/0028-waiting-human-answer-integration.md)、
-  [ADR-0029](../adr/0029-design-phase.md)、
-  [ADR-0030](../adr/0030-implementation-plan-phase.md)
+  ADR-0023、
+  ADR-0028、
+  ADR-0029、
+  ADR-0030
 - ステータス: 実装済み(単発レビュー実行`review`サブコマンド、常駐`watch`サブコマンド、
   要件→Issue分解の対話型`decompose`サブコマンド、Runner Dispatcher常駐`worker`サブコマンド、
   HTTP APIサーバー常駐`api`サブコマンド、`WAITING_HUMAN`後の回答取り込み`respond`サブコマンド)
@@ -40,12 +40,12 @@
   (`docs/architecture.md`)として、結果の保存先パスと簡単なサマリを標準出力に表示する
 - `watch`: MR Poller(M1-5)で対象プロジェクトを定期走査し、検出したMRごとに`review`と
   同じレビュー実行パイプラインを呼び出し続ける常駐モード。検出した複数MRのレビューは
-  `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、[ADR-0015](../adr/0015-parallel-review-execution.md))。
+  `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、ADR-0015)。
   Ctrl+C(SIGINT)/SIGTERMでgraceful shutdownし、同一設定に対する多重起動を防ぐ。
   `config.webhook_enabled=true`(任意有効化、既定false)の場合、GitLab Merge Request Hookを
   受信するWebhookサーバーも背景スレッドで起動し、MR Pollerと同じ実行経路
   (`ReviewWorkerPool`)・二重起票防止ロジック(`poller.ticket_if_unprocessed`)を共有する
-  (M3-6、[ADR-0018](../adr/0018-webhook-receiver.md)、[specs/webhook-receiver.md](webhook-receiver.md))
+  (M3-6、ADR-0018、[specs/webhook-receiver.md](webhook-receiver.md))
 - `worker`: Job Repository(`job/`)から`claim`で取り出したJobを処理し続けるRunner
   Dispatcherの常駐モード(M3-3、[ADR-0022](../adr/0022-runner-process-separation.md))。
   `review`/`watch`が使う「起票直後に同一プロセス内で同期処理する」経路(`execute_review_job`)
@@ -57,20 +57,20 @@
   JSONをパース)とは異なり、stdin/stdout/stderrをそのまま人間に継承させ、ターミナルで
   人間とClaude Codeが直接対話しながら新しい開発要件を複数のGitLab Issueへ分解・起票する
 - `api`: Job Repository(`job/`)への最小限のHTTP API(投入・状態/結果参照・一覧取得)を
-  提供する常駐モード(M3-7、[ADR-0023](../adr/0023-http-api.md)、
+  提供する常駐モード(M3-7、ADR-0023、
   [specs/http-api.md](http-api.md))。`worker`と同様、`review`/`watch`が使う経路とは別の
   独立したプロセスで、`watch`(Poller/Webhook)・`worker`(Runner Dispatcher)いずれの稼働状況
   にも依存しない。「将来のUIや他ツール連携の口」として、任意の`JobType`のJobを投入できる
 - `respond`: `WAITING_HUMAN`状態のJob(M4-3、要求分析フェーズが`ASK`判定の不明点を持つ場合に
   遷移する。M4-6/M4-7で設計・実装計画フェーズも同様に遷移しうる)へ、人間の回答をターミナル
   入力(`input()`)で取り込み、`RUNNING`を経て`DONE`へ遷移させる(M4-5、
-  [ADR-0028](../adr/0028-waiting-human-answer-integration.md)、
+  ADR-0028、
   [specs/issue-analysis.md](issue-analysis.md)「`WAITING_HUMAN`後の再開」)。`job_id`省略時は
   `WAITING_HUMAN`状態のJobを一覧表示するだけで状態は変更しない。`review`/`watch`と同じ
   非リース方式(`JobRepository.update_status`)の経路を使う(`WAITING_HUMAN`は`claim`対象外の
   状態のため、`worker`のリース方式では扱わない)。回答の統合先(`result`の組み立て方)は
   `job_type`ごとの辞書(`_RESULT_RESOLVERS`)から選ぶ。M4-7時点で`issue-analysis`/`design`/`plan`が
-  対応済み、`implement`は未対応(M4-7、[ADR-0030](../adr/0030-implementation-plan-phase.md))
+  対応済み、`implement`は未対応(M4-7、ADR-0030)
 
 ## 前提と非対象
 
@@ -94,7 +94,7 @@
   - `api`は`.env`の`GITLAB_AI_PLATFORM_API_TOKEN`(未設定なら`ConfigError`で起動しない)と
     `job_db_path`のみが前提で、GitLab到達性・`workspace_root`は不要(GitLab Adapter/Workspace
     Manager/Claude Code Runnerのいずれにも依存しないため、M3-7、
-    [ADR-0023](../adr/0023-http-api.md))
+    ADR-0023)
   - `respond`は`job_db_path`のみが前提で、GitLab到達性・`workspace_root`は不要(`api`と同じ
     理由)。人間が対話するため実行時にターミナル(TTY)を持つ環境での利用を想定する
     (`decompose`と同じ、`docs/requirements.md` 3-C)
@@ -114,13 +114,13 @@
     設計・実装・MR作成(B/M4のスコープ)には進まない
   - `api`はJobの実行(`worker`の責務)を行わない。`claim`/`heartbeat`/`complete`/`fail`
     (Runner Dispatcher専用の操作)は公開せず、Job Repositoryへの読み書き(投入・参照・一覧)
-    のみを提供する(M3-7、[ADR-0023](../adr/0023-http-api.md))
+    のみを提供する(M3-7、ADR-0023)
   - `respond`は1回の呼び出しで複数Jobをまとめて処理しない(`job_id`省略時は一覧表示のみ)。
     GitLab Issueコメント経由での質問提示・回答収集も対象外(実際に必要になってから追加する、
-    M4-5、[ADR-0028](../adr/0028-waiting-human-answer-integration.md)「却下した選択肢」)。
+    M4-5、ADR-0028「却下した選択肢」)。
     `issue-analysis`/`design`/`plan`以外のJob種別(`implement`)への対応も対象外
     (M4-8以降で必要になった時点で`_RESULT_RESOLVERS`に追加する、
-    [ADR-0030](../adr/0030-implementation-plan-phase.md))
+    ADR-0030)
 
 ## 公開インターフェース
 
@@ -188,7 +188,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 `api`もCLI固有のオプションを持たない(`--host`/`--port`/`--token`のような上書きは提供しない)。
 待受アドレス/ポートは`config.toml`の`[api]`セクション、トークンは`.env`の
 `GITLAB_AI_PLATFORM_API_TOKEN`のみで設定する(`webhook`と同じ方針、
-[ADR-0023](../adr/0023-http-api.md)「決定」)。
+ADR-0023「決定」)。
 
 `decompose`は`project`(GitLabのプロジェクトパス)を人間が明示指定する。`review`と異なり
 `mr_iid`に相当するものは存在しない(要件がまだIssue化されていない段階から始まるため)。
@@ -197,7 +197,7 @@ gitlab-ai-platform [--config PATH] [--env PATH] [--log-level LEVEL] [--log-dir D
 
 `respond`は`job_id`(位置引数、省略可)のみを取り、`api`と同じくCLI固有のオプションは
 持たない。`job_id`省略時は`WAITING_HUMAN`状態のJobの一覧をターミナルに表示するだけで、
-質問提示・回答収集・状態遷移は行わない(M4-5、[ADR-0028](../adr/0028-waiting-human-answer-integration.md))。
+質問提示・回答収集・状態遷移は行わない(M4-5、ADR-0028)。
 
 ### Python API
 
@@ -281,9 +281,9 @@ def build_workspace_manager(config: Config) -> "GitWorkspaceManager":
 
 #### `watch`(実装場所: `src/gitlab_ai_platform/cli/watch.py`)
 
-[ADR-0008](../adr/0008-cli-single-run-design.md)の`execute_review`/`run_single_review`
-分離パターンをそのまま踏襲する([ADR-0009](../adr/0009-cli-watch-design.md))。M2-1
-([ADR-0015](../adr/0015-parallel-review-execution.md))で検出済みMRの並列実行に対応した際も
+ADR-0008の`execute_review`/`run_single_review`
+分離パターンをそのまま踏襲する(ADR-0009)。M2-1
+(ADR-0015)で検出済みMRの並列実行に対応した際も
 `build_on_detected`自体は変更せず、`run_watch_loop`が`ReviewWorkerPool`(`cli/worker_pool.py`)への
 投入に置き換える形で並列化した。
 
@@ -342,7 +342,7 @@ def run_watch_loop(
     同じオブジェクトを渡す(ワーカースレッドの想定外の例外がポーリングループの早期終了に
     反映されるようにするため)。`config.webhook_enabled`が真の場合(M3-6)、`WebhookServer`
     (`webhook/server.py`)も同じプールへの投入ラッパーを`on_detected`として起動し、
-    `finally`節で停止する([ADR-0018](../adr/0018-webhook-receiver.md))。"""
+    `finally`節で停止する(ADR-0018)。"""
 
 
 def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> None:
@@ -353,7 +353,7 @@ def run_watch(config: Config, *, stop_event: threading.Event | None = None) -> N
 #### `worker`(実装場所: `src/gitlab_ai_platform/cli/dispatcher.py`、M3-3)
 
 `review`/`watch`と同じ「パイプライン本体/合成ルート」分離パターンを踏襲する
-([ADR-0008](../adr/0008-cli-single-run-design.md)、[ADR-0022](../adr/0022-runner-process-separation.md))。
+(ADR-0008、[ADR-0022](../adr/0022-runner-process-separation.md))。
 `JobType` → `JobHandler`のディスパッチテーブルでJob受け渡しプロトコルを表現し、
 `RunnerDispatcher`本体は`review`固有のロジックを知らない。
 
@@ -442,7 +442,7 @@ def run_dispatcher(
 
 `worker`と同じ「合成ルートを`cli/<name>.py`に置く」パターンを踏襲するが、`api`は常駐ループ
 (claim/poll)を持たず、`ApiServer`(`api/server.py`、[specs/http-api.md](http-api.md))を
-起動して`stop_event`を待つだけの薄い合成ルートになる([ADR-0023](../adr/0023-http-api.md))。
+起動して`stop_event`を待つだけの薄い合成ルートになる(ADR-0023)。
 
 ```python
 import threading
@@ -464,7 +464,7 @@ def run_api_server(
 `review`/`watch`の「パイプライン本体/合成ルート」分離とは異なり、`decompose`にはProtocol型の
 依存先(Adapter/Workspace/Runner/Store)が存在しない(対話型の`claude`セッションを起動する
 だけのため)。代わりに、`--mcp-config`/システムプロンプト/起動コマンドの組み立てをそれぞれ
-独立した純粋関数に分け、単体テストしやすくしている([ADR-0012](../adr/0012-decompose-interactive-session.md))。
+独立した純粋関数に分け、単体テストしやすくしている(ADR-0012)。
 
 ```python
 import subprocess
@@ -524,8 +524,8 @@ def run_decompose(
 #### `respond`(実装場所: `src/gitlab_ai_platform/cli/respond.py`、M4-5)
 
 `review`/`watch`と同じ「パイプライン本体/合成ルート」分離パターンを踏襲する
-([ADR-0008](../adr/0008-cli-single-run-design.md)、
-[ADR-0028](../adr/0028-waiting-human-answer-integration.md))。`WAITING_HUMAN`は`claim`対象外の
+(ADR-0008、
+ADR-0028)。`WAITING_HUMAN`は`claim`対象外の
 状態のため、`worker`のリース方式ではなく`review`/`watch`と同じ非リース方式
 (`JobRepository.update_status`)を使う。
 
@@ -627,7 +627,7 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
    省略していれば`merge_request.sha`(取得時点の最新commit)を使う。`(project, mr_iid, sha)`を
    `StateStatus.RUNNING`として起票する。既存レコードがあれば(MR Pollerと異なり無視せず)
    `RUNNING`へ上書きする(単発実行は同一commitへの繰り返し実行が主要なユースケースであるため、
-   [ADR-0008](../adr/0008-cli-single-run-design.md)参照)
+   ADR-0008参照)
 3. `workspace.prepare(project, mr_iid, sha)`でworktreeを用意する
 4. `review.build_review_instructions()`でinstructionsを組み立て、
    `runner.run(worktree.path, instructions, context, ...)`でClaude Codeをヘッドレス実行する
@@ -650,7 +650,7 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 3. 各サイクルで新たに起票された`DetectedReview`ごとに、`build_on_detected(...)`が組み立てた
    コールバック(1件のMRを同期的に処理する関数)を`ReviewWorkerPool`へ投入する。プールは
    `config.max_parallel`個までのワーカースレッドで並行実行する(M2-1、
-   [ADR-0015](../adr/0015-parallel-review-execution.md))。投入自体は即座に戻るため、
+   ADR-0015)。投入自体は即座に戻るため、
    `poller.run`のループはブロックされない
 4. 投入されたコールバックは、`execution_id_scope()`で新しい実行IDを振ってから
    `execute_review_job(job_repo, adapter, workspace, runner, store, config,
@@ -667,8 +667,8 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
    `return`しただけであり、他のMRの処理には一切影響しない(Issue #80の「失敗時の隔離」)
 6. 上記5種類に属さない想定外の例外は`ReviewWorkerPool`が捕まえ、`stop_event`をセットして
    `run_watch_loop`の外(`run_watch`→`cli.main`)へそのまま伝播させ、プロセスを終了させる
-   ([ADR-0009](../adr/0009-cli-watch-design.md)「1件のレビュー失敗はログに記録して継続する。
-   想定外の例外はプロセスを落とす」を並列実行後も維持する設計、[ADR-0015](../adr/0015-parallel-review-execution.md)参照)。
+   (ADR-0009「1件のレビュー失敗はログに記録して継続する。
+   想定外の例外はプロセスを落とす」を並列実行後も維持する設計、ADR-0015参照)。
    このとき、既に実行が始まっている他のMRの処理は中断されず完了まで実行される
 7. `stop_event`がセットされると、`poller.run`は実行中のサイクル完了後にループを終了する。
    `run_watch_loop`は`finally`節で`pool.shutdown_and_reraise()`を呼び、投入済みジョブの
@@ -730,8 +730,8 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 
 ## 処理の流れ(`respond`: `run_respond`/`respond_to_job`、M4-5、M4-6で`design`対応拡張)
 
-詳細な設計判断は[ADR-0028](../adr/0028-waiting-human-answer-integration.md)・
-[ADR-0029](../adr/0029-design-phase.md)、`result`構造の詳細は
+詳細な設計判断はADR-0028・
+ADR-0029、`result`構造の詳細は
 [specs/issue-analysis.md](issue-analysis.md)「`WAITING_HUMAN`後の再開」・
 [specs/design-phase.md](design-phase.md)を参照。
 
@@ -776,7 +776,7 @@ Jobを起票し、`RUNNING`へ更新してから手順1に入る。手順7が`DO
 | `store.errors.StateStoreError` | 15 | review/watch/worker | |
 | `cli.lock.AlreadyRunningError` | 16 | watch | 同一`state_db_path`に対する多重起動時(`ProcessLock`)。`worker`/`api`は多重起動防止を行わないため該当しない(ADR-0022/ADR-0023) |
 | `decompose.ClaudeCommandNotFoundError` | 17 | decompose | 対話型`claude`プロセスの起動自体に失敗した場合(`FileNotFoundError`)。それ以外は`claude`プロセス自身の終了コードをそのまま返す(`docs/adr/0012-decompose-interactive-session.md`) |
-| `job.errors.JobError` | 18 | worker/api/respond | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`(worker)・`enqueue`/`get`/`list_by_status`/`list_dead_letters`(api)自体がDB接続不良等でJob Repository起因のエラーを送出した場合。`worker`は個々のJobの処理失敗を`RunnerDispatcher`が、`api`は個々のリクエストのエラーを`ApiServer`がそれぞれ握りつぶし続行するため、通常この経路には来ない(M3-3/[ADR-0022](../adr/0022-runner-process-separation.md)、M3-7/[ADR-0023](../adr/0023-http-api.md))。`respond`は`job_id`未存在(`JobNotFoundError`)・`WAITING_HUMAN`以外の状態や`_RESULT_RESOLVERS`未登録の`job_type`(M4-6時点で`implement`)を指定した場合(`InvalidJobTransitionError`)もここに含まれる(いずれも`JobError`のサブクラス、M4-5/[ADR-0028](../adr/0028-waiting-human-answer-integration.md)、M4-6/[ADR-0029](../adr/0029-design-phase.md)) |
+| `job.errors.JobError` | 18 | worker/api/respond | `SqliteJobRepository`の構築失敗、または`claim`/`heartbeat`/`complete`/`fail`(worker)・`enqueue`/`get`/`list_by_status`/`list_dead_letters`(api)自体がDB接続不良等でJob Repository起因のエラーを送出した場合。`worker`は個々のJobの処理失敗を`RunnerDispatcher`が、`api`は個々のリクエストのエラーを`ApiServer`がそれぞれ握りつぶし続行するため、通常この経路には来ない(M3-3/[ADR-0022](../adr/0022-runner-process-separation.md)、M3-7/ADR-0023)。`respond`は`job_id`未存在(`JobNotFoundError`)・`WAITING_HUMAN`以外の状態や`_RESULT_RESOLVERS`未登録の`job_type`(M4-6時点で`implement`)を指定した場合(`InvalidJobTransitionError`)もここに含まれる(いずれも`JobError`のサブクラス、M4-5/ADR-0028、M4-6/ADR-0029) |
 | `KeyboardInterrupt` | 130 | 全て | `watch`/`worker`/`api`はCtrl+C自体を`stop_event`経由のgraceful shutdownに変換するため、通常この経路には来ない。`respond`は回答収集中(`input()`待ち)のCtrl+Cのみ`JobError`経由(`FAILED`更新後に再送出、ADR-0028)ではなくこの経路(130)に乗る |
 | 上記以外の例外 | 1 | 全て | 想定外のバグとして扱う(捕捉せず伝播させ、Pythonの既定の終了コード1相当を返す) |
 
@@ -934,19 +934,8 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のCLI行、
   「データフロー(MVP)」2〜9
-- [ADR-0008: CLI 単発レビュー実行の設計](../adr/0008-cli-single-run-design.md)
-- [ADR-0009: CLI 常駐(watch)モードの設計](../adr/0009-cli-watch-design.md)
-- [ADR-0012: 要件→Issue分解ワークフロー(`decompose`)の対話型セッション設計](../adr/0012-decompose-interactive-session.md)
-- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
-  `watch`の`ReviewWorkerPool`による並列実行の設計判断
 - [ADR-0022: Runner のプロセス分離(Runner Dispatcher)の設計](../adr/0022-runner-process-separation.md) —
   `worker`サブコマンド・`RunnerDispatcher`の設計判断
-- [ADR-0023: 最小限の HTTP API / サーバ層の設計](../adr/0023-http-api.md) —
-  `api`サブコマンド・`ApiServer`の設計判断
-- [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md) —
-  `respond`サブコマンドの設計判断
-- [ADR-0029: 設計フェーズの出力先とRunner実行方式の設計](../adr/0029-design-phase.md) —
-  `respond`の`design`種別Jobへの対応拡張
 - [ADR-0035: Issue→MRパイプラインのオーケストレーション](../adr/0035-pipeline-orchestration.md) —
   `worker`(`RunnerDispatcher`)・`respond`(`respond_to_job`)双方の`on_job_completed`フックが
   `orchestrator.pipeline.advance_pipeline_hook`を経てフェーズ連鎖を実現する設計(M4-10)。
@@ -955,7 +944,6 @@ Ctrl+C/SIGTERM(正常終了、終了コード0)、`AlreadyRunningError`(16)、�
 - [poller.md](poller.md) — `watch`が結線するMR Pollerの仕様(`on_detected`コールバック)
 - [webhook-receiver.md](webhook-receiver.md) — `watch`が任意有効化で結線するWebhook受信
   サーバー(M3-6)の仕様
-- [ADR-0018: Webhook 受信対応(任意有効化)の設計](../adr/0018-webhook-receiver.md)
 - [http-api.md](http-api.md) — `api`サブコマンドが起動する最小限のHTTP API(M3-7)の仕様
 - [gitlab-adapter.md](gitlab-adapter.md) / [workspace-manager.md](workspace-manager.md) /
   [claude-code-runner.md](claude-code-runner.md) / [review-output.md](review-output.md) /

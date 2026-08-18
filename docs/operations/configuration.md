@@ -36,8 +36,8 @@
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN` | なし | 必須 | 自動実行系(`review`単発実行・`watch`のPoller/Webhook経由レビュー実行)用のGitLab PAT。GitLab REST API認証(`PRIVATE-TOKEN`ヘッダ、`gitlab_adapter/rest.py`)、およびgit clone/fetch時のcredential helper経由のPAT供給(`cli/single_run.py`の`_build_workspace_manager`)に使う |
 | `GITLAB_AI_PLATFORM_GITLAB_TOKEN_MCP` | `GITLAB_AI_PLATFORM_GITLAB_TOKEN`と同じ値 | 省略可 | 対話型GitLab Adapter MCP Server(`adapter_mcp_server/main.py`)専用のGitLab PAT。書き込み操作(branch作成・push・MR/Issue作成等)を含む経路のため、`GITLAB_AI_PLATFORM_GITLAB_TOKEN`(自動実行系、読み取り専用の想定)とは別のトークン・アカウントに分けることを推奨する([operations/security.md §4.1](security.md)、[ADR-0019](../adr/0019-gitlab-token-scoping.md))。未設定の場合は`GITLAB_AI_PLATFORM_GITLAB_TOKEN`にフォールバックする |
 | `GITLAB_AI_PLATFORM_WEBHOOK_SECRET` | なし | `webhook.enabled=true`の場合のみ必須 | Webhook受信サーバー(M3-6、[specs/webhook-receiver.md](../specs/webhook-receiver.md))がGitLab Webhookの`X-Gitlab-Token`ヘッダと突き合わせるSecret Token。GitLab側のWebhook設定画面の「Secret token」に同じ値を設定する。GitLab PATとは別の秘密であり、GitLab API認証には使わない |
-| `GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD` | なし | 省略可(`store.backend = "postgresql"`の場合に通常必要) | PostgreSQL State Store(M3-5、[specs/state-store.md](../specs/state-store.md)、[ADR-0021](../adr/0021-state-store-postgresql.md))の接続パスワード。ホスト・ポート・DB名・ユーザー名は`config.toml`の`[store.postgres]`に書く。`store.backend = "sqlite"`(既定)の場合は使われない。ローカルDocker Compose等のtrust認証運用ではパスワード無しもありうるため必須にはしていない |
-| `GITLAB_AI_PLATFORM_API_TOKEN` | なし | `api`サブコマンドを実行する場合のみ必須 | 最小限のHTTP API(M3-7、[specs/http-api.md](../specs/http-api.md)、[ADR-0023](../adr/0023-http-api.md))が`X-Api-Token`ヘッダと突き合わせる認証トークン。Webhookの`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`とは別の値にする(信頼境界が異なるため)。未設定のまま`api`サブコマンドを起動すると`ConfigError`になる |
+| `GITLAB_AI_PLATFORM_STORE_POSTGRES_PASSWORD` | なし | 省略可(`store.backend = "postgresql"`の場合に通常必要) | PostgreSQL State Store(M3-5、[specs/state-store.md](../specs/state-store.md)、ADR-0021)の接続パスワード。ホスト・ポート・DB名・ユーザー名は`config.toml`の`[store.postgres]`に書く。`store.backend = "sqlite"`(既定)の場合は使われない。ローカルDocker Compose等のtrust認証運用ではパスワード無しもありうるため必須にはしていない |
+| `GITLAB_AI_PLATFORM_API_TOKEN` | なし | `api`サブコマンドを実行する場合のみ必須 | 最小限のHTTP API(M3-7、[specs/http-api.md](../specs/http-api.md)、ADR-0023)が`X-Api-Token`ヘッダと突き合わせる認証トークン。Webhookの`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`とは別の値にする(信頼境界が異なるため)。未設定のまま`api`サブコマンドを起動すると`ConfigError`になる |
 
 ## `config.toml`
 
@@ -56,7 +56,7 @@
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
 | `interval_seconds` | `60` | int(正の整数) | 省略可 | `MrPoller.run(interval_seconds=...)`のポーリング間隔秒。**現時点では未配線(M1-11で使用予定)** |
-| `max_parallel` | `5` | int(正の整数) | 省略可 | `watch`サブコマンドが検出したMRを並行実行する際のワーカースレッド数の上限(M2-1、[specs/cli.md](../specs/cli.md)、[ADR-0015](../adr/0015-parallel-review-execution.md))。`review`単発実行では使われない |
+| `max_parallel` | `5` | int(正の整数) | 省略可 | `watch`サブコマンドが検出したMRを並行実行する際のワーカースレッド数の上限(M2-1、[specs/cli.md](../specs/cli.md)、ADR-0015)。`review`単発実行では使われない |
 
 ### `[review]`
 
@@ -67,7 +67,7 @@
 ### `[issue]`
 
 M4-1([specs/issue-poller.md](../specs/issue-poller.md)、
-[ADR-0025](../adr/0025-issue-poller-dedup.md))。Issue Pollerが無人実行トラックへ振り分ける
+ADR-0025)。Issue Pollerが無人実行トラックへ振り分ける
 Issueを検出するための設定。**現時点ではCLIに未配線**(`IssuePoller`単体のコンストラクタ引数として
 利用可能。配線は別Issue)。
 
@@ -98,7 +98,7 @@ Issueを検出するための設定。**現時点ではCLIに未配線**(`IssueP
 
 ### `[store]`
 
-M3-5([specs/state-store.md](../specs/state-store.md)、[ADR-0021](../adr/0021-state-store-postgresql.md))で
+M3-5([specs/state-store.md](../specs/state-store.md)、ADR-0021)で
 PostgreSQLにも対応した。`backend`でSQLite/PostgreSQLを切り替える(既定はSQLiteのまま、
 Windows運用は無変更で動く)。
 
@@ -127,7 +127,7 @@ Windows運用は無変更で動く)。
 
 ### `[webhook]`
 
-M3-6([specs/webhook-receiver.md](../specs/webhook-receiver.md)、[ADR-0018](../adr/0018-webhook-receiver.md))。
+M3-6([specs/webhook-receiver.md](../specs/webhook-receiver.md)、ADR-0018)。
 `watch`サブコマンド内で任意有効化されるWebhook受信サーバーの設定。**MR Pollerを置き換えない**
 (`enabled=false`が既定で、Pollerのみの従来動作のまま)。
 
@@ -143,20 +143,20 @@ GitLab側の設定手順(対象プロジェクトの「Settings > Webhooks」):
 1. URL: `http(s)://<このプロセスが動くホスト>:<port><path>`(既定なら`http://<host>:8088/webhook`)
 2. Secret token: `.env`の`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`と同じ値
 3. Trigger: **Merge request events** のみを有効化する(Push eventsは不要。
-   [ADR-0018](../adr/0018-webhook-receiver.md)「扱うイベントはMerge Request Hookのみ」)
+   ADR-0018「扱うイベントはMerge Request Hookのみ」)
 4. SSL verification: TLS終端の有無に応じて設定(本サーバー自体はHTTPのみを話す。
    TLSが必要な場合はリバースプロキシを前段に置く)
 
 ### `[api]`
 
-M3-7([specs/http-api.md](../specs/http-api.md)、[ADR-0023](../adr/0023-http-api.md))。
+M3-7([specs/http-api.md](../specs/http-api.md)、ADR-0023)。
 `api`サブコマンド(常駐、`review`/`watch`/`worker`/`decompose`とは別プロセス)が起動する
 最小限のHTTP APIの設定。**Webhookとは異なり`enabled`フラグは無い**(`api`サブコマンドを
-実行すること自体が有効化を意味する、[ADR-0023](../adr/0023-http-api.md)「決定」)。
+実行すること自体が有効化を意味する、ADR-0023「決定」)。
 
 | キー | 既定値 | 型 | 必須/省略可 | 影響範囲 |
 |---|---|---|---|---|
-| `host` | `"127.0.0.1"` | str | 省略可 | HTTP APIサーバーの待受アドレス。Webhookの既定`"0.0.0.0"`と異なり既定はループバックのみ(書き込み系操作を含むため安全側の既定、[ADR-0023](../adr/0023-http-api.md)参照)。外部公開する場合は明示的に変更する |
+| `host` | `"127.0.0.1"` | str | 省略可 | HTTP APIサーバーの待受アドレス。Webhookの既定`"0.0.0.0"`と異なり既定はループバックのみ(書き込み系操作を含むため安全側の既定、ADR-0023参照)。外部公開する場合は明示的に変更する |
 | `port` | `8090` | int(正の整数) | 省略可 | HTTP APIサーバーの待受ポート。Webhookの既定`8088`と衝突しないポート |
 
 ## `config.toml`の例
@@ -213,7 +213,7 @@ port = 8090
 `enabled`は無い)。
 
 `store.backend = "postgresql"`にする場合の例(M3以降のLinux/Docker運用を想定、
-[ADR-0021](../adr/0021-state-store-postgresql.md)):
+ADR-0021):
 
 ```toml
 [store]
@@ -248,4 +248,4 @@ GITLAB_AI_PLATFORM_API_TOKEN=apitoken-xxxxxxxxxxxxxxxxxxxx
 
 雛形は`.env.example`(リポジトリ直下)を参照。PATのスコープ・アカウント分離・トークン管理の
 方針は [operations/security.md](security.md)・[ADR-0019](../adr/0019-gitlab-token-scoping.md)・
-[ADR-0037](../adr/0037-automated-token-scope-upgrade.md)を参照(D-9・M3-8・M4フォローアップ)。
+ADR-0037を参照(D-9・M3-8・M4フォローアップ)。

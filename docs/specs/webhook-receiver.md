@@ -2,7 +2,7 @@
 
 - 実装場所: `src/gitlab_ai_platform/webhook/`
 - 対応Issue: [#96](https://github.com/AtsushiNi/gitlab-ai-platform/issues/96) (M3-6)
-- 関連ADR: [ADR-0018](../adr/0018-webhook-receiver.md)
+- 関連ADR: ADR-0018
 - ステータス: 実装済み
 
 ## 責務
@@ -19,12 +19,12 @@ GitLabのMerge Request Hook(Webhook)を受信し、MR Poller(`poller/`)と同じ
     `config.webhook_enabled=true`の場合のみインスタンス化される
   - GitLab側のWebhook設定で「Merge request events」を有効化し、Secret Tokenに
     `.env`(`GITLAB_AI_PLATFORM_WEBHOOK_SECRET`)と同じ値を設定していること。
-    「Push events」は有効化不要([ADR-0018](../adr/0018-webhook-receiver.md)参照)
+    「Push events」は有効化不要(ADR-0018参照)
   - このプロセスが動くホストへGitLabサーバーからHTTP(S)で到達可能であること
     (TLS終端・リバースプロキシの要否は運用側の判断。本コンポーネント自体はHTTPのみを話す)
 - 非対象:
   - Push Hook(`object_kind: "push"`)は扱わない。対象MRの特定に追加のGitLab API呼び出しが
-    必要になり、Merge Request Hookだけで要件を満たせるため([ADR-0018](../adr/0018-webhook-receiver.md)
+    必要になり、Merge Request Hookだけで要件を満たせるため(ADR-0018
     「却下した選択肢」)
   - レビューの実行(Workspace Manager準備→Claude Code Runner起動→Review解析)はしない。
     検出後は`on_detected`コールバック(`cli/watch.py`がPollerと共有する`ReviewWorkerPool`への
@@ -99,7 +99,7 @@ def parse_merge_request_event(payload: Any) -> ParsedMergeRequestEvent | None:
 | `ParsedMergeRequestEvent` (frozen dataclass) | `project: str`, `mr_iid: int`, `commit_sha: str`, `labels: tuple[str, ...]` | Merge Request Hookペイロードから抽出した、起票判断に必要な最小限の情報。まだState Storeへの起票は行っていない(`ParsedMergeRequestEvent`→`labels`に`review_label`が含まれるかの判定→`poller.ticket_if_unprocessed`という順で処理する) |
 
 `DetectedReview`/`PollError`(`poller.types`)をそのまま再利用し、Webhook独自の起票結果の型は
-作らない([ADR-0018](../adr/0018-webhook-receiver.md)「重複させない」)。
+作らない(ADR-0018「重複させない」)。
 
 ### HTTPリクエスト/レスポンス
 
@@ -206,7 +206,6 @@ def parse_merge_request_event(payload: Any) -> ParsedMergeRequestEvent | None:
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表・
   「MVP → AI Platformへの成長パス」のMR Poller行
-- [ADR-0018: Webhook 受信対応(任意有効化)の設計](../adr/0018-webhook-receiver.md)
 - [poller.md](poller.md) — `ticket_if_unprocessed`を共有するMR Pollerの仕様
 - [cli.md](cli.md) — `run_watch_loop`がこのコンポーネントを結線する箇所
 - [state-store.md](state-store.md) — 二重起票防止の一意制約

@@ -76,16 +76,16 @@
   実行(`run_prompt`)、`WAITING_HUMAN`後の回答取り込み・Job完了(M4-5、`respond`サブコマンド)を含む
 - [specs/design-phase.md](specs/design-phase.md) — 設計フェーズ(M4-6、Job種別`design`)の仕様。
   要求分析フェーズの結果を元に、実装前の設計をレビュー可能な成果物(Markdown、D-6フォーマット)
-  として出力する。無人実行トラック限定・worktreeを使わない設計(ADR-0029)、`WAITING_HUMAN`
+  として出力する。無人実行トラック限定・worktreeを使わない設計、`WAITING_HUMAN`
   遷移・`respond`サブコマンド対応を含む
 - [specs/plan-phase.md](specs/plan-phase.md) — 実装計画フェーズ(M4-7、Job種別`plan`)の仕様。
   設計フェーズの結果を元に、実装可能な粒度のタスクへ分解し実装順に並べた計画として出力する。
-  無人実行トラック限定・worktreeを使わない設計(ADR-0030)、`WAITING_HUMAN`遷移・`respond`
+  無人実行トラック限定・worktreeを使わない設計、`WAITING_HUMAN`遷移・`respond`
   サブコマンド対応を含む
 - [specs/implement-phase.md](specs/implement-phase.md) — 実装フェーズ(M4-8、Job種別
   `implement`)の仕様。実装計画フェーズの結果を元に、実際にファイルを編集しテストを実行し
-  ローカルにcommitする。無人実行トラック限定・Issue単位の実際のworktreeを使う設計
-  (ADR-0031)、Claude CodeへのEdit/Write/Bash権限付与(ADR-0033)、`WAITING_HUMAN`遷移・
+  ローカルにcommitする。無人実行トラック限定・Issue単位の実際のworktreeを使う設計、
+  Claude CodeへのEdit/Write/Bash権限付与、`WAITING_HUMAN`遷移・
   `respond`サブコマンド対応を含む。GitLabへの実際のpush/MR作成は含まない(M4-9)
 - [specs/push-phase.md](specs/push-phase.md) — push と MR 作成フェーズ(M4-9、Job種別
   `push`)の仕様。実装フェーズがworktreeに残したローカルcommitをGitLab Commits API経由で

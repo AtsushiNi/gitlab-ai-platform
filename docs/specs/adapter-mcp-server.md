@@ -5,8 +5,8 @@
   [#67](https://github.com/AtsushiNi/gitlab-ai-platform/issues/67)(「GitLab MCP Tool Bridge」から改称)、
   [#69](https://github.com/AtsushiNi/gitlab-ai-platform/issues/69)(projectのデフォルト自動解決)、
   [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8、`get_default_branch`追加)
-- 関連ADR: [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)、
-  [ADR-0032](../adr/0032-default-branch-lookup.md)
+- 関連ADR: ADR-0010、
+  ADR-0032
 - ステータス: 実装済み(`GitLabAdapter`の許可された15メソッド全て。M2-10 [#47](https://github.com/AtsushiNi/gitlab-ai-platform/issues/47)
   分は M2-12フォローアップ [#65](https://github.com/AtsushiNi/gitlab-ai-platform/issues/65) で対応済み。
   projectのデフォルト自動解決は #69 で対応済み。`get_default_branch`はM4-8で対応済み)
@@ -25,7 +25,7 @@ Claude Code Runner(M1-7、[docs/specs/claude-code-runner.md](claude-code-runner.
 **別の経路**であることに注意。Runnerの経路はClaude Code自身が実行中に能動的に呼び出す
 手段を提供しない。本コンポーネントは、対話型セッションの起動時に`--mcp-config`でこの
 MCPサーバーの起動コマンドを渡すことで、エージェント自身がツール呼び出しとしてGitLab操作を
-行えるようにする経路である([ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)の「背景・制約」)。
+行えるようにする経路である(ADR-0010の「背景・制約」)。
 
 ## 前提と非対象
 
@@ -169,7 +169,7 @@ M2-12フォローアップ([#69](https://github.com/AtsushiNi/gitlab-ai-platform
   (上記「デフォルトプロジェクトの自動解決」)
 - いずれのエラーメッセージにも認証情報(GitLab PAT等)は含まれない
   (`tests/gitlab_ai_platform/adapter_mcp_server/test_secrets.py`で担保。詳細は
-  [ADR-0010](../adr/0010-gitlab-mcp-tool-bridge.md)「セキュリティ上の考慮」の表)
+  ADR-0010「セキュリティ上の考慮」の表)
 
 ## テスト方針
 
@@ -206,7 +206,6 @@ M2-12フォローアップ([#69](https://github.com/AtsushiNi/gitlab-ai-platform
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表
-- [ADR-0010: GitLab Adapter MCP Server の設計(旧称: GitLab MCP Tool Bridge)](../adr/0010-gitlab-mcp-tool-bridge.md)
 - [gitlab-adapter.md](gitlab-adapter.md) — ラップ対象の`GitLabAdapter`(Protocol/REST実装)の仕様
 - [claude-code-runner.md](claude-code-runner.md) — 別経路であるClaude Code Runnerの仕様
 - ソースコード: `src/gitlab_ai_platform/adapter_mcp_server/`

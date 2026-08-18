@@ -6,9 +6,9 @@
   [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3、`run_prompt`を追記)、
   [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8、実際のworktree +
   Edit/Write/Bash権限での利用例を追記)
-- 関連ADR: [ADR-0005](../adr/0005-claude-code-runner-design.md)、
-  [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)、
-  [ADR-0033](../adr/0033-implement-phase.md)
+- 関連ADR: ADR-0005、
+  ADR-0027、
+  ADR-0033
 - ステータス: 実装済み(Protocol定義 + subprocess実装 + Issue向け正規化 + `run_prompt`)
 
 ## 責務
@@ -33,7 +33,7 @@ Linux/Docker上での差し替え, M3-4)を`typing.Protocol`で抽象化し、�
     不透明な文字列として扱い、中身を解釈・分岐しない(`docs/architecture.md`の境界)
   - `RunResult`が「レビューとして成功/失敗か」を判断しない。`is_error`/`permission_denials`/
     `terminal_reason`を構造化フィールドとして返すのみで、最終判断は呼び出し側(Review, M1-9)
-    に委ねる([ADR-0005](../adr/0005-claude-code-runner-design.md))
+    に委ねる(ADR-0005)
   - `--dangerously-skip-permissions`相当の全許可フラグは提供しない
 
 ## 公開インターフェース
@@ -193,7 +193,7 @@ OS上限、Linuxの`MAX_ARG_STRLEN`)で、同じ閾値(100,000バイト)まで�
 
 実装場所: `src/gitlab_ai_platform/runner/protocol.py`・`subprocess_runner.py`。
 対応Issue: [#109](https://github.com/AtsushiNi/gitlab-ai-platform/issues/109) (M4-3)。
-関連ADR: [ADR-0027](../adr/0027-issue-analysis-runner-execution.md)。
+関連ADR: ADR-0027。
 
 `run`は`instructions`+`ReviewContext`をRunner内部(`build_prompt`)で結合するMRレビュー専用の
 経路のままとし(シグネチャ・挙動とも変更していない)、`run_prompt`を呼び出し側が組み立て済みの
@@ -252,7 +252,7 @@ subprocessを起動する契約以上のことを知らない」というADR-002
   `terminate_grace_seconds`以内に終了しない(ハングした)場合、またはSIGKILL後も有効な
   結果が得られなかった場合に送出する。`timeout_seconds` / `log_path` / `stderr`を保持する。
   **SIGTERM後に自発的に終了しJSONを取得できた場合はこの例外にはならず、通常の`RunResult`
-  (`timed_out=True`)を返す**([ADR-0005](../adr/0005-claude-code-runner-design.md)参照)
+  (`timed_out=True`)を返す**(ADR-0005参照)
 - `ClaudeCodeOutputError(RunnerError)` — Claude Codeの標準出力が空、またはJSONとして
   解釈できなかったことを表す。`returncode` / `log_path` / `stdout` / `stderr`を保持する
 - いずれの例外も`log_path`を保持しており、失敗時も実行ログから詳細を追跡できる
@@ -309,8 +309,6 @@ subprocessを起動する契約以上のことを知らない」というADR-002
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のClaude Code Runner行
-- [ADR-0005: Claude Code Runner の設計](../adr/0005-claude-code-runner-design.md)
-- [ADR-0027: 要求分析フェーズのRunner実行方式](../adr/0027-issue-analysis-runner-execution.md)
 - [specs/issue-analysis.md](issue-analysis.md) — `run_prompt`の呼び出し元(M4-3)
 - `references/spike-s1-claude-code-headless.md` — ヘッドレス実行方式・タイムアウト・
   権限設定・Bedrock認証に関する実機検証結果

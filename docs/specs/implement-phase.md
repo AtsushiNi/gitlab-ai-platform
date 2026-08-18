@@ -4,11 +4,11 @@
   `WAITING_HUMAN`後の再開は`cli/respond.py`)
 - 対応Issue: [#114](https://github.com/AtsushiNi/gitlab-ai-platform/issues/114) (M4-8)
 - 関連ADR: [ADR-0026](../adr/0026-job-waiting-human-transition.md)(`WAITING_HUMAN`遷移の設計)、
-  [ADR-0028](../adr/0028-waiting-human-answer-integration.md)(`WAITING_HUMAN`後の回答取り込み)、
-  [ADR-0030](../adr/0030-implementation-plan-phase.md)(実装計画フェーズ、本フェーズの入力元)、
-  [ADR-0031](../adr/0031-issue-workspace.md)(Workspace ManagerのIssue単位worktree対応)、
-  [ADR-0032](../adr/0032-default-branch-lookup.md)(GitLab Adapterのdefault branch取得)、
-  [ADR-0033](../adr/0033-implement-phase.md)(本フェーズのRunner実行方式・権限設計・
+  ADR-0028(`WAITING_HUMAN`後の回答取り込み)、
+  ADR-0030(実装計画フェーズ、本フェーズの入力元)、
+  ADR-0031(Workspace ManagerのIssue単位worktree対応)、
+  ADR-0032(GitLab Adapterのdefault branch取得)、
+  ADR-0033(本フェーズのRunner実行方式・権限設計・
   テスト失敗時の扱い)
 - ステータス: 実装済み
 
@@ -178,7 +178,7 @@ worktreeのある時点での状態。
 `build_implement_handler`はClaude Code実行の前後でこの状態を比較し、`head_sha`が変化して
 いない、または実行後に`is_clean`が`False`(未commitの差分が残っている)場合、
 `ImplementResult.tests_passed`の自己申告に関わらず`ImplementationNotCommittedError`を
-送出する([ADR-0005](../adr/0005-claude-code-runner-design.md)が確立した「自己申告だけで
+送出する(ADR-0005が確立した「自己申告だけで
 成否判定しない」という方針をここでも踏襲、ADR-0033)。
 
 ### Claude Codeへの出力指示(`build_implement_instructions`が指示するJSONスキーマ)
@@ -343,11 +343,6 @@ commitされなかった場合の扱いはこの経路(retry→最終的にデ�
 
 - [architecture.md](../architecture.md) 「Orchestrator」の行(M4-1〜M4-6, M4-9〜M4-10)
 - [ADR-0026: Job Queue経由での`WAITING_HUMAN`遷移の設計](../adr/0026-job-waiting-human-transition.md)
-- [ADR-0028: `WAITING_HUMAN`後の回答取り込み・Job完了の設計](../adr/0028-waiting-human-answer-integration.md)
-- [ADR-0030: 実装計画フェーズのJob種別設計](../adr/0030-implementation-plan-phase.md)
-- [ADR-0031: Workspace ManagerのIssue単位worktree対応](../adr/0031-issue-workspace.md)
-- [ADR-0032: GitLab Adapterへのdefault branch取得メソッドの追加](../adr/0032-default-branch-lookup.md)
-- [ADR-0033: 実装フェーズ(Job種別`implement`)の設計](../adr/0033-implement-phase.md)
 - [specs/plan-phase.md](plan-phase.md) — 実装計画フェーズ(M4-7)の仕様。
   `payload.plan_document`/`payload.tasks`等の転記元
 - [specs/workspace-manager.md](workspace-manager.md) — `prepare_for_issue`/`discard_for_issue`

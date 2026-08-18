@@ -2,8 +2,8 @@
 
 - 実装場所: `src/gitlab_ai_platform/push/`(Job種別への配線は`cli/dispatcher.py`)
 - 対応Issue: [#115](https://github.com/AtsushiNi/gitlab-ai-platform/issues/115) (M4-9)
-- 関連ADR: [ADR-0031](../adr/0031-issue-workspace.md)(Workspace ManagerのIssue単位worktree対応、
-  `discard_for_issue`)、[ADR-0033](../adr/0033-implement-phase.md)(実装フェーズ、本フェーズの
+- 関連ADR: ADR-0031(Workspace ManagerのIssue単位worktree対応、
+  `discard_for_issue`)、ADR-0033(実装フェーズ、本フェーズの
   入力元)、[ADR-0034](../adr/0034-push-and-mr-phase.md)(本フェーズの設計判断: diffのbase決定、
   MR本文の情報源、JobType新設の是非、worktree後片付け)
 - ステータス: 実装済み
@@ -264,11 +264,6 @@ push・MR作成のいずれかが失敗した場合、`discard_for_issue`は呼�
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「Orchestrator」の行(M4-1〜M4-6, M4-9〜M4-10)
-- [ADR-0031: Workspace ManagerのIssue単位worktree対応](../adr/0031-issue-workspace.md) —
-  `discard_for_issue`
-- [ADR-0032: GitLab Adapterへのdefault branch取得メソッドの追加](../adr/0032-default-branch-lookup.md)
-- [ADR-0033: 実装フェーズ(Job種別`implement`)の設計](../adr/0033-implement-phase.md) —
-  本フェーズの入力元
 - [ADR-0034: push と MR 作成フェーズの設計](../adr/0034-push-and-mr-phase.md)
 - [specs/implement-phase.md](implement-phase.md) — 実装フェーズ(M4-8)の仕様。
   `payload.plan_document`/`result.commit_sha`等の転記元

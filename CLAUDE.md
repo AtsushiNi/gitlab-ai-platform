@@ -51,8 +51,7 @@
 - CI(`.github/workflows/ci.yml`、M0-4 [#4](https://github.com/AtsushiNi/gitlab-ai-platform/issues/4))が
   push/PRごとに `ruff check .` / `ruff format --check .` / `mypy src` / `pytest` を実行する。
   コード変更をコミットする前に `pip install -e ".[dev]"` した環境でこの4つをローカル実行し、
-  通ることを確認してから push する(ツール選定・ルール除外の理由は
-  [docs/adr/0011-ci-lint-format-typecheck.md](docs/adr/0011-ci-lint-format-typecheck.md)参照)
+  通ることを確認してから push する
 
 ## コーディング規約
 

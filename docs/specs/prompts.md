@@ -3,11 +3,11 @@
 - 実装場所: `src/gitlab_ai_platform/review/`
 - 対応Issue: [#36](https://github.com/AtsushiNi/gitlab-ai-platform/issues/36) (M1-8)
 - 関連ADR: プロンプトの合成方式(`instructions`にRunnerがMRの実データを後から追記する形)
-  自体は[ADR-0005](../adr/0005-claude-code-runner-design.md)(M1-7)で確定済みで、本Issueは
+  自体はADR-0005(M1-7)で確定済みで、本Issueは
   その`instructions`引数の中身(レビュー観点の言語化)を決めるものであり、複数の技術的選択肢を
   比較するような設計判断は発生していない。「出力」セクションのJSON出力形式に関する設計判断は
-  [ADR-0006](../adr/0006-review-output-schema.md)(M1-9)に記録した。再レビュー(M2-2, #81)でも
-  このプロンプトを変更しないという判断は[ADR-0014](../adr/0014-re-review-finding-matching.md)
+  ADR-0006(M1-9)に記録した。再レビュー(M2-2, #81)でも
+  このプロンプトを変更しないという判断はADR-0014
   に記録した
 - ステータス: 実装済み(プロンプト設計 + 結果スキーマに対応した出力形式の指示。
   結果スキーマ自体の定義・保存は[review-output.md](review-output.md)、M1-9)
@@ -48,7 +48,7 @@ MRレビュー用のプロンプト(`instructions`文字列)を設計し、`buil
   - 再レビュー時に前回の指摘一覧をプロンプトへ含めることはしない。前回・今回の指摘の突き合わせ
     (修正済み/未対応/新規の判定)はレビュー実行後にプログラム的に行う
     ([review-output.md](review-output.md)の`comparison.compare_findings`、M2-2 #81、
-    [ADR-0014](../adr/0014-re-review-finding-matching.md)「却下した選択肢」参照)
+    ADR-0014「却下した選択肢」参照)
 
 ## 公開インターフェース
 
@@ -91,7 +91,7 @@ import build_review_instructions`)。
    `review.types.Finding`(M1-9、[review-output.md](review-output.md))と1対1になる
    フィールド構成にしている。指摘が無い場合は`findings`を空配列にする(無理に指摘を作らせない
    という2.の意図をJSON化後も維持する)。この形式の設計判断は
-   [ADR-0006](../adr/0006-review-output-schema.md)に記録した。
+   ADR-0006に記録した。
 
    Runnerは`claude -p ... --output-format json`で実行するため、Claude Codeの最終応答は
    常に`RunResult.result_text`としてJSON文字列の1フィールドに収まる
@@ -127,6 +127,6 @@ import build_review_instructions`)。
   (`build_prompt`)
 - [review-output.md](review-output.md) — 結果スキーマ・保存レイアウト(M1-9)。「出力」
   セクションと1対1の契約
-- [ADR-0006](../adr/0006-review-output-schema.md) — 「出力」セクションのJSON形式の設計判断
+- ADR-0006 — 「出力」セクションのJSON形式の設計判断
 - `references/タスク整理.md` M1-8/M1-9 — レビュー観点・結果スキーマの元ネタ
 - ソースコード: `src/gitlab_ai_platform/review/`(`prompts.py` / `__init__.py`)

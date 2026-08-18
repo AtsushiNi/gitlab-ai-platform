@@ -6,9 +6,9 @@
   [#80](https://github.com/AtsushiNi/gitlab-ai-platform/issues/80) (M2-1、索引書き込みの並行安全性)、
   [#81](https://github.com/AtsushiNi/gitlab-ai-platform/issues/81) (M2-2、再レビュー時の
   「修正済み/未対応/新規」の突き合わせを追加)
-- 関連ADR: [ADR-0006](../adr/0006-review-output-schema.md)、
-  [ADR-0014](../adr/0014-re-review-finding-matching.md)(再レビュー時のマッチング方式)、
-  [ADR-0015](../adr/0015-parallel-review-execution.md)
+- 関連ADR: ADR-0006、
+  ADR-0014(再レビュー時のマッチング方式)、
+  ADR-0015
 - ステータス: 実装済み
 
 ## 責務
@@ -41,7 +41,7 @@ Runnerに渡した入力プロンプトと実行ログのコピーも同じデ�
     `RunResult.log_path`をそのまま使うことを想定する。
   - M2-1(#80)以降、`index.append_entry`は複数のワーカースレッドから同時に呼ばれうる
     (`ReviewWorkerPool`、`docs/specs/cli.md`)。モジュール内の`threading.Lock`で追記を
-    直列化しており、行が混ざって壊れることはない([ADR-0015](../adr/0015-parallel-review-execution.md)
+    直列化しており、行が混ざって壊れることはない(ADR-0015
     参照)。複数プロセスからの同時書き込みはこのロックの対象外で、`ProcessLock`
     (`cli/lock.py`)が別途防ぐ
   - `comparison.compare_findings`は`ReviewResult`同士(前回・今回)を比較するだけで、
@@ -123,7 +123,7 @@ def compare_findings(
     """`previous`(前回)と`current`(今回)のfindingsを突き合わせる(M2-2, #81)。
 
     `previous`が`None`(前回レビューが無い、初回レビュー)の場合は`None`を返す。
-    マッチング方式は[ADR-0014](../adr/0014-re-review-finding-matching.md)参照。
+    マッチング方式はADR-0014参照。
     """
 
 
@@ -136,7 +136,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 ```
 
 レビュープロンプト本体(`build_review_instructions`)は`docs/specs/prompts.md`(M1-8)を参照。
-再レビュー時もプロンプト自体は変更しない([ADR-0014](../adr/0014-re-review-finding-matching.md)
+再レビュー時もプロンプト自体は変更しない(ADR-0014
 「決定」節)。
 
 ## 入出力スキーマ
@@ -187,7 +187,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 ```
 
 `project`はGitLabの`group/subgroup/project`をエンコードせずそのままディレクトリ階層にする
-(`workspace`/`runner`の`slugify_project`とは異なる方針。理由は[ADR-0006](../adr/0006-review-output-schema.md)参照)。
+(`workspace`/`runner`の`slugify_project`とは異なる方針。理由はADR-0006参照)。
 
 `result.json`の`comparison`フィールド(M2-2, #81)は、前回レビューが存在した場合のみ
 オブジェクトになり、無ければ`null`になる。
@@ -207,7 +207,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 `result.md`では、`comparison`があれば各指摘の見出しに`[新規]`/`[未対応]`のバッジを付け、
 末尾に`## 前回から修正された指摘 (n件)`セクションで`resolved`を列挙する(`resolved`が
 空の場合はセクション自体を出さない)。マッチング方式(同一ファイル + `rationale`/`suggestion`の
-テキスト類似度)は[ADR-0014](../adr/0014-re-review-finding-matching.md)参照。
+テキスト類似度)はADR-0014参照。
 
 ## エラー時の振る舞い
 
@@ -220,7 +220,7 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
   `file`/`rationale`/`suggestion`が空でない文字列でない、`line`が整数でもnullでもない、等)場合に
   `parse_review_output`が送出する。`raw_text`属性に元の`result_text`をそのまま保持しており、
   呼び出し側はこれを使って人間が読める形で内容を確認できる(State Storeを`FAILED`に遷移させる
-  等の具体的な対応は呼び出し側の責務、[ADR-0006](../adr/0006-review-output-schema.md)参照)。
+  等の具体的な対応は呼び出し側の責務、ADR-0006参照)。
 - `save_review`・`append_entry`・`read_index`・`load_review_result`はこのモジュール独自の
   例外を送出しない(ファイルI/Oの失敗は標準の`OSError`系、JSON破損は`json.JSONDecodeError`
   ・`KeyError`がそのまま伝播する)。`compare_findings`は純粋関数で例外を送出しない。
@@ -269,12 +269,8 @@ def read_index(root: Path | str) -> tuple[IndexEntry, ...]:
 ## 関連ドキュメント
 
 - [architecture.md](../architecture.md) 「コンポーネントの責務と境界」表のReview行
-- [ADR-0006: レビュー結果スキーマと保存レイアウトの設計](../adr/0006-review-output-schema.md)
-- [ADR-0015: 並列レビュー実行の設計](../adr/0015-parallel-review-execution.md) —
-  `index.append_entry`の並行書き込み排他の設計判断
-- [ADR-0014: 再レビュー時の指摘マッチング方式](../adr/0014-re-review-finding-matching.md)(M2-2, #81)
 - [prompts.md](prompts.md) — レビュープロンプト(M1-8)。「出力」セクションはこのモジュールの
-  スキーマと1対1の契約。再レビュー時も変更しない([ADR-0014](../adr/0014-re-review-finding-matching.md))
+  スキーマと1対1の契約
 - [claude-code-runner.md](claude-code-runner.md) — `RunResult.result_text`/`log_path`の由来
 - [poller.md](poller.md) — 新規push(再レビュー対象)の検出はMR Poller側の既存の
   `(project, mr_iid, commit_sha)`未処理チェックが担う
